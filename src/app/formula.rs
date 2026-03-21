@@ -1,3 +1,4 @@
+#[cfg(not(target_arch = "wasm32"))]
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use super::i18n::tr;
@@ -195,6 +196,7 @@ fn polynomial_parameter_symbols() -> [char; 10] {
     ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
     let mut hasher = DefaultHasher::new();
     formula.hash(&mut hasher);
@@ -202,10 +204,19 @@ pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
     format!("bytes://formula_model_{}.svg", hasher.finish())
 }
 
+/// Возвращает человекочитаемое текстовое представление формулы.
+///
+/// Используется как fallback для платформ, где SVG-текст может рендериться нестабильно.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn formula_plain_text(formula: &str) -> String {
+    latex_group_to_text(formula)
+}
+
 /// Строит SVG-рендер формулы для показа в UI.
 ///
 /// Здесь intentionally используется небольшой ручной парсер,
 /// чтобы не тянуть тяжёлые зависимости ради ограниченного подмножества LaTeX.
+#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Vec<u8> {
     let spans = parse_formula_spans(formula);
     let visible_chars: usize = spans.iter().map(|span| span.text.chars().count()).sum();
@@ -229,6 +240,7 @@ pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Vec<u8> {
     .into_bytes()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FormulaSpanKind {
     Normal,
@@ -239,12 +251,14 @@ enum FormulaSpanKind {
     FractionDenominator,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 struct FormulaSpan {
     kind: FormulaSpanKind,
     text: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
     let mut spans = Vec::new();
     let mut normal = String::new();
@@ -372,6 +386,15 @@ fn latex_group_to_text(text: &str) -> String {
                 output.push_str(&numerator);
                 continue;
             }
+            if try_consume_keyword(&mut chars, "quad") {
+                output.push(' ');
+                continue;
+            }
+            if try_consume_keyword(&mut chars, "text") && matches!(chars.next(), Some('{')) {
+                let content = read_braced_group(&mut chars);
+                output.push_str(&latex_group_to_text(&content));
+                continue;
+            }
             output.push(ch);
             continue;
         }
@@ -387,6 +410,7 @@ fn latex_group_to_text(text: &str) -> String {
     output
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn formula_spans_to_svg(spans: &[FormulaSpan]) -> String {
     let mut markup = String::new();
     for span in spans {
@@ -412,6 +436,7 @@ fn formula_spans_to_svg(spans: &[FormulaSpan]) -> String {
     markup
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn escape_svg_text(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     for ch in text.chars() {

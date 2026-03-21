@@ -13,7 +13,11 @@ mod param_init;
 mod plot_utils;
 mod points_text;
 
-use self::formula::{formula_svg_bytes, formula_svg_uri, model_formula_info};
+#[cfg(target_arch = "wasm32")]
+use self::formula::formula_plain_text;
+use self::formula::model_formula_info;
+#[cfg(not(target_arch = "wasm32"))]
+use self::formula::{formula_svg_bytes, formula_svg_uri};
 use self::i18n::{
     center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
     fit_to_content_icon_image, github_mark_image, language_flag_image, model_choice_label,
@@ -80,6 +84,37 @@ impl UiLanguage {
             Self::Russian => "Русский",
         }
     }
+
+    fn from_locale_tag(locale: &str) -> Self {
+        let language = locale
+            .trim()
+            .split(['-', '_', '.', '@', ':', ','])
+            .next()
+            .unwrap_or_default();
+
+        if language.eq_ignore_ascii_case("ru") {
+            Self::Russian
+        } else {
+            Self::English
+        }
+    }
+
+    fn from_system_locale() -> Self {
+        system_locale_tag()
+            .as_deref()
+            .map(Self::from_locale_tag)
+            .unwrap_or(Self::English)
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn system_locale_tag() -> Option<String> {
+    sys_locale::get_locale()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn system_locale_tag() -> Option<String> {
+    web_sys::window().and_then(|window| window.navigator().language())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -384,6 +419,7 @@ struct ModelFormulaInfo {
     notes: String,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone)]
 struct FormulaSvgCache {
     formula: String,
@@ -657,6 +693,7 @@ pub struct CurveFitApp {
     result_metrics: Option<ExtendedMetrics>,
     residual_plot_points: Vec<PlotPoint>,
     spline_plot_curve: Option<Vec<PlotPoint>>,
+    #[cfg(not(target_arch = "wasm32"))]
     formula_svg_cache: Option<FormulaSvgCache>,
     sampled_curve_cache: Option<SampledCurveCache>,
     iteration_diagnostics: IterationDiagnostics,
@@ -675,7 +712,10 @@ impl CurveFitApp {
     /// Создает приложение и настраивает загрузчики изображений для иконок/формул.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
-        Self::default()
+        Self {
+            ui_language: UiLanguage::from_system_locale(),
+            ..Self::default()
+        }
     }
 
     fn resolved_model(&self) -> ResolvedModel {
@@ -841,6 +881,7 @@ impl CurveFitApp {
         self.refresh_status_after_points_edit();
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn cached_formula_svg(&mut self, formula: &str, dark_mode: bool) -> (String, Arc<[u8]>) {
         if let Some(cache) = &self.formula_svg_cache
             && cache.formula == formula
@@ -1111,10 +1152,56 @@ impl CurveFitApp {
         }
     }
 
-    fn write_points_text(&mut self, points: &[Point]) {
-        self.push_points_undo_snapshot(self.points_text.clone());
-        self.apply_points_text_change(points_to_text(points), false);
-        self.refresh_status_after_points_edit();
+    fn set_points_cache_from_valid_points(&mut self, points: &[Point]) {
+        let parsed_points = points.to_vec();
+        let plot_points = parsed_points
+            .iter()
+            .map(|point| PlotPoint::new(point.x(), point.y()))
+            .collect();
+        self.points_cache = Some(ParsedPointsCache {
+            parsed_points: Ok(parsed_points),
+            parse_error_line: None,
+            plot_points,
+        });
+        self.points_cache_dirty = false;
+        self.points_parse_debounce_deadline = None;
+    }
+
+    fn clear_points_text(&mut self, record_undo: bool) {
+        if self.points_text.is_empty() {
+            return;
+        }
+        let previous = std::mem::take(&mut self.points_text);
+        if record_undo {
+            self.push_points_undo_snapshot(previous);
+        }
+        self.points_redo_stack.clear();
+        self.set_points_cache_from_valid_points(&[]);
+        if matches!(
+            self.status.as_ref(),
+            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
+        ) {
+            self.status = Some(self.idle_status_after_points_edit());
+        }
+    }
+
+    fn write_points_text(&mut self, points: &[Point], record_undo: bool) {
+        let new_text = points_to_text(points);
+        if self.points_text == new_text {
+            return;
+        }
+        if record_undo {
+            self.push_points_undo_snapshot(self.points_text.clone());
+        }
+        self.points_text = new_text;
+        self.points_redo_stack.clear();
+        self.set_points_cache_from_valid_points(points);
+        if matches!(
+            self.status.as_ref(),
+            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
+        ) {
+            self.status = Some(self.idle_status_after_points_edit());
+        }
     }
 
     fn clear_fit_preview(&mut self) {
@@ -1812,7 +1899,7 @@ impl CurveFitApp {
         match Point::try_new(x, y) {
             Ok(point) => {
                 points.push(point);
-                self.write_points_text(&points);
+                self.write_points_text(&points, true);
             }
             Err(error) => {
                 self.status = Some(StatusMessage::Error(error.to_string()));
@@ -1844,7 +1931,7 @@ impl CurveFitApp {
             }
         }
 
-        self.write_points_text(&points);
+        self.write_points_text(&points, false);
     }
 
     fn erase_points_from_plot(
@@ -1872,7 +1959,7 @@ impl CurveFitApp {
             dx * dx + dy * dy > 1.0
         });
 
-        self.write_points_text(&points);
+        self.write_points_text(&points, false);
     }
 
     fn plot_position_from_screen(
@@ -1893,8 +1980,12 @@ impl CurveFitApp {
         }
 
         let response = &plot_response.response;
+        let is_continuous_tool = matches!(self.plot_tool, PlotTool::Spray | PlotTool::Eraser);
         let primary_down_on_plot = response.is_pointer_button_down_on();
-        if matches!(self.plot_tool, PlotTool::Spray | PlotTool::Eraser) && primary_down_on_plot {
+        if is_continuous_tool && primary_down_on_plot {
+            if self.active_tool_bounds.is_none() {
+                self.push_points_undo_snapshot(self.points_text.clone());
+            }
             self.active_tool_bounds
                 .get_or_insert(*plot_response.transform.bounds());
         } else {
@@ -2180,8 +2271,7 @@ impl CurveFitApp {
                 )
                 .clicked()
             {
-                self.push_points_undo_snapshot(self.points_text.clone());
-                self.apply_points_text_change(String::new(), false);
+                self.clear_points_text(true);
                 self.clear_fit_outputs();
                 self.status = Some(StatusMessage::Cleared);
             }
@@ -2335,14 +2425,23 @@ impl CurveFitApp {
         ui.add_space(6.0);
         ui.group(|ui| {
             ui.label(egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong());
-            let dark_mode = ui.visuals().dark_mode;
-            let (svg_uri, svg_bytes) =
-                self.cached_formula_svg(&formula_info.full_formula, dark_mode);
-            ui.add(
-                egui::Image::from_bytes(svg_uri, svg_bytes)
-                    .max_width(ui.available_width())
-                    .fit_to_original_size(1.0),
-            );
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let dark_mode = ui.visuals().dark_mode;
+                let (svg_uri, svg_bytes) =
+                    self.cached_formula_svg(&formula_info.full_formula, dark_mode);
+                ui.add(
+                    egui::Image::from_bytes(svg_uri, svg_bytes)
+                        .max_width(ui.available_width())
+                        .fit_to_original_size(1.0),
+                );
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let plain_formula = formula_plain_text(&formula_info.full_formula);
+                let formula_label = egui::RichText::new(plain_formula).monospace();
+                ui.label(formula_label);
+            }
             ui.label(egui::RichText::new(formula_info.notes).small());
         });
 
@@ -3077,7 +3176,7 @@ impl Default for CurveFitApp {
             lbfgs_preset: LbfgsPreset::infer_from_config(&default_lbfgs),
             ui_language: UiLanguage::English,
             plot_tool: PlotTool::SinglePoint,
-            spray_density: 8,
+            spray_density: 5,
             spray_radius_rel: 0.02,
             spray_brush: SprayBrush::Uniform,
             eraser_radius_rel: 0.03,
@@ -3108,6 +3207,7 @@ impl Default for CurveFitApp {
             result_metrics: None,
             residual_plot_points: Vec::new(),
             spline_plot_curve: None,
+            #[cfg(not(target_arch = "wasm32"))]
             formula_svg_cache: None,
             sampled_curve_cache: None,
             iteration_diagnostics: IterationDiagnostics::default(),
@@ -3233,7 +3333,7 @@ fn diagnostics_plot_y_axis_width(plot_response: &PlotResponse<()>) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CurveFitApp, IterationDiagnostics, ModelChoice, ParamInitMethod, StatusMessage,
+        CurveFitApp, IterationDiagnostics, ModelChoice, ParamInitMethod, StatusMessage, UiLanguage,
         data_based_params_for_family,
     };
     use crate::domain::{CurveFamily, CurveParams, FitResult, Point, Points};
@@ -3265,6 +3365,30 @@ mod tests {
             (actual - expected).abs() <= tolerance,
             "expected {expected}, got {actual}, tolerance {tolerance}"
         );
+    }
+
+    #[test]
+    fn ui_language_from_locale_tag_uses_russian_for_ru_tags() {
+        assert_eq!(UiLanguage::from_locale_tag("ru"), UiLanguage::Russian);
+        assert_eq!(UiLanguage::from_locale_tag("ru-RU"), UiLanguage::Russian);
+        assert_eq!(
+            UiLanguage::from_locale_tag("ru_RU.UTF-8"),
+            UiLanguage::Russian
+        );
+        assert_eq!(
+            UiLanguage::from_locale_tag("ru-RU,en-US;q=0.9"),
+            UiLanguage::Russian
+        );
+    }
+
+    #[test]
+    fn ui_language_from_locale_tag_uses_english_for_other_tags() {
+        assert_eq!(UiLanguage::from_locale_tag("en-US"), UiLanguage::English);
+        assert_eq!(
+            UiLanguage::from_locale_tag("de_DE.UTF-8"),
+            UiLanguage::English
+        );
+        assert_eq!(UiLanguage::from_locale_tag(""), UiLanguage::English);
     }
 
     #[test]

@@ -8,6 +8,8 @@ description = "A training application for fitting curve parameters to a set of p
 repository = "https://github.com/hexqnt/curve-fit"
 homepage = "https://curve-fit.hexq.ru"
 readme = "README.md"
+keywords = ["curve-fitting", "spline", "optimization", "egui", "wasm"]
+categories = ["science", "mathematics", "visualization", "gui"]
 
 [dependencies]
 argmin = { version = "0.11.0", default-features = false }
@@ -20,16 +22,17 @@ egui_extras = { version = "0.33.3", default-features = false, features = [
 ] }
 egui_plot = "0.34.1"
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sys-locale = "0.3.2"
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom = { version = "0.4.2", features = ["wasm_js"] }
-getrandom_03 = { package = "getrandom", version = "0.4.2", features = [
-    "wasm_js",
-] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 wasm-bindgen = "0.2.114"
 wasm-bindgen-futures = "0.4.54"
 web-sys = { version = "0.3.91", features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
+    "Navigator",
     "Window",
 ] }
