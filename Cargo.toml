@@ -1,0 +1,35 @@
+[package]
+name = "curve-fit"
+version = "0.1.0"
+edition = "2024"
+authors = ["hexqnt <hexqntlab@gmail.com>"]
+license = "Apache-2.0 OR MIT"
+description = "A training application for fitting curve parameters to a set of points."
+repository = "https://github.com/hexqnt/curve-fit"
+homepage = "https://curve-fit.hexq.ru"
+readme = "README.md"
+
+[dependencies]
+argmin = { version = "0.11.0", default-features = false }
+argmin-math = { version = "0.5.1", default-features = false, features = [
+    "vec",
+] }
+eframe = "0.33.3"
+egui_extras = { version = "0.33.3", default-features = false, features = [
+    "svg_text",
+] }
+egui_plot = "0.34.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+getrandom_03 = { package = "getrandom", version = "0.4.2", features = [
+    "wasm_js",
+] }
+wasm-bindgen = "0.2.114"
+wasm-bindgen-futures = "0.4.54"
+web-sys = { version = "0.3.91", features = [
+    "Document",
+    "Element",
+    "HtmlCanvasElement",
+    "Window",
+] }
