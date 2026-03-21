@@ -1,6 +1,6 @@
 [package]
 name = "curve-fit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 authors = ["hexqnt <hexqntlab@gmail.com>"]
 license = "Apache-2.0 OR MIT"
@@ -36,3 +36,10 @@ web-sys = { version = "0.3.91", features = [
     "Navigator",
     "Window",
 ] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

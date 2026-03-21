@@ -3,19 +3,39 @@
 
 use std::fmt;
 
-use argmin::core::observers::{Observe, ObserverMode};
 use argmin::core::{
-    CostFunction, Executor, Gradient, IterState, KV, Problem, Solver, State, TerminationStatus,
+    CostFunction, Gradient, IterState, Problem, Solver, State, TerminationReason, TerminationStatus,
 };
+use argmin::solver::gradientdescent::SteepestDescent;
 use argmin::solver::linesearch::MoreThuenteLineSearch;
+use argmin::solver::neldermead::NelderMead;
 use argmin::solver::quasinewton::LBFGS;
 
-use crate::domain::{CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, Point, Points};
+use crate::domain::{
+    CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
+    OptimizerConfig, Point, Points, SteepestDescentConfig,
+};
+
+mod curve;
+mod spline;
+
+pub use curve::{
+    fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,
+    fit_curve_with_progress_and_optimizer_config,
+};
+pub(crate) use spline::default_spline_initial_knot_y;
+pub use spline::{
+    fit_akima_spline, fit_akima_spline_with_config, fit_akima_spline_with_optimizer_config,
+    fit_linear_spline, fit_linear_spline_with_config, fit_linear_spline_with_optimizer_config,
+    fit_monotone_cubic_spline, fit_monotone_cubic_spline_with_config,
+    fit_monotone_cubic_spline_with_optimizer_config, fit_natural_cubic_spline,
+    fit_natural_cubic_spline_with_config, fit_natural_cubic_spline_with_optimizer_config,
+};
 
 const PARAM_EPS: f64 = 1e-9;
 const LARGE_COST: f64 = 1e24;
 const LN_2: f64 = std::f64::consts::LN_2;
-const CANCELLED_MARKER: &str = "__curve_fit_cancelled__";
+const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
 
 fn positive_x(value: f64) -> f64 {
     value.max(PARAM_EPS)
@@ -54,6 +74,10 @@ fn softplus(value: f64) -> f64 {
     } else {
         value.exp().ln_1p()
     }
+}
+
+fn gradient_l2_norm(values: &[f64]) -> f64 {
+    values.iter().map(|value| value * value).sum::<f64>().sqrt()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -213,8 +237,23 @@ impl SplineConfig {
     }
 }
 
-type LbfgsState = IterState<Vec<f64>, Vec<f64>, (), (), (), f64>;
+type GradientState = IterState<Vec<f64>, Vec<f64>, (), (), (), f64>;
+type NelderMeadState = IterState<Vec<f64>, (), (), (), (), f64>;
 type LbfgsSolver = LBFGS<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, Vec<f64>, Vec<f64>, f64>;
+type SteepestDescentSolver = SteepestDescent<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>>;
+type NelderMeadSolver = NelderMead<Vec<f64>, f64>;
+
+enum OptimizerSolver {
+    Lbfgs(LbfgsSolver),
+    NelderMead(NelderMeadSolver),
+    SteepestDescent(SteepestDescentSolver),
+}
+
+enum OptimizerState {
+    Lbfgs(GradientState),
+    NelderMead(NelderMeadState),
+    SteepestDescent(GradientState),
+}
 
 #[derive(Debug, Clone, PartialEq)]
 /// Шаг инкрементальной подгонки параметрической модели.
@@ -228,13 +267,13 @@ pub enum IncrementalFitStep {
     Cancelled,
 }
 
-/// Пошаговый раннер L-BFGS для параметрических семейств.
+/// Пошаговый раннер оптимизации параметрических семейств.
 pub struct IncrementalFitRunner {
     family: CurveFamily,
     points: Points,
     problem: Problem<CurveProblem>,
-    solver: LbfgsSolver,
-    state: Option<LbfgsState>,
+    solver: OptimizerSolver,
+    state: Option<OptimizerState>,
     cancelled: bool,
 }
 
@@ -256,51 +295,164 @@ pub(crate) struct IncrementalSplineFitRunner {
     config: SplineConfig,
     knot_x: Box<[f64]>,
     problem: Problem<SplineProblem>,
-    solver: LbfgsSolver,
-    state: Option<LbfgsState>,
+    solver: OptimizerSolver,
+    state: Option<OptimizerState>,
     cancelled: bool,
 }
 
-struct ProgressObserver<F> {
-    family: CurveFamily,
-    on_iteration: F,
-}
-
-impl<F, I> Observe<I> for ProgressObserver<F>
-where
-    F: FnMut(u64, Option<CurveParams>) -> bool,
-    I: State<Param = Vec<f64>, Float = f64>,
-{
-    fn observe_iter(&mut self, state: &I, _kv: &KV) -> Result<(), argmin::core::Error> {
-        let params = state
-            .get_param()
-            .and_then(|param_values| CurveParams::try_from_slice(self.family, param_values).ok());
-        if !(self.on_iteration)(state.get_iter(), params) {
-            return Err(argmin::core::Error::msg(CANCELLED_MARKER));
-        }
-        Ok(())
-    }
-}
-
 fn build_line_search(
-    config: &LbfgsConfig,
+    c1: f64,
+    c2: f64,
+    step_min: f64,
+    step_max: f64,
+    width_tolerance: f64,
 ) -> Result<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, FitError> {
     MoreThuenteLineSearch::new()
-        .with_c(config.c1, config.c2)
+        .with_c(c1, c2)
         .map_err(|error| FitError::Optimizer(error.to_string()))?
-        .with_bounds(config.step_min, config.step_max)
+        .with_bounds(step_min, step_max)
         .map_err(|error| FitError::Optimizer(error.to_string()))?
-        .with_width_tolerance(config.width_tolerance)
+        .with_width_tolerance(width_tolerance)
         .map_err(|error| FitError::Optimizer(error.to_string()))
 }
 
 fn build_lbfgs_solver(config: &LbfgsConfig) -> Result<LbfgsSolver, FitError> {
-    let line_search = build_line_search(config)?;
+    let line_search = build_line_search(
+        config.c1,
+        config.c2,
+        config.step_min,
+        config.step_max,
+        config.width_tolerance,
+    )?;
     LBFGS::new(line_search, config.history_size)
         .with_tolerance_grad(config.tol_grad)
         .map_err(|error| FitError::Optimizer(error.to_string()))?
         .with_tolerance_cost(config.tol_cost)
         .map_err(|error| FitError::Optimizer(error.to_string()))
+}
+
+fn build_steepest_descent_solver(
+    config: &SteepestDescentConfig,
+) -> Result<SteepestDescentSolver, FitError> {
+    let line_search = build_line_search(
+        config.c1,
+        config.c2,
+        config.step_min,
+        config.step_max,
+        config.width_tolerance,
+    )?;
+    Ok(SteepestDescent::new(line_search))
+}
+
+fn nelder_mead_simplex(
+    initial_param: &[f64],
+    simplex_scale: f64,
+) -> Result<Vec<Vec<f64>>, FitError> {
+    if initial_param.is_empty() {
+        return Err(FitError::Optimizer(
+            "Nelder-Mead requires at least one optimization parameter".to_string(),
+        ));
+    }
+
+    let mut simplex = Vec::with_capacity(initial_param.len() + 1);
+    simplex.push(initial_param.to_vec());
+
+    for (index, value) in initial_param.iter().copied().enumerate() {
+        let mut vertex = initial_param.to_vec();
+        vertex[index] += simplex_scale * (value.abs() + 1.0);
+        simplex.push(vertex);
+    }
+
+    Ok(simplex)
+}
+
+fn build_nelder_mead_solver(
+    initial_param: &[f64],
+    config: &NelderMeadConfig,
+) -> Result<NelderMeadSolver, FitError> {
+    let simplex = nelder_mead_simplex(initial_param, config.simplex_scale)?;
+    NelderMead::new(simplex)
+        .with_sd_tolerance(config.sd_tolerance)
+        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .with_alpha(config.alpha)
+        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .with_gamma(config.gamma)
+        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .with_rho(config.rho)
+        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .with_sigma(config.sigma)
+        .map_err(|error| FitError::Optimizer(error.to_string()))
+}
+
+fn build_optimizer_solver(
+    initial_param: &[f64],
+    config: &OptimizerConfig,
+) -> Result<OptimizerSolver, FitError> {
+    match config {
+        OptimizerConfig::Lbfgs(lbfgs) => Ok(OptimizerSolver::Lbfgs(build_lbfgs_solver(lbfgs)?)),
+        OptimizerConfig::NelderMead(nelder_mead) => Ok(OptimizerSolver::NelderMead(
+            build_nelder_mead_solver(initial_param, nelder_mead)?,
+        )),
+        OptimizerConfig::SteepestDescent(steepest_descent) => Ok(OptimizerSolver::SteepestDescent(
+            build_steepest_descent_solver(steepest_descent)?,
+        )),
+    }
+}
+
+fn optimizer_state_best_param(state: &OptimizerState) -> Option<Vec<f64>> {
+    match state {
+        OptimizerState::Lbfgs(state) => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .cloned(),
+        OptimizerState::NelderMead(state) => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .cloned(),
+        OptimizerState::SteepestDescent(state) => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .cloned(),
+    }
+}
+
+fn optimizer_state_current_param(state: &OptimizerState) -> Option<Vec<f64>> {
+    match state {
+        OptimizerState::Lbfgs(state) => state.get_param().cloned(),
+        OptimizerState::NelderMead(state) => state.get_param().cloned(),
+        OptimizerState::SteepestDescent(state) => state.get_param().cloned(),
+    }
+}
+
+fn optimizer_state_iter(state: &OptimizerState) -> u64 {
+    match state {
+        OptimizerState::Lbfgs(state) => state.get_iter(),
+        OptimizerState::NelderMead(state) => state.get_iter(),
+        OptimizerState::SteepestDescent(state) => state.get_iter(),
+    }
+}
+
+fn terminate_steepest_descent_on_small_gradient<O>(
+    problem: &mut Problem<O>,
+    mut state: GradientState,
+) -> Result<GradientState, FitError>
+where
+    O: Gradient<Param = Vec<f64>, Gradient = Vec<f64>>,
+{
+    if state.terminated() {
+        return Ok(state);
+    }
+    let Some(param) = state.get_param().cloned() else {
+        return Ok(state);
+    };
+    let gradient = problem
+        .gradient(&param)
+        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+    state = state.gradient(gradient.clone());
+    if gradient_l2_norm(&gradient) <= STEEPEST_DESCENT_GRAD_TOL {
+        state = state.terminate_with(TerminationReason::SolverConverged);
+    }
+    Ok(state)
 }
 
 impl IncrementalFitRunner {
@@ -311,6 +463,17 @@ impl IncrementalFitRunner {
         initial_params: CurveParams,
         config: &LbfgsConfig,
     ) -> Result<Self, FitError> {
+        let optimizer_config = OptimizerConfig::Lbfgs(config.clone());
+        Self::new_with_optimizer_config(points, family, initial_params, &optimizer_config)
+    }
+
+    /// Создает раннер с произвольной конфигурацией оптимизатора.
+    pub fn new_with_optimizer_config(
+        points: &Points,
+        family: CurveFamily,
+        initial_params: CurveParams,
+        optimizer_config: &OptimizerConfig,
+    ) -> Result<Self, FitError> {
         if initial_params.family() != family {
             return Err(FitError::InvalidInput(InputError::FamilyMismatch {
                 expected: family,
@@ -319,18 +482,44 @@ impl IncrementalFitRunner {
         }
         family.validate_points(points)?;
 
+        let initial_values = initial_params.values();
+        let max_iters = optimizer_config.max_iters();
         let problem = CurveProblem::new(family, points);
         let mut problem = Problem::new(problem);
-        let mut solver = build_lbfgs_solver(config)?;
-        let state = IterState::new()
-            .param(initial_params.values())
-            .max_iters(config.max_iters);
-        let (mut state, _) = solver
-            .init(&mut problem, state)
-            .map_err(|error| FitError::Optimizer(error.to_string()))?;
-
-        state.update();
-        state.func_counts(&problem);
+        let mut solver = build_optimizer_solver(&initial_values, optimizer_config)?;
+        let state = match &mut solver {
+            OptimizerSolver::Lbfgs(solver) => {
+                let state = IterState::new()
+                    .param(initial_values.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::Lbfgs(state)
+            }
+            OptimizerSolver::NelderMead(solver) => {
+                let state = IterState::new()
+                    .param(initial_values.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::NelderMead(state)
+            }
+            OptimizerSolver::SteepestDescent(solver) => {
+                let state = IterState::new().param(initial_values).max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::SteepestDescent(state)
+            }
+        };
 
         Ok(Self {
             family,
@@ -356,41 +545,100 @@ impl IncrementalFitRunner {
         }
 
         loop {
-            let mut state = self
+            let state = self
                 .state
                 .take()
                 .expect("incremental fit state must be initialized");
 
-            if !state.terminated() {
-                let termination =
-                    <LbfgsSolver as Solver<CurveProblem, LbfgsState>>::terminate_internal(
-                        &mut self.solver,
-                        &state,
-                    );
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
+            let mut state = match (&mut self.solver, state) {
+                (OptimizerSolver::Lbfgs(solver), OptimizerState::Lbfgs(mut state)) => {
+                    if !state.terminated() {
+                        let termination =
+                            <LbfgsSolver as Solver<CurveProblem, GradientState>>::terminate_internal(
+                                solver, &state,
+                            );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::Lbfgs(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::Lbfgs(state)
                 }
-            }
+                (OptimizerSolver::NelderMead(solver), OptimizerState::NelderMead(mut state)) => {
+                    if !state.terminated() {
+                        let termination = <NelderMeadSolver as Solver<
+                            CurveProblem,
+                            NelderMeadState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::NelderMead(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::NelderMead(state)
+                }
+                (
+                    OptimizerSolver::SteepestDescent(solver),
+                    OptimizerState::SteepestDescent(mut state),
+                ) => {
+                    state = terminate_steepest_descent_on_small_gradient(&mut self.problem, state)?;
+                    if !state.terminated() {
+                        let termination = <SteepestDescentSolver as Solver<
+                            CurveProblem,
+                            GradientState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::SteepestDescent(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::SteepestDescent(state)
+                }
+                _ => {
+                    return Err(FitError::Optimizer(
+                        "Optimizer solver/state mismatch in incremental fit runner".to_string(),
+                    ));
+                }
+            };
 
-            if state.terminated() {
-                let final_step = self.finalize(state)?;
-                return Ok(final_step);
-            }
-
-            let (mut state, _) = self
-                .solver
-                .next_iter(&mut self.problem, state)
-                .map_err(|error| FitError::Optimizer(error.to_string()))?;
-            state.func_counts(&self.problem);
-            state.update();
-
-            let iteration = state.get_iter();
-            if let Some(params) = state
-                .get_param()
-                .and_then(|values| CurveParams::try_from_slice(self.family, values).ok())
+            let iteration = optimizer_state_iter(&state);
+            if let Some(params) = optimizer_state_current_param(&state)
+                .and_then(|values| CurveParams::try_from_values(self.family, values).ok())
             {
                 let (mse, _) = calculate_metrics(&self.points, &params);
-                state.increment_iter();
+                match &mut state {
+                    OptimizerState::Lbfgs(state) => state.increment_iter(),
+                    OptimizerState::NelderMead(state) => state.increment_iter(),
+                    OptimizerState::SteepestDescent(state) => state.increment_iter(),
+                }
                 self.state = Some(state);
                 return Ok(IncrementalFitStep::Iteration {
                     iteration,
@@ -400,19 +648,21 @@ impl IncrementalFitRunner {
             }
 
             // Если параметры недоступны на текущем шаге, продолжаем итерации без рекурсии.
-            state.increment_iter();
+            match &mut state {
+                OptimizerState::Lbfgs(state) => state.increment_iter(),
+                OptimizerState::NelderMead(state) => state.increment_iter(),
+                OptimizerState::SteepestDescent(state) => state.increment_iter(),
+            }
             self.state = Some(state);
         }
     }
 
-    fn finalize(&mut self, state: LbfgsState) -> Result<IncrementalFitStep, FitError> {
-        let best_param_values = state
-            .get_best_param()
-            .cloned()
-            .ok_or(FitError::MissingBestParameters)?;
+    fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalFitStep, FitError> {
+        let best_param_values =
+            optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
         let best_params = CurveParams::try_from_values(self.family, best_param_values)?;
         let (mse, rmse) = calculate_metrics(&self.points, &best_params);
-        let iterations = state.get_iter();
+        let iterations = optimizer_state_iter(&state);
         self.state = Some(state);
 
         Ok(IncrementalFitStep::Finished(FitResult {
@@ -426,23 +676,30 @@ impl IncrementalFitRunner {
 }
 
 impl IncrementalSplineFitRunner {
-    pub(crate) fn new(
+    pub(crate) fn new_with_optimizer_config(
         points: &Points,
         family: SplineFamilyKind,
         config: SplineConfig,
+        optimizer_config: &OptimizerConfig,
     ) -> Result<Self, FitError> {
-        Self::new_with_initial_knot_y(points, family, config, None)
+        Self::new_with_initial_knot_y_and_optimizer_config(
+            points,
+            family,
+            config,
+            optimizer_config,
+            None,
+        )
     }
 
-    pub(crate) fn new_with_initial_knot_y(
+    pub(crate) fn new_with_initial_knot_y_and_optimizer_config(
         points: &Points,
         family: SplineFamilyKind,
         config: SplineConfig,
+        optimizer_config: &OptimizerConfig,
         initial_knot_y: Option<&[f64]>,
     ) -> Result<Self, FitError> {
         let prepared = prepare_spline_inputs(points, config, family, initial_knot_y)?;
-        let optimizer_config = spline_lbfgs_config();
-        let mut solver = build_lbfgs_solver(&optimizer_config)?;
+        let max_iters = optimizer_config.max_iters();
 
         let initial_knots = materialize_spline_knots(prepared.knot_x.as_ref(), &prepared.initial_y);
         let problem = SplineProblem::new(
@@ -452,15 +709,42 @@ impl IncrementalSplineFitRunner {
             prepared.config.extrapolation,
         );
         let mut problem = Problem::new(problem);
-        let state = IterState::new()
-            .param(prepared.initial_y)
-            .max_iters(optimizer_config.max_iters);
-        let (mut state, _) = solver
-            .init(&mut problem, state)
-            .map_err(|error| FitError::Optimizer(error.to_string()))?;
-
-        state.update();
-        state.func_counts(&problem);
+        let mut solver = build_optimizer_solver(&prepared.initial_y, optimizer_config)?;
+        let state = match &mut solver {
+            OptimizerSolver::Lbfgs(solver) => {
+                let state = IterState::new()
+                    .param(prepared.initial_y.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::Lbfgs(state)
+            }
+            OptimizerSolver::NelderMead(solver) => {
+                let state = IterState::new()
+                    .param(prepared.initial_y.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::NelderMead(state)
+            }
+            OptimizerSolver::SteepestDescent(solver) => {
+                let state = IterState::new()
+                    .param(prepared.initial_y.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::SteepestDescent(state)
+            }
+        };
 
         Ok(Self {
             family,
@@ -484,36 +768,92 @@ impl IncrementalSplineFitRunner {
         }
 
         loop {
-            let mut state = self
+            let state = self
                 .state
                 .take()
                 .expect("incremental spline fit state must be initialized");
 
-            if !state.terminated() {
-                let termination =
-                    <LbfgsSolver as Solver<SplineProblem, LbfgsState>>::terminate_internal(
-                        &mut self.solver,
-                        &state,
-                    );
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
+            let mut state = match (&mut self.solver, state) {
+                (OptimizerSolver::Lbfgs(solver), OptimizerState::Lbfgs(mut state)) => {
+                    if !state.terminated() {
+                        let termination = <LbfgsSolver as Solver<
+                            SplineProblem,
+                            GradientState,
+                        >>::terminate_internal(solver, &state);
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::Lbfgs(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::Lbfgs(state)
                 }
-            }
+                (OptimizerSolver::NelderMead(solver), OptimizerState::NelderMead(mut state)) => {
+                    if !state.terminated() {
+                        let termination = <NelderMeadSolver as Solver<
+                            SplineProblem,
+                            NelderMeadState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::NelderMead(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::NelderMead(state)
+                }
+                (
+                    OptimizerSolver::SteepestDescent(solver),
+                    OptimizerState::SteepestDescent(mut state),
+                ) => {
+                    state = terminate_steepest_descent_on_small_gradient(&mut self.problem, state)?;
+                    if !state.terminated() {
+                        let termination = <SteepestDescentSolver as Solver<
+                            SplineProblem,
+                            GradientState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::SteepestDescent(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::SteepestDescent(state)
+                }
+                _ => {
+                    return Err(FitError::Optimizer(
+                        "Optimizer solver/state mismatch in incremental spline runner".to_string(),
+                    ));
+                }
+            };
 
-            if state.terminated() {
-                let final_step = self.finalize(state)?;
-                return Ok(final_step);
-            }
-
-            let (mut state, _) = self
-                .solver
-                .next_iter(&mut self.problem, state)
-                .map_err(|error| FitError::Optimizer(error.to_string()))?;
-            state.func_counts(&self.problem);
-            state.update();
-
-            let iteration = state.get_iter();
-            if let Some(knot_y) = state.get_param().cloned() {
+            let iteration = optimizer_state_iter(&state);
+            if let Some(knot_y) = optimizer_state_current_param(&state) {
                 let knots = materialize_spline_knots(self.knot_x.as_ref(), &knot_y);
                 let evaluator =
                     build_spline_evaluator(self.family, knots.clone(), self.config.extrapolation)?;
@@ -530,7 +870,11 @@ impl IncrementalSplineFitRunner {
                 let curve =
                     sample_sorted_curve(&knots, self.config.samples, |x| evaluator.evaluate(x));
 
-                state.increment_iter();
+                match &mut state {
+                    OptimizerState::Lbfgs(state) => state.increment_iter(),
+                    OptimizerState::NelderMead(state) => state.increment_iter(),
+                    OptimizerState::SteepestDescent(state) => state.increment_iter(),
+                }
                 self.state = Some(state);
                 return Ok(IncrementalSplineFitStep::Iteration {
                     iteration,
@@ -541,18 +885,19 @@ impl IncrementalSplineFitRunner {
             }
 
             // Если параметры недоступны на текущем шаге, продолжаем итерации без рекурсии.
-            state.increment_iter();
+            match &mut state {
+                OptimizerState::Lbfgs(state) => state.increment_iter(),
+                OptimizerState::NelderMead(state) => state.increment_iter(),
+                OptimizerState::SteepestDescent(state) => state.increment_iter(),
+            }
             self.state = Some(state);
         }
     }
 
-    fn finalize(&mut self, state: LbfgsState) -> Result<IncrementalSplineFitStep, FitError> {
-        let best_knot_y = state
-            .get_best_param()
-            .or_else(|| state.get_param())
-            .cloned()
-            .ok_or(FitError::MissingBestParameters)?;
-        let iterations = state.get_iter();
+    fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalSplineFitStep, FitError> {
+        let best_knot_y =
+            optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
+        let iterations = optimizer_state_iter(&state);
         self.state = Some(state);
 
         let result = build_spline_result_from_knot_y(
@@ -1721,793 +2066,5 @@ fn build_spline_result_from_knot_y(
     })
 }
 
-fn fit_spline_family_with_config(
-    points: &Points,
-    config: SplineConfig,
-    family: SplineFamilyKind,
-) -> Result<SplineResult, FitError> {
-    let mut runner = IncrementalSplineFitRunner::new(points, family, config)?;
-    loop {
-        match runner.step()? {
-            IncrementalSplineFitStep::Iteration { .. } => {}
-            IncrementalSplineFitStep::Finished(result) => return Ok(result),
-            IncrementalSplineFitStep::Cancelled => return Err(FitError::Cancelled),
-        }
-    }
-}
-
-pub(crate) fn default_spline_initial_knot_y(
-    points: &Points,
-    family: SplineFamilyKind,
-    config: SplineConfig,
-) -> Result<Vec<f64>, FitError> {
-    let prepared = prepare_spline_inputs(points, config, family, None)?;
-    Ok(prepared.initial_y)
-}
-
-/// Подгоняет линейный сплайн с явными `samples` и `knots`.
-pub fn fit_linear_spline(
-    points: &Points,
-    samples: usize,
-    knots: usize,
-) -> Result<SplineResult, FitError> {
-    fit_linear_spline_with_config(
-        points,
-        SplineConfig {
-            knots,
-            samples,
-            ..SplineConfig::default()
-        },
-    )
-}
-
-/// Подгоняет линейный сплайн с полной конфигурацией.
-pub fn fit_linear_spline_with_config(
-    points: &Points,
-    config: SplineConfig,
-) -> Result<SplineResult, FitError> {
-    fit_spline_family_with_config(points, config, SplineFamilyKind::Linear)
-}
-
-/// Подгоняет монотонный кубический сплайн с явными `samples` и `knots`.
-pub fn fit_monotone_cubic_spline(
-    points: &Points,
-    samples: usize,
-    knots: usize,
-) -> Result<SplineResult, FitError> {
-    fit_monotone_cubic_spline_with_config(
-        points,
-        SplineConfig {
-            knots,
-            samples,
-            ..SplineConfig::default()
-        },
-    )
-}
-
-/// Подгоняет монотонный кубический сплайн с полной конфигурацией.
-pub fn fit_monotone_cubic_spline_with_config(
-    points: &Points,
-    config: SplineConfig,
-) -> Result<SplineResult, FitError> {
-    fit_spline_family_with_config(points, config, SplineFamilyKind::MonotoneCubic)
-}
-
-/// Подгоняет натуральный кубический сплайн с явными `samples` и `knots`.
-pub fn fit_natural_cubic_spline(
-    points: &Points,
-    samples: usize,
-    knots: usize,
-) -> Result<SplineResult, FitError> {
-    fit_natural_cubic_spline_with_config(
-        points,
-        SplineConfig {
-            knots,
-            samples,
-            ..SplineConfig::default()
-        },
-    )
-}
-
-/// Подгоняет натуральный кубический сплайн с полной конфигурацией.
-pub fn fit_natural_cubic_spline_with_config(
-    points: &Points,
-    config: SplineConfig,
-) -> Result<SplineResult, FitError> {
-    fit_spline_family_with_config(points, config, SplineFamilyKind::NaturalCubic)
-}
-
-/// Подгоняет сплайн Акимы с явными `samples` и `knots`.
-pub fn fit_akima_spline(
-    points: &Points,
-    samples: usize,
-    knots: usize,
-) -> Result<SplineResult, FitError> {
-    fit_akima_spline_with_config(
-        points,
-        SplineConfig {
-            knots,
-            samples,
-            ..SplineConfig::default()
-        },
-    )
-}
-
-/// Подгоняет сплайн Акимы с полной конфигурацией.
-pub fn fit_akima_spline_with_config(
-    points: &Points,
-    config: SplineConfig,
-) -> Result<SplineResult, FitError> {
-    fit_spline_family_with_config(points, config, SplineFamilyKind::Akima)
-}
-
-/// Подгоняет параметрическую модель без колбэка прогресса.
-pub fn fit_curve(
-    points: &Points,
-    family: CurveFamily,
-    initial_params: CurveParams,
-    config: &LbfgsConfig,
-) -> Result<FitResult, FitError> {
-    fit_curve_with_progress(
-        points,
-        family,
-        initial_params,
-        config,
-        |_iteration, _params| true,
-    )
-}
-
-/// Подгоняет параметрическую модель с колбэком на каждой итерации.
-///
-/// Возврат `false` из `on_iteration` запрашивает досрочную остановку.
-pub fn fit_curve_with_progress<F>(
-    points: &Points,
-    family: CurveFamily,
-    initial_params: CurveParams,
-    config: &LbfgsConfig,
-    on_iteration: F,
-) -> Result<FitResult, FitError>
-where
-    F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
-{
-    if initial_params.family() != family {
-        return Err(FitError::InvalidInput(InputError::FamilyMismatch {
-            expected: family,
-            got: initial_params.family(),
-        }));
-    }
-    family.validate_points(points)?;
-
-    let solver = build_lbfgs_solver(config)?;
-    let problem = CurveProblem::new(family, points);
-    let progress_observer = ProgressObserver {
-        family,
-        on_iteration,
-    };
-    let optimization = Executor::new(problem, solver)
-        .configure(|state| {
-            state
-                .param(initial_params.values())
-                .max_iters(config.max_iters)
-        })
-        .add_observer(progress_observer, ObserverMode::Always)
-        .run()
-        .map_err(|error| {
-            let message = error.to_string();
-            if message.contains(CANCELLED_MARKER) {
-                FitError::Cancelled
-            } else {
-                FitError::Optimizer(message)
-            }
-        })?;
-
-    let best_param_values = optimization
-        .state()
-        .get_best_param()
-        .cloned()
-        .ok_or(FitError::MissingBestParameters)?;
-    let best_params = CurveParams::try_from_values(family, best_param_values)?;
-    let (mse, rmse) = calculate_metrics(points, &best_params);
-
-    Ok(FitResult {
-        family,
-        params: best_params,
-        mse,
-        rmse,
-        iterations: optimization.state().get_iter(),
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::{
-        DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner, IncrementalSplineFitStep,
-        SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-        SplineKnotStrategy, approximate_spline_knots, calculate_metrics, evaluate_linear_spline,
-        fit_akima_spline, fit_akima_spline_with_config, fit_curve, fit_curve_with_progress,
-        fit_linear_spline, fit_monotone_cubic_spline, fit_natural_cubic_spline,
-        sorted_points_with_duplicate_policy,
-    };
-    use crate::domain::{CurveFamily, CurveParams, InputError, LbfgsConfig, Point, Points};
-
-    fn build_points<F>(xs: &[f64], f: F) -> Points
-    where
-        F: Fn(f64) -> f64,
-    {
-        let points = xs
-            .iter()
-            .copied()
-            .map(|x| Point::try_new(x, f(x)).unwrap())
-            .collect::<Vec<_>>();
-        Points::try_from(points).unwrap()
-    }
-
-    #[test]
-    fn metrics_are_computed_correctly() {
-        let points = build_points(&[0.0, 1.0, 2.0], |x| x + 1.0);
-        let params = CurveParams::Linear { a: 1.0, b: 0.0 };
-        let (mse, rmse) = calculate_metrics(&points, &params);
-
-        assert!((mse - 1.0).abs() < 1e-12);
-        assert!((rmse - 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn lbfgs_fits_linear_data() {
-        let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Linear,
-            CurveParams::Linear { a: 0.2, b: 0.1 },
-            &config,
-        )
-        .expect("linear fit must succeed");
-
-        assert!(result.mse < 1e-10);
-    }
-
-    #[test]
-    fn lbfgs_fits_cubic_data() {
-        let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| {
-            0.4 * x * x * x - 0.8 * x * x + 1.2 * x + 0.5
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Cubic,
-            CurveParams::Cubic {
-                a: 0.1,
-                b: 0.1,
-                c: 0.1,
-                d: 0.1,
-            },
-            &config,
-        )
-        .expect("cubic fit must succeed");
-
-        assert!(result.mse < 1e-10);
-    }
-
-    #[test]
-    fn lbfgs_fits_nonic_data() {
-        let points = build_points(
-            &[-1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
-            |x| {
-                0.15 * x.powi(9) - 0.05 * x.powi(8) + 0.12 * x.powi(7) - 0.2 * x.powi(6)
-                    + 0.08 * x.powi(5)
-                    + 0.1 * x.powi(4)
-                    - 0.05 * x.powi(3)
-                    + 0.07 * x.powi(2)
-                    - 0.03 * x
-                    + 0.9
-            },
-        );
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Nonic,
-            CurveParams::Nonic {
-                a: 0.1,
-                b: 0.0,
-                c: 0.0,
-                d: 0.0,
-                e: 0.0,
-                f: 0.0,
-                g: 0.0,
-                h: 0.0,
-                i: 0.0,
-                j: 0.0,
-            },
-            &config,
-        )
-        .expect("nonic fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_exponential_basic_data() {
-        let points = build_points(&[0.0, 0.5, 1.0, 1.5, 2.0], |x| 0.7 + 2.4 * (-0.9 * x).exp());
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::ExponentialBasic,
-            CurveParams::ExponentialBasic {
-                a: 0.1,
-                b: 1.0,
-                c: 0.3,
-            },
-            &config,
-        )
-        .expect("exponential basic fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_exponential_linear_data() {
-        let points = build_points(&[-1.0, -0.5, 0.0, 0.7, 1.4, 2.0], |x| {
-            1.6 * (0.45 * x).exp() - 0.8 * x + 0.3
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::ExponentialLinear,
-            CurveParams::ExponentialLinear {
-                a: 1.0,
-                b: 0.2,
-                c: 0.0,
-                d: 0.0,
-            },
-            &config,
-        )
-        .expect("exponential + linear fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_arrhenius_data() {
-        let points = build_points(&[0.5, 0.8, 1.0, 1.4, 2.0, 3.0], |x| 1.8 * (0.9 / x).exp());
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Arrhenius,
-            CurveParams::Arrhenius { a: 1.0, b: 0.2 },
-            &config,
-        )
-        .expect("arrhenius fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_inverse_data() {
-        let points = build_points(&[0.5, 0.75, 1.0, 1.5, 2.0, 3.0], |x| 1.2 + 2.7 / x);
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Inverse,
-            CurveParams::Inverse { a: 0.0, b: 1.0 },
-            &config,
-        )
-        .expect("inverse fit must succeed");
-
-        assert!(result.mse < 1e-10);
-    }
-
-    #[test]
-    fn lbfgs_fits_logistic_data() {
-        let points = build_points(&[-2.0, -1.5, -1.0, -0.2, 0.4, 0.8, 1.2, 1.8], |x| {
-            4.0 / (1.0 + (-2.2 * (x - 0.7)).exp())
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Logistic,
-            CurveParams::Logistic {
-                a: 3.0,
-                b: 1.0,
-                c: 0.0,
-            },
-            &config,
-        )
-        .expect("logistic fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_lorentzian_data() {
-        let points = build_points(&[-2.0, -1.0, -0.4, 0.0, 0.4, 1.0, 2.0], |x| {
-            0.4 + 2.5 / (1.0 + ((x - 0.3) / 0.8).powi(2))
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Lorentzian,
-            CurveParams::Lorentzian {
-                a: 2.0,
-                x0: 0.0,
-                gamma: 1.0,
-                c: 0.0,
-            },
-            &config,
-        )
-        .expect("lorentzian fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_natural_log_data() {
-        let points = build_points(&[0.5, 0.8, 1.2, 1.8, 2.5, 3.2], |x| 1.5 * (x / 0.7).ln());
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::NaturalLog,
-            CurveParams::NaturalLog { a: 1.0, b: 1.0 },
-            &config,
-        )
-        .expect("natural log fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_michaelis_menten_data() {
-        let points = build_points(&[0.5, 1.0, 2.0, 4.0, 8.0], |x| (3.5 * x) / (1.8 + x));
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::MichaelisMenten,
-            CurveParams::MichaelisMenten { vmax: 2.0, km: 1.0 },
-            &config,
-        )
-        .expect("michaelis-menten fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_hyperbolic_tangent_data() {
-        let points = build_points(&[-2.0, -1.0, -0.4, 0.0, 0.6, 1.1, 1.8], |x| {
-            2.2 * (1.3 * (x - 0.35)).tanh() - 0.4
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::HyperbolicTangent,
-            CurveParams::HyperbolicTangent {
-                a: 1.5,
-                b: 0.8,
-                c: 0.0,
-                d: 0.0,
-            },
-            &config,
-        )
-        .expect("hyperbolic tangent fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_arctangent_step_data() {
-        let points = build_points(&[-2.0, -1.2, -0.6, 0.0, 0.5, 1.0, 1.8], |x| {
-            2.0 * (1.5 * (x - 0.2)).atan() + 0.1
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::ArctangentStep,
-            CurveParams::ArctangentStep {
-                a: 1.0,
-                b: 1.0,
-                c: 0.0,
-                d: 0.0,
-            },
-            &config,
-        )
-        .expect("arctangent step fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_softplus_data() {
-        let points = build_points(&[-2.0, -1.0, -0.2, 0.3, 0.8, 1.4, 2.0], |x| {
-            1.8 * super::softplus(2.0 * (x - 0.4)) - 0.35
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Softplus,
-            CurveParams::Softplus {
-                a: 1.0,
-                b: 1.0,
-                c: 0.0,
-                d: 0.0,
-            },
-            &config,
-        )
-        .expect("softplus fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_power_data() {
-        let points = build_points(&[0.5, 1.0, 1.5, 2.0, 3.0], |x| 1.7 * x.powf(1.35));
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Power,
-            CurveParams::Power { a: 1.0, b: 1.0 },
-            &config,
-        )
-        .expect("power fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn lbfgs_fits_gaussian_data() {
-        let points = build_points(&[-1.0, -0.5, 0.0, 0.5, 1.0, 1.5], |x| {
-            2.1 * (-(x - 0.4).powi(2) / (2.0 * 0.7 * 0.7)).exp()
-        });
-        let config = LbfgsConfig::default();
-        let result = fit_curve(
-            &points,
-            CurveFamily::Gaussian,
-            CurveParams::Gaussian {
-                a: 1.0,
-                b: 0.0,
-                c: 1.0,
-            },
-            &config,
-        )
-        .expect("gaussian fit must succeed");
-
-        assert!(result.mse < 1e-8);
-    }
-
-    #[test]
-    fn fit_curve_validates_positive_x_domain() {
-        let points = build_points(&[-1.0, 1.0, 2.0], |x| x);
-        let config = LbfgsConfig::default();
-        let error = fit_curve(
-            &points,
-            CurveFamily::Power,
-            CurveParams::Power { a: 1.0, b: 1.0 },
-            &config,
-        )
-        .expect_err("power family must reject x <= 0");
-
-        assert!(matches!(
-            error,
-            super::FitError::InvalidInput(InputError::NonPositiveXForFamily {
-                family: CurveFamily::Power,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn linear_spline_builds_curve() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
-        let result = fit_linear_spline(&points, 50, DEFAULT_SPLINE_KNOTS)
-            .expect("linear spline must succeed");
-
-        assert!(!result.knots.is_empty());
-        assert_eq!(result.curve.len(), 50);
-        assert!(result.mse < 1e-12);
-        assert!(result.iterations > 0);
-    }
-
-    #[test]
-    fn monotone_cubic_spline_preserves_monotone_curve() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0, 4.0], |x| x * x + 0.5 * x);
-        let result = fit_monotone_cubic_spline(&points, 80, DEFAULT_SPLINE_KNOTS)
-            .expect("monotone cubic spline must succeed");
-
-        assert_eq!(result.curve.len(), 80);
-        assert!(result.mse < 1e-10);
-        assert!(result.iterations > 0);
-        for window in result.curve.windows(2) {
-            assert!(window[1][1] >= window[0][1] - 1e-10);
-        }
-    }
-
-    #[test]
-    fn natural_cubic_spline_builds_curve() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| x * x * x - x + 1.0);
-        let result = fit_natural_cubic_spline(&points, 60, DEFAULT_SPLINE_KNOTS)
-            .expect("natural cubic spline must succeed");
-
-        assert_eq!(result.curve.len(), 60);
-        assert!(result.mse < 1e-8);
-        assert!(result.iterations > 0);
-    }
-
-    #[test]
-    fn akima_spline_builds_curve() {
-        let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0, 3.0], |x| {
-            x * x * x - 0.5 * x + 1.0
-        });
-        let result =
-            fit_akima_spline(&points, 70, DEFAULT_SPLINE_KNOTS).expect("akima spline must succeed");
-
-        assert_eq!(result.curve.len(), 70);
-        assert!(result.mse < 1e-10);
-        assert!(result.iterations > 0);
-    }
-
-    #[test]
-    fn akima_spline_requires_at_least_five_knots() {
-        let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0, 3.0], |x| {
-            x * x * x - 0.5 * x + 1.0
-        });
-        let error = fit_akima_spline_with_config(
-            &points,
-            SplineConfig {
-                knots: 4,
-                samples: 64,
-                knot_strategy: SplineKnotStrategy::BinMean,
-                extrapolation: SplineExtrapolation::Clamp,
-                duplicate_x_policy: SplineDuplicateXPolicy::Error,
-            },
-        )
-        .expect_err("akima should reject knot count below 5");
-
-        assert!(matches!(
-            error,
-            FitError::InvalidSplineInput(message) if message.contains("at least 5 knots")
-        ));
-    }
-
-    #[test]
-    fn median_knot_strategy_is_robust_to_single_outlier() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], |x| {
-            if (x - 1.0).abs() < 1e-12 { 100.0 } else { 0.0 }
-        });
-        let sorted = sorted_points_with_duplicate_policy(&points, SplineDuplicateXPolicy::Error)
-            .expect("x values are unique");
-        let mean_knots = approximate_spline_knots(&sorted, 3, SplineKnotStrategy::BinMean);
-        let median_knots = approximate_spline_knots(&sorted, 3, SplineKnotStrategy::BinMedian);
-
-        assert!(mean_knots[0][1] > 30.0);
-        assert!(median_knots[0][1].abs() < 1e-12);
-    }
-
-    #[test]
-    fn duplicate_x_policy_mean_y_merges_points() {
-        let points = Points::try_from(vec![
-            Point::try_new(1.0, 2.0).unwrap(),
-            Point::try_new(1.0, 6.0).unwrap(),
-            Point::try_new(2.0, 4.0).unwrap(),
-        ])
-        .unwrap();
-
-        let sorted = sorted_points_with_duplicate_policy(&points, SplineDuplicateXPolicy::MeanY)
-            .expect("duplicate x should be merged with mean");
-
-        assert_eq!(sorted.len(), 2);
-        assert!((sorted[0][0] - 1.0).abs() < 1e-12);
-        assert!((sorted[0][1] - 4.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn linear_extrapolation_uses_edge_slope() {
-        let knots = [[0.0, 1.0], [2.0, 5.0]];
-
-        let clamped = evaluate_linear_spline(&knots, -1.0, SplineExtrapolation::Clamp);
-        let linear = evaluate_linear_spline(&knots, -1.0, SplineExtrapolation::Linear);
-
-        assert!((clamped - 1.0).abs() < 1e-12);
-        assert!((linear + 1.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn splines_are_approximation_not_exact_interpolation() {
-        let points = build_points(&(-20..=20).map(|x| x as f64).collect::<Vec<_>>(), |x| {
-            (x * 0.3).sin() + 0.1 * x
-        });
-
-        let result = fit_natural_cubic_spline(&points, 60, DEFAULT_SPLINE_KNOTS)
-            .expect("natural cubic spline");
-
-        assert_eq!(result.curve.len(), 60);
-        assert!(
-            result.mse > 1e-6,
-            "Smoothing should produce non-zero error on dense input"
-        );
-        assert!(result.iterations > 0);
-    }
-
-    #[test]
-    fn incremental_spline_runner_reports_iteration_steps() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
-        let mut runner = IncrementalSplineFitRunner::new(
-            &points,
-            SplineFamilyKind::Linear,
-            SplineConfig {
-                knots: DEFAULT_SPLINE_KNOTS,
-                samples: 48,
-                knot_strategy: SplineKnotStrategy::BinMean,
-                extrapolation: SplineExtrapolation::Clamp,
-                duplicate_x_policy: SplineDuplicateXPolicy::Error,
-            },
-        )
-        .expect("incremental linear spline runner must be created");
-
-        let mut saw_iteration = false;
-        loop {
-            match runner.step().expect("runner step must succeed") {
-                IncrementalSplineFitStep::Iteration { .. } => saw_iteration = true,
-                IncrementalSplineFitStep::Finished(result) => {
-                    assert!(saw_iteration);
-                    assert!(result.iterations > 0);
-                    break;
-                }
-                IncrementalSplineFitStep::Cancelled => panic!("runner must not be cancelled"),
-            }
-        }
-    }
-
-    #[test]
-    fn incremental_spline_runner_rejects_wrong_custom_init_length() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
-        let error = IncrementalSplineFitRunner::new_with_initial_knot_y(
-            &points,
-            SplineFamilyKind::Linear,
-            SplineConfig {
-                knots: DEFAULT_SPLINE_KNOTS,
-                samples: 48,
-                knot_strategy: SplineKnotStrategy::BinMean,
-                extrapolation: SplineExtrapolation::Clamp,
-                duplicate_x_policy: SplineDuplicateXPolicy::Error,
-            },
-            Some(&[1.0, 2.0, 3.0]),
-        );
-        let error = match error {
-            Ok(_) => panic!("runner must reject mismatched custom initialization length"),
-            Err(error) => error,
-        };
-
-        assert!(matches!(
-            error,
-            FitError::InvalidSplineInput(message) if message.contains("expects")
-        ));
-    }
-
-    #[test]
-    fn incremental_spline_runner_can_be_cancelled() {
-        let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| x * x);
-        let mut runner = IncrementalSplineFitRunner::new(
-            &points,
-            SplineFamilyKind::NaturalCubic,
-            SplineConfig::default(),
-        )
-        .expect("incremental spline runner must be created");
-
-        runner.cancel();
-        let step = runner.step().expect("cancelled runner step must succeed");
-        assert!(matches!(step, IncrementalSplineFitStep::Cancelled));
-    }
-
-    #[test]
-    fn fit_curve_can_be_cancelled_via_progress_callback() {
-        let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
-        let config = LbfgsConfig::default();
-        let result = fit_curve_with_progress(
-            &points,
-            CurveFamily::Linear,
-            CurveParams::Linear { a: 0.2, b: 0.1 },
-            &config,
-            |_iteration, _params| false,
-        );
-
-        assert!(matches!(result, Err(FitError::Cancelled)));
-    }
-}
+mod tests;

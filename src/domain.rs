@@ -1254,6 +1254,226 @@ impl Default for LbfgsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Параметры метода Nelder-Mead с проверяемыми инвариантами.
+pub struct NelderMeadConfig {
+    pub max_iters: u64,
+    pub simplex_scale: f64,
+    pub sd_tolerance: f64,
+    pub alpha: f64,
+    pub gamma: f64,
+    pub rho: f64,
+    pub sigma: f64,
+}
+
+impl NelderMeadConfig {
+    #[allow(clippy::too_many_arguments)]
+    /// Создает конфигурацию и валидирует все ограничения аргументов.
+    pub fn try_new(
+        max_iters: u64,
+        simplex_scale: f64,
+        sd_tolerance: f64,
+        alpha: f64,
+        gamma: f64,
+        rho: f64,
+        sigma: f64,
+    ) -> Result<Self, InputError> {
+        let config = Self {
+            max_iters,
+            simplex_scale,
+            sd_tolerance,
+            alpha,
+            gamma,
+            rho,
+            sigma,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), InputError> {
+        if self.max_iters == 0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "max_iters must be greater than 0",
+            ));
+        }
+        if !self.simplex_scale.is_finite() || self.simplex_scale <= 0.0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "simplex_scale must be finite and > 0",
+            ));
+        }
+        if !self.sd_tolerance.is_finite() || self.sd_tolerance < 0.0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "sd_tolerance must be finite and >= 0",
+            ));
+        }
+        if !self.alpha.is_finite() || self.alpha <= 0.0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "alpha must be finite and > 0",
+            ));
+        }
+        if !self.gamma.is_finite() || self.gamma <= 1.0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "gamma must be finite and > 1",
+            ));
+        }
+        if !self.rho.is_finite() || self.rho <= 0.0 || self.rho > 0.5 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "rho must be finite and in (0, 0.5]",
+            ));
+        }
+        if !self.sigma.is_finite() || self.sigma <= 0.0 || self.sigma > 1.0 {
+            return Err(InputError::InvalidNelderMeadConfig(
+                "sigma must be finite and in (0, 1]",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for NelderMeadConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 400,
+            simplex_scale: 0.05,
+            sd_tolerance: 1e-8,
+            alpha: 1.0,
+            gamma: 2.0,
+            rho: 0.5,
+            sigma: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+/// Параметры steepest descent с line-search и проверяемыми инвариантами.
+pub struct SteepestDescentConfig {
+    pub max_iters: u64,
+    pub c1: f64,
+    pub c2: f64,
+    pub step_min: f64,
+    pub step_max: f64,
+    pub width_tolerance: f64,
+}
+
+impl SteepestDescentConfig {
+    #[allow(clippy::too_many_arguments)]
+    /// Создает конфигурацию и валидирует все ограничения аргументов.
+    pub fn try_new(
+        max_iters: u64,
+        c1: f64,
+        c2: f64,
+        step_min: f64,
+        step_max: f64,
+        width_tolerance: f64,
+    ) -> Result<Self, InputError> {
+        let config = Self {
+            max_iters,
+            c1,
+            c2,
+            step_min,
+            step_max,
+            width_tolerance,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), InputError> {
+        if self.max_iters == 0 {
+            return Err(InputError::InvalidSteepestDescentConfig(
+                "max_iters must be greater than 0",
+            ));
+        }
+        if !self.c1.is_finite()
+            || !self.c2.is_finite()
+            || self.c1 <= 0.0
+            || self.c1 >= self.c2
+            || self.c2 >= 1.0
+        {
+            return Err(InputError::InvalidSteepestDescentConfig(
+                "c1 and c2 must satisfy 0 < c1 < c2 < 1",
+            ));
+        }
+        if !self.step_min.is_finite()
+            || !self.step_max.is_finite()
+            || self.step_min < 0.0
+            || self.step_max <= self.step_min
+        {
+            return Err(InputError::InvalidSteepestDescentConfig(
+                "step bounds must satisfy 0 <= step_min < step_max",
+            ));
+        }
+        if !self.width_tolerance.is_finite() || self.width_tolerance < 0.0 {
+            return Err(InputError::InvalidSteepestDescentConfig(
+                "width_tolerance must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for SteepestDescentConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 300,
+            c1: 1e-4,
+            c2: 0.9,
+            step_min: 1e-12,
+            step_max: 10.0,
+            width_tolerance: 1e-10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Метод оптимизации для подгонки параметрических моделей и сплайнов.
+pub enum OptimizerMethod {
+    #[default]
+    Lbfgs,
+    NelderMead,
+    SteepestDescent,
+}
+
+impl OptimizerMethod {
+    /// Полный список методов для UI и переборов.
+    pub const ALL: [Self; 3] = [Self::Lbfgs, Self::NelderMead, Self::SteepestDescent];
+}
+
+#[derive(Debug, Clone, PartialEq)]
+/// Объединенная конфигурация оптимизатора.
+pub enum OptimizerConfig {
+    Lbfgs(LbfgsConfig),
+    NelderMead(NelderMeadConfig),
+    SteepestDescent(SteepestDescentConfig),
+}
+
+impl OptimizerConfig {
+    /// Возвращает выбранный метод оптимизации.
+    pub fn method(&self) -> OptimizerMethod {
+        match self {
+            Self::Lbfgs(_) => OptimizerMethod::Lbfgs,
+            Self::NelderMead(_) => OptimizerMethod::NelderMead,
+            Self::SteepestDescent(_) => OptimizerMethod::SteepestDescent,
+        }
+    }
+
+    /// Возвращает ограничение на число итераций для выбранного метода.
+    pub fn max_iters(&self) -> u64 {
+        match self {
+            Self::Lbfgs(config) => config.max_iters,
+            Self::NelderMead(config) => config.max_iters,
+            Self::SteepestDescent(config) => config.max_iters,
+        }
+    }
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self::Lbfgs(LbfgsConfig::default())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 /// Результат подгонки параметрической модели.
 pub struct FitResult {
     pub family: CurveFamily,
@@ -1299,6 +1519,8 @@ pub enum InputError {
         got: CurveFamily,
     },
     InvalidLbfgsConfig(&'static str),
+    InvalidNelderMeadConfig(&'static str),
+    InvalidSteepestDescentConfig(&'static str),
 }
 
 impl fmt::Display for InputError {
@@ -1353,6 +1575,8 @@ impl fmt::Display for InputError {
                 )
             }
             Self::InvalidLbfgsConfig(message) => f.write_str(message),
+            Self::InvalidNelderMeadConfig(message) => f.write_str(message),
+            Self::InvalidSteepestDescentConfig(message) => f.write_str(message),
         }
     }
 }
@@ -1361,7 +1585,10 @@ impl std::error::Error for InputError {}
 
 #[cfg(test)]
 mod tests {
-    use super::{CurveFamily, CurveParams, InputError, LbfgsConfig, Point, Points};
+    use super::{
+        CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig, Point, Points,
+        SteepestDescentConfig,
+    };
 
     #[test]
     fn point_rejects_non_finite_values() {
@@ -1457,6 +1684,33 @@ mod tests {
         assert!(result.is_err());
 
         let result = LbfgsConfig::try_new(5, 100, 1e-6, 1e-8, 1e-4, 0.9, 10.0, 1.0, 1e-10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn nelder_mead_config_validates_constraints() {
+        let result = NelderMeadConfig::try_new(0, 0.1, 1e-8, 1.0, 2.0, 0.5, 0.5);
+        assert!(result.is_err());
+
+        let result = NelderMeadConfig::try_new(200, 0.0, 1e-8, 1.0, 2.0, 0.5, 0.5);
+        assert!(result.is_err());
+
+        let result = NelderMeadConfig::try_new(200, 0.1, 1e-8, 1.0, 1.0, 0.5, 0.5);
+        assert!(result.is_err());
+
+        let result = NelderMeadConfig::try_new(200, 0.1, 1e-8, 1.0, 2.0, 0.0, 0.5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn steepest_descent_config_validates_constraints() {
+        let result = SteepestDescentConfig::try_new(0, 1e-4, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = SteepestDescentConfig::try_new(100, 0.9, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = SteepestDescentConfig::try_new(100, 1e-4, 0.9, 10.0, 1.0, 1e-10);
         assert!(result.is_err());
     }
 
