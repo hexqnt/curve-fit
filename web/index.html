@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta
+    name="description"
+    content="Curve fitting training app for exploring models and spline approximation by points. Интерактивное приложение для подбора кривых и сплайн-аппроксимации по точкам."
+  />
+  <meta name="robots" content="index,follow" />
+  <meta name="theme-color" content="#f4f6f8" />
+  <link rel="canonical" href="https://curve-fit.hexq.ru/" />
+  <link data-trunk rel="copy-file" href="favicon.svg" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
+  <link rel="shortcut icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="curve-fit" />
+  <meta property="og:title" content="curve-fit" />
+  <meta
+    property="og:description"
+    content="Curve fitting training app for exploring models and spline approximation by points. Интерактивное приложение для подбора кривых и сплайн-аппроксимации по точкам."
+  />
+  <meta property="og:url" content="https://curve-fit.hexq.ru/" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:locale:alternate" content="ru_RU" />
+  <meta
+    property="og:image"
+    content="https://curve-fit.hexq.ru/images/curve-fit-screenshot.png"
+  />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="curve-fit" />
+  <meta
+    name="twitter:description"
+    content="Curve fitting training app for exploring models and spline approximation by points. Интерактивное приложение для подбора кривых и сплайн-аппроксимации по точкам."
+  />
+  <meta
+    name="twitter:image"
+    content="https://curve-fit.hexq.ru/images/curve-fit-screenshot.png"
+  />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "curve-fit",
+      "alternateName": "curve-fit — подбор кривой",
+      "applicationCategory": "EducationalApplication",
+      "operatingSystem": "Any",
+      "url": "https://curve-fit.hexq.ru/",
+      "description": "Curve fitting training app for exploring models and spline approximation by points.",
+      "inLanguage": ["en", "ru"],
+      "image": "https://curve-fit.hexq.ru/images/curve-fit-screenshot.png",
+      "screenshot": "https://curve-fit.hexq.ru/images/curve-fit-screenshot.png",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+  </script>
+  <title>curve-fit</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family:
+        "Segoe UI",
+        "Segoe UI Symbol",
+        "Noto Sans",
+        "Noto Sans Symbols 2",
+        sans-serif;
+      background: #f4f6f8;
+    }
+
+    #curve_fit_canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <noscript>
+    curve-fit is an interactive curve fitting training app. curve-fit — интерактивное учебное
+    приложение для подбора кривой.
+  </noscript>
+  <canvas id="curve_fit_canvas"></canvas>
+  <link data-trunk rel="rust" href="../Cargo.toml" />
+</body>
+</html>
