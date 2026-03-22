@@ -1,9 +1,11 @@
 use super::{
     DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner, IncrementalSplineFitStep,
-    SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-    SplineKnotStrategy, approximate_spline_knots, calculate_metrics, evaluate_linear_spline,
-    fit_akima_spline, fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
-    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config, fit_linear_spline,
+    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
+    SplineFamilyKind, SplineKnotStrategy, approximate_spline_knots, calculate_iteration_metrics,
+    calculate_metrics, evaluate_linear_spline, fit_akima_spline, fit_akima_spline_with_config,
+    fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,
+    fit_curve_with_progress_and_optimizer_config,
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
     fit_monotone_cubic_spline, fit_natural_cubic_spline, sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
@@ -31,6 +33,76 @@ fn metrics_are_computed_correctly() {
 
     assert!((mse - 1.0).abs() < 1e-12);
     assert!((rmse - 1.0).abs() < 1e-12);
+}
+
+#[test]
+fn iteration_metrics_loss_matches_selected_objective() {
+    let points = build_points(&[0.0, 1.0, 2.0], |x| x + 1.0);
+    let params = CurveParams::Linear { a: 1.0, b: 0.0 };
+
+    let mse_metrics = calculate_iteration_metrics(&points, &params, OptimizationLossMetric::Mse);
+    let mae_metrics = calculate_iteration_metrics(&points, &params, OptimizationLossMetric::Mae);
+    let soft_l1_metrics =
+        calculate_iteration_metrics(&points, &params, OptimizationLossMetric::SoftL1);
+
+    assert!((mse_metrics.loss - 1.0).abs() < 1e-12);
+    assert!((mae_metrics.loss - 1.0).abs() < 1e-12);
+
+    let expected_soft_l1 = 2.0 * (2.0_f64.sqrt() - 1.0);
+    assert!((mse_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+    assert!((mae_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+    assert!((soft_l1_metrics.loss - expected_soft_l1).abs() < 1e-12);
+    assert!((soft_l1_metrics.mse - 1.0).abs() < 1e-12);
+    assert!((soft_l1_metrics.mae - 1.0).abs() < 1e-12);
+    assert!((soft_l1_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+}
+
+#[test]
+fn parametric_fit_supports_all_objective_metrics() {
+    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let optimizer_config = OptimizerConfig::Lbfgs(LbfgsConfig::default());
+    for loss_metric in OptimizationLossMetric::ALL {
+        let result = fit_curve_with_progress_and_optimizer_config_and_loss_metric(
+            &points,
+            CurveFamily::Linear,
+            CurveParams::Linear { a: 0.2, b: 0.1 },
+            &optimizer_config,
+            loss_metric,
+            |_iteration, _params| true,
+        )
+        .expect("fit with selected objective metric must succeed");
+        assert!(result.mse < 1e-8);
+    }
+}
+
+#[test]
+fn incremental_spline_runner_supports_all_objective_metrics() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let optimizer_config = OptimizerConfig::Lbfgs(LbfgsConfig::default());
+    for loss_metric in OptimizationLossMetric::ALL {
+        let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config_and_loss_metric(
+            &points,
+            SplineFamilyKind::Linear,
+            SplineConfig::default(),
+            &optimizer_config,
+            loss_metric,
+        )
+        .expect("incremental spline runner must be created");
+
+        let mut finished = false;
+        for _ in 0..5_000 {
+            match runner.step().expect("runner step must succeed") {
+                IncrementalSplineFitStep::Iteration { .. } => {}
+                IncrementalSplineFitStep::Finished(result) => {
+                    assert!(result.mse < 1e-6);
+                    finished = true;
+                    break;
+                }
+                IncrementalSplineFitStep::Cancelled => panic!("runner must not be cancelled"),
+            }
+        }
+        assert!(finished, "runner must finish in reasonable number of steps");
+    }
 }
 
 #[test]

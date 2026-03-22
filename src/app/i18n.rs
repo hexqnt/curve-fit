@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::domain::CurveFamily;
-use crate::fit::{SplineExtrapolation, SplineKnotStrategy};
+use crate::fit::{OptimizationLossMetric, SplineExtrapolation, SplineKnotStrategy};
 
 use super::{ModelChoice, ParamInitMethod, PlotTool, SprayBrush, UiLanguage};
 
@@ -124,6 +124,17 @@ pub(super) fn spline_extrapolation_label(
         (UiLanguage::English, SplineExtrapolation::Linear) => "Linear",
         (UiLanguage::Russian, SplineExtrapolation::Clamp) => "Фиксация на краю",
         (UiLanguage::Russian, SplineExtrapolation::Linear) => "Линейная",
+    }
+}
+
+pub(super) fn optimization_loss_metric_label(
+    _language: UiLanguage,
+    metric: OptimizationLossMetric,
+) -> &'static str {
+    match metric {
+        OptimizationLossMetric::Mse => "MSE",
+        OptimizationLossMetric::Mae => "MAE",
+        OptimizationLossMetric::SoftL1 => "soft_l1",
     }
 }
 

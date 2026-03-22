@@ -417,17 +417,11 @@ fn formula_spans_to_svg(spans: &[FormulaSpan]) -> String {
         let escaped = escape_svg_text(&span.text);
         let tspan = match span.kind {
             FormulaSpanKind::Normal => format!("<tspan>{escaped}</tspan>"),
-            FormulaSpanKind::Superscript => {
-                format!("<tspan baseline-shift=\"super\" font-size=\"66%\">{escaped}</tspan>")
-            }
-            FormulaSpanKind::Subscript => {
-                format!("<tspan baseline-shift=\"sub\" font-size=\"66%\">{escaped}</tspan>")
-            }
-            FormulaSpanKind::FractionNumerator => {
+            FormulaSpanKind::Superscript | FormulaSpanKind::FractionNumerator => {
                 format!("<tspan baseline-shift=\"super\" font-size=\"66%\">{escaped}</tspan>")
             }
             FormulaSpanKind::FractionSlash => format!("<tspan font-size=\"88%\">{escaped}</tspan>"),
-            FormulaSpanKind::FractionDenominator => {
+            FormulaSpanKind::Subscript | FormulaSpanKind::FractionDenominator => {
                 format!("<tspan baseline-shift=\"sub\" font-size=\"66%\">{escaped}</tspan>")
             }
         };

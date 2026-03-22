@@ -21,6 +21,7 @@ egui_extras = { version = "0.33.3", default-features = false, features = [
     "svg_text",
 ] }
 egui_plot = "0.34.1"
+trunk = "0.21.14"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sys-locale = "0.3.2"

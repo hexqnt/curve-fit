@@ -26,9 +26,10 @@ use self::formula::{formula_svg_bytes, formula_svg_uri};
 use self::i18n::{
     center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
     fit_to_content_icon_image, github_mark_image, language_flag_image, model_choice_label,
-    param_init_method_disabled_label, param_init_method_label, param_init_method_name_en,
-    redo_icon_image, reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label,
-    spray_brush_label, stop_icon_image, tool_icon_image, tool_label, tr, undo_icon_image,
+    optimization_loss_metric_label, param_init_method_disabled_label, param_init_method_label,
+    param_init_method_name_en, redo_icon_image, reset_icon_image, spline_extrapolation_label,
+    spline_knot_strategy_label, spray_brush_label, stop_icon_image, tool_icon_image, tool_label,
+    tr, undo_icon_image,
 };
 use self::optimizer::{
     LbfgsInputState, NelderMeadInputState, OptimizerPreset, OptimizerUiMode,
@@ -47,8 +48,8 @@ use crate::domain::{
 };
 use crate::fit::{
     FitError, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-    SplineKnotStrategy, SplineResult, calculate_metrics, default_spline_initial_knot_y,
-    fit_curve_with_progress_and_optimizer_config, sample_curve,
+    SplineKnotStrategy, SplineResult, calculate_iteration_metrics, default_spline_initial_knot_y,
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric, sample_curve,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::fit::{
@@ -56,6 +57,7 @@ use crate::fit::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
+use crate::fit::{IterationMetricSnapshot, OptimizationLossMetric};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -76,6 +78,10 @@ const SPLINE_AUTO_SAMPLES_PER_KNOT: usize = 30;
 const SPLINE_AUTO_SAMPLES_PER_POINT: usize = 3;
 const DIAGNOSTICS_PANEL_DEFAULT_HEIGHT: f32 = 230.0;
 const DIAGNOSTICS_PANEL_MIN_HEIGHT: f32 = 120.0;
+const LEFT_PANEL_DEFAULT_WIDTH: f32 = 350.0;
+const LEFT_PANEL_MIN_WIDTH: f32 = 350.0;
+const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 300.0;
+const RIGHT_PANEL_MIN_WIDTH: f32 = 300.0;
 const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
@@ -435,12 +441,12 @@ impl StatusMessage {
 enum FitWorkerMessage {
     Iteration {
         iteration: u64,
-        mse: f64,
+        metrics: IterationMetricSnapshot,
         params: CurveParams,
     },
     SplineIteration {
         iteration: u64,
-        mse: f64,
+        metrics: IterationMetricSnapshot,
         knot_y: Vec<f64>,
         curve: Vec<[f64; 2]>,
     },
@@ -469,6 +475,7 @@ pub struct CurveFitApp {
     parameter_inputs: Vec<String>,
     optimizer_method: OptimizerMethod,
     optimizer_mode: OptimizerUiMode,
+    optimization_loss_metric: OptimizationLossMetric,
     lbfgs_inputs: LbfgsInputState,
     lbfgs_preset: OptimizerPreset,
     nelder_mead_inputs: NelderMeadInputState,
@@ -490,6 +497,7 @@ pub struct CurveFitApp {
     show_left_panel: bool,
     show_right_panel: bool,
     show_diagnostics_panel: bool,
+    diagnostics_hide_non_loss_by_default_pending: bool,
     diagnostics_shared_axis_width: f32,
     iteration_delay_seconds: f64,
     spline_knots: usize,
@@ -498,6 +506,7 @@ pub struct CurveFitApp {
     spline_duplicate_x_policy: SplineDuplicateXPolicy,
     spline_initial_knot_y_inputs: Vec<String>,
     fit_in_progress: bool,
+    fit_loss_metric: OptimizationLossMetric,
     fit_preview_params: Option<CurveParams>,
     fit_preview_iteration: Option<u64>,
     fit_result: Option<FitResult>,
@@ -833,6 +842,7 @@ impl CurveFitApp {
         self.spline_plot_curve = None;
         self.sampled_curve_cache = None;
         self.iteration_diagnostics.clear();
+        self.diagnostics_hide_non_loss_by_default_pending = true;
         self.clear_fit_preview();
     }
 
@@ -936,6 +946,51 @@ impl CurveFitApp {
         }
 
         CurveParams::try_from_values(family, values).map_err(|error| error.to_string())
+    }
+
+    fn has_fitted_params_for_family(&self, family: CurveFamily) -> bool {
+        self.fit_result
+            .as_ref()
+            .is_some_and(|result| result.family == family)
+    }
+
+    fn build_fitted_initial_params(&self, family: CurveFamily) -> Result<CurveParams, String> {
+        let Some(result) = &self.fit_result else {
+            return Err("No fitted model parameters are available for initialization".to_string());
+        };
+
+        if result.family != family {
+            return Err(format!(
+                "Fitted model family mismatch: expected {family}, got {}",
+                result.family
+            ));
+        }
+
+        Ok(result.params.clone())
+    }
+
+    fn apply_fitted_param_init(&mut self) {
+        let Some(family) = self.resolved_model().parametric_family() else {
+            self.status = Some(StatusMessage::Error(
+                "Current model is non-parametric and has no initial parameters".to_string(),
+            ));
+            return;
+        };
+
+        match self.build_fitted_initial_params(family) {
+            Ok(params) => {
+                self.parameter_inputs = params
+                    .values()
+                    .into_iter()
+                    .map(|value| value.to_string())
+                    .collect();
+                self.clear_fit_outputs();
+                self.status = Some(StatusMessage::Ready);
+            }
+            Err(error) => {
+                self.status = Some(StatusMessage::Error(error));
+            }
+        }
     }
 
     fn apply_param_init_method(&mut self, method: ParamInitMethod) {
@@ -1229,6 +1284,7 @@ impl Default for CurveFitApp {
                 .collect(),
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,
+            optimization_loss_metric: OptimizationLossMetric::default(),
             lbfgs_inputs: LbfgsInputState::from_config(&default_lbfgs),
             lbfgs_preset: infer_lbfgs_preset(&default_lbfgs),
             nelder_mead_inputs: NelderMeadInputState::from_config(&default_nelder_mead),
@@ -1257,9 +1313,11 @@ impl Default for CurveFitApp {
             spline_initial_knot_y_inputs: Vec::new(),
             show_right_panel: true,
             show_diagnostics_panel: true,
+            diagnostics_hide_non_loss_by_default_pending: true,
             diagnostics_shared_axis_width: 0.0,
             iteration_delay_seconds: 0.25,
             fit_in_progress: false,
+            fit_loss_metric: OptimizationLossMetric::default(),
             fit_preview_params: None,
             fit_preview_iteration: None,
             fit_result: None,
@@ -1324,26 +1382,54 @@ impl eframe::App for CurveFitApp {
 
         if self.show_left_panel {
             egui::SidePanel::left("points_panel")
-                .default_width(340.0)
+                .default_width(LEFT_PANEL_DEFAULT_WIDTH)
+                .min_width(LEFT_PANEL_MIN_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_tools(ui));
-                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_points_editor(ui));
+                    ui.set_width(ui.available_width());
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        self.ui_tools(ui);
+                    });
+                    // ui.set_width(ui.available_width());
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        // ui.set_min_width(ui.available_width());
+                        self.ui_points_editor(ui);
+                    });
                 });
         }
 
         if self.show_right_panel {
             egui::SidePanel::right("settings_panel")
-                .default_width(320.0)
+                .default_width(RIGHT_PANEL_DEFAULT_WIDTH)
+                .min_width(RIGHT_PANEL_MIN_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_family_and_params(ui));
-                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_optimizer(ui));
-                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_result(ui));
+                    ui.set_width(ui.available_width());
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        // ui.set_width(ui.available_width());
+                        self.ui_family_and_params(ui);
+                    });
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        // ui.set_width(ui.available_width());
+                        self.ui_optimization_metric(ui);
+                    });
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        // ui.set_width(ui.available_width());
+                        self.ui_optimizer(ui);
+                    });
+                    Self::panel_card_frame(ui).show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        // ui.set_width(ui.available_width());
+                        self.ui_result(ui);
+                    });
                 });
         }
 

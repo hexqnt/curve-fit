@@ -3,6 +3,7 @@ use super::{
     ParamInitMethod, StatusMessage, UiLanguage, data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
+use crate::fit::{IterationMetricSnapshot, OptimizationLossMetric};
 use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{
@@ -32,6 +33,26 @@ fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "expected {expected}, got {actual}, tolerance {tolerance}"
     );
+}
+
+fn metrics_snapshot(
+    loss: f64,
+    mse: f64,
+    rmse: f64,
+    mae: f64,
+    soft_l1: f64,
+    r2: f64,
+    max_abs_error: f64,
+) -> IterationMetricSnapshot {
+    IterationMetricSnapshot {
+        loss,
+        mse,
+        rmse,
+        mae,
+        soft_l1,
+        r2,
+        max_abs_error,
+    }
 }
 
 #[test]
@@ -80,6 +101,14 @@ fn optimizer_config_matches_selected_method() {
         app.optimizer_config(),
         Ok(OptimizerConfig::SteepestDescent(_))
     ));
+}
+
+#[test]
+fn optimization_metric_defaults_to_mse() {
+    let app = CurveFitApp::default();
+    assert_eq!(app.optimization_loss_metric, OptimizationLossMetric::Mse);
+    assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
+    assert!(app.diagnostics_hide_non_loss_by_default_pending);
 }
 
 #[test]
@@ -137,13 +166,19 @@ fn diagnostics_initialize_stores_iteration_zero_state() {
     let params = CurveParams::Linear { a: 2.0, b: 1.0 };
     let mut diagnostics = IterationDiagnostics::default();
 
-    diagnostics.initialize(&points, &params);
+    diagnostics.initialize(&points, &params, OptimizationLossMetric::Mse);
 
     assert_eq!(
         diagnostics.parameter_names,
         vec!["a".to_string(), "b".to_string()]
     );
-    assert_eq!(diagnostics.loss_mse_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.loss_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.mse_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.rmse_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.mae_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.soft_l1_points, vec![[0.0, 0.0]]);
+    assert_eq!(diagnostics.r2_abs_points, vec![[0.0, 1.0]]);
+    assert_eq!(diagnostics.max_abs_error_points, vec![[0.0, 0.0]]);
     assert_eq!(diagnostics.parameter_series.len(), 2);
     assert_eq!(diagnostics.parameter_series[0], vec![[0.0, 2.0]]);
     assert_eq!(diagnostics.parameter_series[1], vec![[0.0, 1.0]]);
@@ -153,13 +188,31 @@ fn diagnostics_initialize_stores_iteration_zero_state() {
 fn diagnostics_append_replaces_duplicate_iteration() {
     let points = line_points();
     let mut diagnostics = IterationDiagnostics::default();
-    diagnostics.initialize(&points, &CurveParams::Linear { a: 2.0, b: 1.0 });
+    diagnostics.initialize(
+        &points,
+        &CurveParams::Linear { a: 2.0, b: 1.0 },
+        OptimizationLossMetric::Mse,
+    );
 
-    diagnostics.append(2, 5.0, &CurveParams::Linear { a: 1.0, b: 0.0 });
-    diagnostics.append(2, 3.0, &CurveParams::Linear { a: -1.5, b: 0.5 });
+    diagnostics.append(
+        2,
+        metrics_snapshot(5.0, 5.0, 5.0_f64.sqrt(), 2.0, 1.75, -1.5, 3.0),
+        &CurveParams::Linear { a: 1.0, b: 0.0 },
+    );
+    diagnostics.append(
+        2,
+        metrics_snapshot(3.0, 3.0, 3.0_f64.sqrt(), 1.5, 1.1, -2.0, 2.0),
+        &CurveParams::Linear { a: -1.5, b: 0.5 },
+    );
 
-    assert_eq!(diagnostics.loss_mse_points.len(), 2);
-    assert_eq!(diagnostics.loss_mse_points[1], [2.0, 3.0]);
+    assert_eq!(diagnostics.loss_points.len(), 2);
+    assert_eq!(diagnostics.loss_points[1], [2.0, 3.0]);
+    assert_eq!(diagnostics.mse_points[1], [2.0, 3.0]);
+    assert_eq!(diagnostics.rmse_points[1], [2.0, 3.0_f64.sqrt()]);
+    assert_eq!(diagnostics.mae_points[1], [2.0, 1.5]);
+    assert_eq!(diagnostics.soft_l1_points[1], [2.0, 1.1]);
+    assert_eq!(diagnostics.r2_abs_points[1], [2.0, 2.0]);
+    assert_eq!(diagnostics.max_abs_error_points[1], [2.0, 2.0]);
     assert_eq!(diagnostics.parameter_series[0].len(), 2);
     assert_eq!(diagnostics.parameter_series[0][1], [2.0, -1.5]);
     assert_eq!(diagnostics.parameter_series[1].len(), 2);
@@ -170,10 +223,14 @@ fn diagnostics_append_replaces_duplicate_iteration() {
 fn diagnostics_append_resets_when_family_changes() {
     let points = line_points();
     let mut diagnostics = IterationDiagnostics::default();
-    diagnostics.initialize(&points, &CurveParams::Linear { a: 2.0, b: 1.0 });
+    diagnostics.initialize(
+        &points,
+        &CurveParams::Linear { a: 2.0, b: 1.0 },
+        OptimizationLossMetric::Mse,
+    );
     diagnostics.append(
         4,
-        1.0,
+        metrics_snapshot(1.0, 1.0, 1.0, 1.0, 0.8, 0.2, 1.0),
         &CurveParams::Quadratic {
             a: 1.0,
             b: -2.0,
@@ -185,7 +242,7 @@ fn diagnostics_append_resets_when_family_changes() {
         diagnostics.parameter_names,
         vec!["a".to_string(), "b".to_string(), "c".to_string()]
     );
-    assert_eq!(diagnostics.loss_mse_points, vec![[4.0, 1.0]]);
+    assert_eq!(diagnostics.loss_points, vec![[4.0, 1.0]]);
     assert_eq!(diagnostics.parameter_series.len(), 3);
     assert_eq!(diagnostics.parameter_series[0], vec![[4.0, 1.0]]);
     assert_eq!(diagnostics.parameter_series[1], vec![[4.0, -2.0]]);
@@ -196,14 +253,24 @@ fn diagnostics_append_resets_when_family_changes() {
 fn diagnostics_append_spline_tracks_knot_parameters() {
     let mut diagnostics = IterationDiagnostics::default();
 
-    diagnostics.append_spline(1, 2.5, &[0.5, -1.0]);
-    diagnostics.append_spline(2, 1.5, &[0.75, -0.25]);
+    diagnostics.append_spline(
+        1,
+        metrics_snapshot(2.5, 2.5, 2.5_f64.sqrt(), 1.2, 1.6, -0.25, 2.0),
+        &[0.5, -1.0],
+    );
+    diagnostics.append_spline(
+        2,
+        metrics_snapshot(1.5, 1.5, 1.5_f64.sqrt(), 0.9, 1.0, 0.25, 1.4),
+        &[0.75, -0.25],
+    );
 
     assert_eq!(
         diagnostics.parameter_names,
         vec!["knot_y[0]".to_string(), "knot_y[1]".to_string()]
     );
-    assert_eq!(diagnostics.loss_mse_points, vec![[1.0, 2.5], [2.0, 1.5]]);
+    assert_eq!(diagnostics.loss_points, vec![[1.0, 2.5], [2.0, 1.5]]);
+    assert_eq!(diagnostics.soft_l1_points, vec![[1.0, 1.6], [2.0, 1.0]]);
+    assert_eq!(diagnostics.r2_abs_points, vec![[1.0, 0.25], [2.0, 0.25]]);
     assert_eq!(
         diagnostics.parameter_series[0],
         vec![[1.0, 0.5], [2.0, 0.75]]
@@ -292,8 +359,11 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
         d: 0.0,
     });
     app.fit_preview_iteration = Some(1);
-    app.iteration_diagnostics
-        .initialize(&line_points(), &CurveParams::Linear { a: 2.0, b: 1.0 });
+    app.iteration_diagnostics.initialize(
+        &line_points(),
+        &CurveParams::Linear { a: 2.0, b: 1.0 },
+        OptimizationLossMetric::Mse,
+    );
 
     app.apply_param_init_method(ParamInitMethod::DataBased);
 
@@ -313,7 +383,77 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
     assert!(app.spline_plot_curve.is_none());
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
-    assert!(app.iteration_diagnostics.loss_mse_points.is_empty());
+    assert!(app.iteration_diagnostics.loss_points.is_empty());
+}
+
+#[test]
+fn apply_fitted_param_init_updates_inputs_and_clears_fit_state() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Polynomial,
+        polynomial_degree: 3,
+        ..Default::default()
+    };
+    app.sync_parameter_inputs();
+
+    app.fit_result = Some(FitResult {
+        family: CurveFamily::Cubic,
+        params: CurveParams::Cubic {
+            a: 1.5,
+            b: -0.25,
+            c: 2.0,
+            d: 3.0,
+        },
+        mse: 0.1,
+        rmse: 0.31622776601683794,
+        iterations: 15,
+    });
+    app.fit_preview_params = Some(CurveParams::Cubic {
+        a: 1.5,
+        b: -0.25,
+        c: 2.0,
+        d: 3.0,
+    });
+    app.fit_preview_iteration = Some(15);
+    app.iteration_diagnostics.initialize(
+        &line_points(),
+        &CurveParams::Linear { a: 2.0, b: 1.0 },
+        OptimizationLossMetric::Mse,
+    );
+
+    app.apply_fitted_param_init();
+
+    let values = app
+        .parameter_inputs
+        .iter()
+        .map(|value| value.parse::<f64>().expect("parameter must parse"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(values.len(), 4);
+    assert_approx_eq(values[0], 1.5, 1e-12);
+    assert_approx_eq(values[1], -0.25, 1e-12);
+    assert_approx_eq(values[2], 2.0, 1e-12);
+    assert_approx_eq(values[3], 3.0, 1e-12);
+    assert!(app.fit_result.is_none());
+    assert!(app.spline_result.is_none());
+    assert!(app.spline_plot_curve.is_none());
+    assert!(app.fit_preview_params.is_none());
+    assert!(app.fit_preview_iteration.is_none());
+    assert!(app.iteration_diagnostics.loss_points.is_empty());
+    assert!(matches!(app.status, Some(StatusMessage::Ready)));
+}
+
+#[test]
+fn apply_fitted_param_init_sets_error_when_fit_is_unavailable() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Polynomial,
+        polynomial_degree: 2,
+        ..Default::default()
+    };
+    app.sync_parameter_inputs();
+
+    app.apply_fitted_param_init();
+
+    assert!(matches!(app.status, Some(StatusMessage::Error(_))));
 }
 
 #[test]
@@ -372,7 +512,7 @@ fn run_fit_invalid_input_does_not_seed_iteration_diagnostics() {
     app.run_fit();
 
     assert!(matches!(app.status, Some(StatusMessage::Error(_))));
-    assert!(app.iteration_diagnostics.loss_mse_points.is_empty());
+    assert!(app.iteration_diagnostics.loss_points.is_empty());
     assert!(app.iteration_diagnostics.parameter_series.is_empty());
 }
 

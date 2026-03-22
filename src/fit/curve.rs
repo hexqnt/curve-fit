@@ -18,11 +18,12 @@ pub fn fit_curve_with_optimizer_config(
     initial_params: CurveParams,
     optimizer_config: &OptimizerConfig,
 ) -> Result<FitResult, FitError> {
-    fit_curve_with_progress_and_optimizer_config(
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric(
         points,
         family,
         initial_params,
         optimizer_config,
+        OptimizationLossMetric::Mse,
         |_iteration, _params| true,
     )
 }
@@ -41,11 +42,12 @@ where
     F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
 {
     let optimizer_config = OptimizerConfig::Lbfgs(config.clone());
-    fit_curve_with_progress_and_optimizer_config(
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric(
         points,
         family,
         initial_params,
         &optimizer_config,
+        OptimizationLossMetric::Mse,
         on_iteration,
     )
 }
@@ -61,6 +63,27 @@ pub fn fit_curve_with_progress_and_optimizer_config<F>(
 where
     F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
 {
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric(
+        points,
+        family,
+        initial_params,
+        optimizer_config,
+        OptimizationLossMetric::Mse,
+        on_iteration,
+    )
+}
+
+pub(crate) fn fit_curve_with_progress_and_optimizer_config_and_loss_metric<F>(
+    points: &Points,
+    family: CurveFamily,
+    initial_params: CurveParams,
+    optimizer_config: &OptimizerConfig,
+    loss_metric: OptimizationLossMetric,
+    on_iteration: F,
+) -> Result<FitResult, FitError>
+where
+    F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
+{
     if initial_params.family() != family {
         return Err(FitError::InvalidInput(InputError::FamilyMismatch {
             expected: family,
@@ -69,11 +92,12 @@ where
     }
     family.validate_points(points)?;
     let mut on_iteration = on_iteration;
-    let mut runner = IncrementalFitRunner::new_with_optimizer_config(
+    let mut runner = IncrementalFitRunner::new_with_optimizer_config_and_loss_metric(
         points,
         family,
         initial_params,
         optimizer_config,
+        loss_metric,
     )?;
     loop {
         match runner.step()? {

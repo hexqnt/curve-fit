@@ -6,12 +6,38 @@ fn fit_spline_family_with_optimizer_config(
     family: SplineFamilyKind,
     optimizer_config: &OptimizerConfig,
 ) -> Result<SplineResult, FitError> {
-    let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config(
+    fit_spline_family_with_optimizer_config_and_loss_metric(
         points,
-        family,
         config,
+        family,
         optimizer_config,
-    )?;
+        OptimizationLossMetric::Mse,
+    )
+}
+
+pub(crate) fn fit_spline_family_with_optimizer_config_and_loss_metric(
+    points: &Points,
+    config: SplineConfig,
+    family: SplineFamilyKind,
+    optimizer_config: &OptimizerConfig,
+    loss_metric: OptimizationLossMetric,
+) -> Result<SplineResult, FitError> {
+    let mut runner = if loss_metric == OptimizationLossMetric::Mse {
+        IncrementalSplineFitRunner::new_with_optimizer_config(
+            points,
+            family,
+            config,
+            optimizer_config,
+        )?
+    } else {
+        IncrementalSplineFitRunner::new_with_optimizer_config_and_loss_metric(
+            points,
+            family,
+            config,
+            optimizer_config,
+            loss_metric,
+        )?
+    };
     loop {
         match runner.step()? {
             IncrementalSplineFitStep::Iteration { .. } => {}

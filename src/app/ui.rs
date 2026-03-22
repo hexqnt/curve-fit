@@ -6,7 +6,13 @@ const PANEL_CARD_INNER_MARGIN_X: i8 = 10;
 const PANEL_CARD_INNER_MARGIN_Y: i8 = 8;
 const SPLINE_KNOT_INPUTS_MAX_HEIGHT: f32 = 180.0;
 const RESULT_PARAMS_MAX_HEIGHT: f32 = 190.0;
-const LOSS_MSE_LOG_DEFAULT_FLOOR: f64 = 1e-12;
+const DIAGNOSTICS_SERIES_ID_LOSS: &str = "diagnostics_series_loss";
+const DIAGNOSTICS_SERIES_ID_MSE: &str = "diagnostics_series_mse";
+const DIAGNOSTICS_SERIES_ID_RMSE: &str = "diagnostics_series_rmse";
+const DIAGNOSTICS_SERIES_ID_MAE: &str = "diagnostics_series_mae";
+const DIAGNOSTICS_SERIES_ID_SOFT_L1: &str = "diagnostics_series_soft_l1";
+const DIAGNOSTICS_SERIES_ID_R2_ABS: &str = "diagnostics_series_r2_abs";
+const DIAGNOSTICS_SERIES_ID_MAX_ABS: &str = "diagnostics_series_max_abs";
 
 impl CurveFitApp {
     pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
@@ -539,15 +545,24 @@ impl CurveFitApp {
                 self.clear_fit_outputs();
                 self.status = Some(StatusMessage::Cleared);
             }
-            if ui
-                .add_enabled(
-                    can_fill_with_residuals,
-                    egui::Button::new(tr(language, "Fill with residuals", "Заполнить остатками")),
-                )
-                .clicked()
-            {
-                self.fill_points_with_residuals();
-            }
+            ui.add_enabled_ui(can_edit_points, |ui| {
+                ui.menu_button(tr(language, "Actions", "Действия"), |ui| {
+                    if ui
+                        .add_enabled(
+                            can_fill_with_residuals,
+                            egui::Button::new(tr(
+                                language,
+                                "Fill with residuals",
+                                "Заполнить остатками",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.fill_points_with_residuals();
+                        ui.close();
+                    }
+                });
+            });
         });
 
         let hint = tr(
@@ -678,8 +693,8 @@ impl CurveFitApp {
                 can_edit_params,
                 egui::Slider::new(&mut self.polynomial_degree, 1..=9).text(tr(
                     language,
-                    "Polynomial degree",
-                    "Степень полинома",
+                    "Degree",
+                    "Степень",
                 )),
             );
             if previous_degree != self.polynomial_degree {
@@ -729,12 +744,37 @@ impl CurveFitApp {
 
         if let Some(family) = self.resolved_model().parametric_family() {
             let mut method_to_apply = None;
+            let mut apply_fitted_init = false;
             ui.horizontal_wrapped(|ui| {
                 ui.label(tr(language, "Initial parameters", "Начальные параметры"));
                 ui.add_enabled_ui(can_edit_params, |ui| {
                     ui.menu_button(
                         tr(language, "+ Initialize", "+ Инициализация"),
                         |ui| {
+                            let fitted_init_available = self.has_fitted_params_for_family(family);
+                            if fitted_init_available {
+                                if ui
+                                    .button(tr(
+                                        language,
+                                        "From fitted model",
+                                        "Из обученной модели",
+                                    ))
+                                    .clicked()
+                                {
+                                    apply_fitted_init = true;
+                                    ui.close();
+                                }
+                            } else {
+                                ui.add_enabled(
+                                    false,
+                                    egui::Button::new(tr(
+                                        language,
+                                        "From fitted model (fit this model first)",
+                                        "Из обученной модели (сначала обучите эту модель)",
+                                    )),
+                                );
+                            }
+                            ui.separator();
                             for method in ParamInitMethod::ALL {
                                 if method.is_supported_for_family(family) {
                                     if ui
@@ -758,7 +798,9 @@ impl CurveFitApp {
                 });
             });
 
-            if let Some(method) = method_to_apply {
+            if apply_fitted_init {
+                self.apply_fitted_param_init();
+            } else if let Some(method) = method_to_apply {
                 self.apply_param_init_method(method);
             }
 
@@ -819,8 +861,8 @@ impl CurveFitApp {
                 ui.add(
                     egui::Slider::new(&mut self.spline_knots, min_knots..=40).text(tr(
                         language,
-                        "Spline knot count",
-                        "Число узлов сплайна",
+                        "Knot count",
+                        "Число узлов",
                     )),
                 );
                 egui::ComboBox::from_label(tr(language, "Knot reduction", "Редукция узлов"))
@@ -1224,6 +1266,33 @@ impl CurveFitApp {
         }
     }
 
+    pub(super) fn ui_optimization_metric(&mut self, ui: &mut egui::Ui) {
+        let language = self.ui_language;
+        ui.heading(tr(language, "Optimization metric", "Метрика оптимизации"));
+        egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
+            .selected_text(optimization_loss_metric_label(
+                language,
+                self.optimization_loss_metric,
+            ))
+            .show_ui(ui, |ui| {
+                for metric in OptimizationLossMetric::ALL {
+                    ui.selectable_value(
+                        &mut self.optimization_loss_metric,
+                        metric,
+                        optimization_loss_metric_label(language, metric),
+                    );
+                }
+            });
+        ui.label(
+            egui::RichText::new(tr(
+                language,
+                "The selected metric is minimized during fitting and shown as loss(metric) in diagnostics.",
+                "Выбранная метрика минимизируется при фитинге и отображается как loss(metric) в диагностике.",
+            ))
+            .small(),
+        );
+    }
+
     pub(super) fn ui_status(&self, ui: &mut egui::Ui) {
         if let Some(status) = &self.status {
             let color = if status.is_error() {
@@ -1412,7 +1481,7 @@ impl CurveFitApp {
             "Диагностика итераций",
         ));
 
-        if self.iteration_diagnostics.loss_mse_points.is_empty() {
+        if self.iteration_diagnostics.loss_points.is_empty() {
             ui.label(tr(
                 language,
                 "Run Fit to collect iteration history.",
@@ -1432,7 +1501,7 @@ impl CurveFitApp {
         let shared_axis_width = shared_axis_width.max(1.0);
         let mut iteration_x_min = f64::INFINITY;
         let mut iteration_x_max = f64::NEG_INFINITY;
-        for [iteration, _] in &self.iteration_diagnostics.loss_mse_points {
+        for [iteration, _] in &self.iteration_diagnostics.loss_points {
             iteration_x_min = iteration_x_min.min(*iteration);
             iteration_x_max = iteration_x_max.max(*iteration);
         }
@@ -1451,24 +1520,38 @@ impl CurveFitApp {
             iteration_x_min -= padding;
             iteration_x_max += padding;
         }
+        let hidden_non_loss_ids = if self.diagnostics_hide_non_loss_by_default_pending {
+            self.diagnostics_hide_non_loss_by_default_pending = false;
+            Some(diagnostics_hidden_non_loss_series_ids().to_vec())
+        } else {
+            None
+        };
         let mut running_axis_width = shared_axis_width;
 
         {
-            let loss_points = &self.iteration_diagnostics.loss_mse_points;
-            let loss_log_floor = loss_mse_log_floor(loss_points);
+            let loss_points = &self.iteration_diagnostics.loss_points;
+            let mse_points = &self.iteration_diagnostics.mse_points;
+            let rmse_points = &self.iteration_diagnostics.rmse_points;
+            let mae_points = &self.iteration_diagnostics.mae_points;
+            let soft_l1_points = &self.iteration_diagnostics.soft_l1_points;
+            let r2_abs_points = &self.iteration_diagnostics.r2_abs_points;
+            let max_abs_error_points = &self.iteration_diagnostics.max_abs_error_points;
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), plot_height),
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let plot_slot_left = ui.max_rect().left();
-                    let plot_response = Plot::new("loss_mse_plot")
+                    let mut legend = Legend::default().background_alpha(0.55);
+                    if let Some(hidden_ids) = hidden_non_loss_ids.as_ref() {
+                        legend = legend.hidden_items(hidden_ids.iter().copied());
+                    }
+                    let plot_response = Plot::new("loss_metrics_plot")
                         .height(plot_height)
-                        .legend(Legend::default().background_alpha(0.55))
+                        .legend(legend)
                         .link_axis("diagnostics_iter_x_link", [true, false])
                         .default_x_bounds(iteration_x_min, iteration_x_max)
                         .auto_bounds([false, true])
-                        .y_axis_formatter(|mark, _| format!("{:.2e}", 10_f64.powf(mark.value)))
                         .y_axis_min_width(running_axis_width)
                         .show_grid([true, true])
                         .allow_drag(false)
@@ -1477,17 +1560,69 @@ impl CurveFitApp {
                         .allow_double_click_reset(false)
                         .allow_boxed_zoom(false)
                         .show(ui, |plot_ui| {
+                            let loss_name = format!("loss({})", self.fit_loss_metric.id());
                             plot_ui.line(
                                 Line::new(
-                                    tr(language, "Loss (MSE)", "Лосс (MSE)"),
-                                    PlotPoints::from_iter(loss_points.iter().map(
-                                        |[iteration, mse]| {
-                                            [*iteration, loss_mse_log10(*mse, loss_log_floor)]
-                                        },
-                                    )),
+                                    loss_name,
+                                    PlotPoints::from_iter(loss_points.iter().copied()),
                                 )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_LOSS))
                                 .width(1.9)
                                 .color(loss_color),
+                            );
+                            if self.fit_loss_metric != OptimizationLossMetric::Mse {
+                                plot_ui.line(
+                                    Line::new(
+                                        "MSE",
+                                        PlotPoints::from_iter(mse_points.iter().copied()),
+                                    )
+                                    .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MSE))
+                                    .width(1.5),
+                                );
+                            }
+                            plot_ui.line(
+                                Line::new(
+                                    "RMSE",
+                                    PlotPoints::from_iter(rmse_points.iter().copied()),
+                                )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_RMSE))
+                                .width(1.5),
+                            );
+                            if self.fit_loss_metric != OptimizationLossMetric::Mae {
+                                plot_ui.line(
+                                    Line::new(
+                                        "MAE",
+                                        PlotPoints::from_iter(mae_points.iter().copied()),
+                                    )
+                                    .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAE))
+                                    .width(1.5),
+                                );
+                            }
+                            if self.fit_loss_metric != OptimizationLossMetric::SoftL1 {
+                                plot_ui.line(
+                                    Line::new(
+                                        "soft_l1",
+                                        PlotPoints::from_iter(soft_l1_points.iter().copied()),
+                                    )
+                                    .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_SOFT_L1))
+                                    .width(1.5),
+                                );
+                            }
+                            plot_ui.line(
+                                Line::new(
+                                    "|R2|",
+                                    PlotPoints::from_iter(r2_abs_points.iter().copied()),
+                                )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_R2_ABS))
+                                .width(1.5),
+                            );
+                            plot_ui.line(
+                                Line::new(
+                                    "MaxAbsError",
+                                    PlotPoints::from_iter(max_abs_error_points.iter().copied()),
+                                )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAX_ABS))
+                                .width(1.5),
                             );
                         });
                     let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
@@ -1781,25 +1916,13 @@ impl CurveFitApp {
     }
 }
 
-fn loss_mse_log_floor(loss_points: &[[f64; 2]]) -> f64 {
-    let min_positive_mse = loss_points
-        .iter()
-        .map(|point| point[1])
-        .filter(|mse| mse.is_finite() && *mse > 0.0)
-        .fold(f64::INFINITY, f64::min);
-
-    if min_positive_mse.is_finite() {
-        (min_positive_mse * 0.1).max(f64::MIN_POSITIVE)
-    } else {
-        LOSS_MSE_LOG_DEFAULT_FLOOR
-    }
-}
-
-fn loss_mse_log10(mse: f64, floor: f64) -> f64 {
-    let sanitized = if mse.is_finite() && mse > 0.0 {
-        mse
-    } else {
-        floor
-    };
-    sanitized.max(floor).log10()
+fn diagnostics_hidden_non_loss_series_ids() -> [egui::Id; 6] {
+    [
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_MSE),
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_RMSE),
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_MAE),
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_SOFT_L1),
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_R2_ABS),
+        egui::Id::new(DIAGNOSTICS_SERIES_ID_MAX_ABS),
+    ]
 }
