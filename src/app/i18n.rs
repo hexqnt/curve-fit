@@ -31,11 +31,13 @@ pub(super) fn language_flag_image(language: UiLanguage) -> egui::Image<'static> 
     egui::Image::new(source).fit_to_exact_size(egui::vec2(18.0, 13.5))
 }
 
-pub(super) fn github_mark_image() -> egui::Image<'static> {
-    egui::Image::new(egui::include_image!(
-        "../../assets/tm/Octicons-mark-github.svg"
-    ))
-    .fit_to_exact_size(egui::vec2(16.0, 16.0))
+pub(super) fn github_mark_image(dark_mode: bool) -> egui::Image<'static> {
+    let source = if dark_mode {
+        egui::include_image!("../../assets/tm/Octicons-mark-github-white.svg")
+    } else {
+        egui::include_image!("../../assets/tm/Octicons-mark-github.svg")
+    };
+    egui::Image::new(source).fit_to_exact_size(egui::vec2(16.0, 16.0))
 }
 
 pub(super) fn fit_to_content_icon_image(tint: egui::Color32) -> egui::Image<'static> {

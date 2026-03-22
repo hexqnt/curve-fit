@@ -93,6 +93,9 @@ fn upsert_iteration_point(series: &mut Vec<[f64; 2]>, iteration: f64, value: f64
     }
 }
 
-pub(super) fn diagnostics_plot_y_axis_width(plot_response: &PlotResponse<()>) -> f32 {
-    (plot_response.transform.frame().left() - plot_response.response.rect.left()).max(0.0)
+pub(super) fn diagnostics_plot_y_axis_width(
+    plot_response: &PlotResponse<()>,
+    plot_slot_left: f32,
+) -> f32 {
+    (plot_response.response.rect.left() - plot_slot_left).max(0.0)
 }

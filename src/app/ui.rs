@@ -1,6 +1,62 @@
 use super::*;
 
+const PANEL_CARD_CORNER_RADIUS: u8 = 7;
+const PANEL_CARD_OUTER_MARGIN_Y: i8 = 4;
+const PANEL_CARD_INNER_MARGIN_X: i8 = 10;
+const PANEL_CARD_INNER_MARGIN_Y: i8 = 8;
+const SPLINE_KNOT_INPUTS_MAX_HEIGHT: f32 = 180.0;
+const RESULT_PARAMS_MAX_HEIGHT: f32 = 190.0;
+const LOSS_MSE_LOG_DEFAULT_FLOOR: f64 = 1e-12;
+
 impl CurveFitApp {
+    pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::symmetric(
+                PANEL_CARD_INNER_MARGIN_X,
+                PANEL_CARD_INNER_MARGIN_Y,
+            ))
+            .outer_margin(egui::Margin::symmetric(0, PANEL_CARD_OUTER_MARGIN_Y))
+            .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
+            .fill(ui.visuals().faint_bg_color)
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
+    }
+
+    pub(super) fn action_button_style(
+        ui: &egui::Ui,
+        is_stop: bool,
+    ) -> (egui::Color32, egui::Stroke, egui::Color32) {
+        if is_stop {
+            if ui.visuals().dark_mode {
+                (
+                    egui::Color32::from_rgb(120, 58, 49),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(199, 99, 82)),
+                    egui::Color32::from_rgb(255, 238, 232),
+                )
+            } else {
+                (
+                    egui::Color32::from_rgb(235, 208, 198),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(194, 106, 85)),
+                    egui::Color32::from_rgb(94, 37, 23),
+                )
+            }
+        } else if ui.visuals().dark_mode {
+            (
+                egui::Color32::from_rgb(20, 94, 128),
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(98, 199, 232)),
+                egui::Color32::from_rgb(227, 247, 255),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(182, 224, 241),
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(68, 146, 178)),
+                egui::Color32::from_rgb(13, 67, 86),
+            )
+        }
+    }
+
     pub(super) fn next_unit_random(&mut self) -> f64 {
         self.spray_seed = self
             .spray_seed
@@ -267,8 +323,10 @@ impl CurveFitApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.weak(APP_VERSION_LABEL);
                 ui.separator();
-                let github_response =
-                    ui.add(egui::Button::image_and_text(github_mark_image(), "GitHub"));
+                let github_response = ui.add(egui::Button::image_and_text(
+                    github_mark_image(ui.visuals().dark_mode),
+                    "GitHub",
+                ));
                 if github_response.clicked() {
                     ui.ctx()
                         .open_url(egui::OpenUrl::new_tab(APP_REPOSITORY_URL));
@@ -308,35 +366,65 @@ impl CurveFitApp {
         let language = self.ui_language;
         let icon_tint = ui.visuals().text_color();
         ui.heading(tr(language, "Tools", "Инструменты"));
+        ui.label(
+            egui::RichText::new(tr(
+                language,
+                "Choose a tool and interact directly on the plot.",
+                "Выберите инструмент и работайте прямо на графике.",
+            ))
+            .small(),
+        );
 
-        ui.horizontal_wrapped(|ui| {
-            for tool in [
-                PlotTool::None,
-                PlotTool::SinglePoint,
-                PlotTool::Spray,
-                PlotTool::Eraser,
-            ] {
-                let selected = self.plot_tool == tool;
-                let button = egui::Button::image_and_text(
-                    tool_icon_image(tool, icon_tint),
-                    tool_label(language, tool),
-                )
-                .selected(selected);
-                if ui.add(button).clicked() {
-                    self.plot_tool = tool;
+        let tools = [
+            PlotTool::None,
+            PlotTool::SinglePoint,
+            PlotTool::Spray,
+            PlotTool::Eraser,
+        ];
+        let tool_width = ((ui.available_width() - ui.spacing().item_spacing.x).max(120.0)) * 0.5;
+        egui::Grid::new("plot_tools_grid")
+            .num_columns(2)
+            .spacing(egui::vec2(ui.spacing().item_spacing.x, 6.0))
+            .show(ui, |ui| {
+                for (index, tool) in tools.into_iter().enumerate() {
+                    let selected = self.plot_tool == tool;
+                    let button = egui::Button::image_and_text(
+                        tool_icon_image(tool, icon_tint),
+                        tool_label(language, tool),
+                    )
+                    .selected(selected)
+                    .min_size(egui::vec2(tool_width, 0.0));
+                    if ui.add(button).clicked() {
+                        self.plot_tool = tool;
+                    }
+                    if index % 2 == 1 {
+                        ui.end_row();
+                    }
                 }
-            }
-        });
+            });
 
+        ui.add_space(2.0);
         match self.plot_tool {
             PlotTool::None => {
-                ui.label(tr(
-                    language,
-                    "Navigation mode: drag, zoom, and scroll the plot.",
-                    "Режим навигации: перемещение, зум и прокрутка графика.",
-                ));
+                ui.label(
+                    egui::RichText::new(tr(
+                        language,
+                        "Navigation mode: drag, zoom, and scroll the plot.",
+                        "Режим навигации: перемещение, зум и прокрутка графика.",
+                    ))
+                    .small(),
+                );
             }
-            PlotTool::SinglePoint => {}
+            PlotTool::SinglePoint => {
+                ui.label(
+                    egui::RichText::new(tr(
+                        language,
+                        "Click on plot to add a single sample.",
+                        "Клик по графику добавляет одну точку.",
+                    ))
+                    .small(),
+                );
+            }
             PlotTool::Spray => {
                 ui.add(egui::Slider::new(&mut self.spray_density, 1..=30).text(tr(
                     language,
@@ -376,13 +464,42 @@ impl CurveFitApp {
         let language = self.ui_language;
         let icon_tint = ui.visuals().text_color();
         let can_edit_points = !self.fit_in_progress;
+        let (parse_error_line, valid_points_count, parse_error_message) = {
+            let cache = self.points_cache();
+            let valid_points_count = cache.parsed_points.as_ref().ok().map(Vec::len);
+            let parse_error_message = cache.parsed_points.as_ref().err().cloned();
+            (
+                cache.parse_error_line,
+                valid_points_count,
+                parse_error_message,
+            )
+        };
         ui.heading(tr(language, "Input Points", "Точки"));
         ui.label(tr(
             language,
             "One point per line: x and y separated by space, tab, or ';'",
             "Одна точка на строку: x и y через пробел, табуляцию или ';'",
         ));
+        if let Some(count) = valid_points_count {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}: {count}",
+                    tr(language, "Valid points", "Валидных точек")
+                ))
+                .small(),
+            );
+        }
+        if let Some(line) = parse_error_line {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                format!(
+                    "{} {line}",
+                    tr(language, "Parse error at line", "Ошибка парсинга в строке")
+                ),
+            );
+        }
 
+        let can_fill_with_residuals = can_edit_points && !self.residual_plot_points.is_empty();
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
@@ -422,6 +539,15 @@ impl CurveFitApp {
                 self.clear_fit_outputs();
                 self.status = Some(StatusMessage::Cleared);
             }
+            if ui
+                .add_enabled(
+                    can_fill_with_residuals,
+                    egui::Button::new(tr(language, "Fill with residuals", "Заполнить остатками")),
+                )
+                .clicked()
+            {
+                self.fill_points_with_residuals();
+            }
         });
 
         let hint = tr(
@@ -439,7 +565,6 @@ impl CurveFitApp {
             .show(ui, |ui| {
                 let text_width = ui.available_width();
                 let before_edit = self.points_text.clone();
-                let parse_error_line = self.points_cache().parse_error_line;
                 let mut layouter = move |ui: &egui::Ui,
                                          text: &dyn egui::TextBuffer,
                                          wrap_width: f32|
@@ -493,9 +618,9 @@ impl CurveFitApp {
                 }
             });
 
-        if let Err(error) = &self.points_cache().parsed_points {
+        if let Some(error) = parse_error_message {
             ui.colored_label(
-                egui::Color32::from_rgb(200, 64, 64),
+                ui.visuals().error_fg_color,
                 format!("{POINTS_PARSE_ERROR_PREFIX}{error}"),
             );
         }
@@ -569,28 +694,38 @@ impl CurveFitApp {
 
         let formula_info =
             model_formula_info(language, self.selected_model, self.polynomial_degree);
-        ui.add_space(6.0);
-        ui.group(|ui| {
-            ui.label(egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong());
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let dark_mode = ui.visuals().dark_mode;
-                let (svg_uri, svg_bytes) =
-                    self.cached_formula_svg(&formula_info.full_formula, dark_mode);
-                ui.add(
-                    egui::Image::from_bytes(svg_uri, svg_bytes)
-                        .max_width(ui.available_width())
-                        .fit_to_original_size(1.0),
+        ui.add_space(2.0);
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(10, 8))
+            .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(egui::Stroke::new(
+                1.0,
+                ui.visuals().widgets.noninteractive.bg_stroke.color,
+            ))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong(),
                 );
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                let plain_formula = formula_plain_text(&formula_info.full_formula);
-                let formula_label = egui::RichText::new(plain_formula).monospace();
-                ui.label(formula_label);
-            }
-            ui.label(egui::RichText::new(formula_info.notes).small());
-        });
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let dark_mode = ui.visuals().dark_mode;
+                    let (svg_uri, svg_bytes) =
+                        self.cached_formula_svg(&formula_info.full_formula, dark_mode);
+                    ui.add(
+                        egui::Image::from_bytes(svg_uri, svg_bytes)
+                            .max_width(ui.available_width())
+                            .fit_to_original_size(1.0),
+                    );
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let plain_formula = formula_plain_text(&formula_info.full_formula);
+                    let formula_label = egui::RichText::new(plain_formula).monospace();
+                    ui.label(formula_label);
+                }
+                ui.label(egui::RichText::new(formula_info.notes).small());
+            });
 
         if let Some(family) = self.resolved_model().parametric_family() {
             let mut method_to_apply = None;
@@ -627,16 +762,20 @@ impl CurveFitApp {
                 self.apply_param_init_method(method);
             }
 
-            for (index, parameter_name) in family.parameter_names().iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(*parameter_name);
-                    ui.add_enabled(
-                        can_edit_params,
-                        egui::TextEdit::singleline(&mut self.parameter_inputs[index])
-                            .desired_width(120.0),
-                    );
+            egui::Grid::new("parametric_initial_params_grid")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 6.0))
+                .show(ui, |ui| {
+                    for (index, parameter_name) in family.parameter_names().iter().enumerate() {
+                        ui.label(*parameter_name);
+                        ui.add_enabled(
+                            can_edit_params,
+                            egui::TextEdit::singleline(&mut self.parameter_inputs[index])
+                                .desired_width(120.0),
+                        );
+                        ui.end_row();
+                    }
                 });
-            }
         } else {
             ui.label(tr(
                 language,
@@ -742,15 +881,27 @@ impl CurveFitApp {
                 "Initial knot y values",
                 "Начальные значения knot y",
             ));
-            for (index, value) in self.spline_initial_knot_y_inputs.iter_mut().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.label(format!("knot_y[{index}]"));
-                    ui.add_enabled(
-                        can_edit_params,
-                        egui::TextEdit::singleline(value).desired_width(120.0),
-                    );
+            egui::ScrollArea::vertical()
+                .id_salt("spline_knot_y_inputs_scroll")
+                .max_height(SPLINE_KNOT_INPUTS_MAX_HEIGHT)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("spline_initial_knot_y_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(8.0, 6.0))
+                        .show(ui, |ui| {
+                            for (index, value) in
+                                self.spline_initial_knot_y_inputs.iter_mut().enumerate()
+                            {
+                                ui.label(format!("knot_y[{index}]"));
+                                ui.add_enabled(
+                                    can_edit_params,
+                                    egui::TextEdit::singleline(value).desired_width(120.0),
+                                );
+                                ui.end_row();
+                            }
+                        });
                 });
-            }
             ui.label(egui::RichText::new(tr(
                 language,
                 "More knots means better fit, less smoothing; fewer knots means stronger smoothing.",
@@ -772,7 +923,6 @@ impl CurveFitApp {
     pub(super) fn ui_optimizer(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
         let icon_tint = ui.visuals().text_color();
-        ui.separator();
         ui.heading(tr(language, "Optimizer", "Оптимизатор"));
         egui::ComboBox::from_label(tr(language, "Method", "Метод"))
             .selected_text(optimizer_method_label(language, self.optimizer_method))
@@ -834,37 +984,54 @@ impl CurveFitApp {
                     self.apply_selected_optimizer_preset(selected_preset);
                 }
             }
-            match self.optimizer_method {
-                OptimizerMethod::Lbfgs => {
-                    ui.label(format!("history_size = {}", self.lbfgs_inputs.history_size));
-                    ui.label(format!("max_iters = {}", self.lbfgs_inputs.max_iters));
-                    ui.label(format!("tol_grad = {:.2e}", self.lbfgs_inputs.tol_grad));
-                    ui.label(format!("tol_cost = {:.2e}", self.lbfgs_inputs.tol_cost));
-                }
-                OptimizerMethod::NelderMead => {
-                    ui.label(format!("max_iters = {}", self.nelder_mead_inputs.max_iters));
-                    ui.label(format!(
-                        "simplex_scale = {:.3}",
-                        self.nelder_mead_inputs.simplex_scale
-                    ));
-                    ui.label(format!(
-                        "sd_tolerance = {:.2e}",
-                        self.nelder_mead_inputs.sd_tolerance
-                    ));
-                }
-                OptimizerMethod::SteepestDescent => {
-                    ui.label(format!(
-                        "max_iters = {}",
-                        self.steepest_descent_inputs.max_iters
-                    ));
-                    ui.label(format!("c1 = {:.2e}", self.steepest_descent_inputs.c1));
-                    ui.label(format!("c2 = {:.3}", self.steepest_descent_inputs.c2));
-                    ui.label(format!(
-                        "width_tolerance = {:.2e}",
-                        self.steepest_descent_inputs.width_tolerance
-                    ));
-                }
-            }
+            ui.add_space(2.0);
+            egui::Grid::new("optimizer_basic_summary")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 4.0))
+                .show(ui, |ui| match self.optimizer_method {
+                    OptimizerMethod::Lbfgs => {
+                        ui.label("history_size");
+                        ui.monospace(self.lbfgs_inputs.history_size.to_string());
+                        ui.end_row();
+                        ui.label("max_iters");
+                        ui.monospace(self.lbfgs_inputs.max_iters.to_string());
+                        ui.end_row();
+                        ui.label("tol_grad");
+                        ui.monospace(format!("{:.2e}", self.lbfgs_inputs.tol_grad));
+                        ui.end_row();
+                        ui.label("tol_cost");
+                        ui.monospace(format!("{:.2e}", self.lbfgs_inputs.tol_cost));
+                        ui.end_row();
+                    }
+                    OptimizerMethod::NelderMead => {
+                        ui.label("max_iters");
+                        ui.monospace(self.nelder_mead_inputs.max_iters.to_string());
+                        ui.end_row();
+                        ui.label("simplex_scale");
+                        ui.monospace(format!("{:.3}", self.nelder_mead_inputs.simplex_scale));
+                        ui.end_row();
+                        ui.label("sd_tolerance");
+                        ui.monospace(format!("{:.2e}", self.nelder_mead_inputs.sd_tolerance));
+                        ui.end_row();
+                    }
+                    OptimizerMethod::SteepestDescent => {
+                        ui.label("max_iters");
+                        ui.monospace(self.steepest_descent_inputs.max_iters.to_string());
+                        ui.end_row();
+                        ui.label("c1");
+                        ui.monospace(format!("{:.2e}", self.steepest_descent_inputs.c1));
+                        ui.end_row();
+                        ui.label("c2");
+                        ui.monospace(format!("{:.3}", self.steepest_descent_inputs.c2));
+                        ui.end_row();
+                        ui.label("width_tolerance");
+                        ui.monospace(format!(
+                            "{:.2e}",
+                            self.steepest_descent_inputs.width_tolerance
+                        ));
+                        ui.end_row();
+                    }
+                });
         } else {
             ui.label(tr(
                 language,
@@ -1018,16 +1185,60 @@ impl CurveFitApp {
         {
             self.apply_selected_optimizer_preset(OptimizerPreset::Balanced);
         }
+
+        ui.separator();
+        let (fill, stroke, text_color) = Self::action_button_style(ui, self.fit_in_progress);
+        let (icon, text) = if self.fit_in_progress {
+            (
+                stop_icon_image(text_color),
+                tr(self.ui_language, "Stop", "Стоп"),
+            )
+        } else {
+            (
+                fit_icon_image(text_color),
+                tr(self.ui_language, "Fit", "Фитинг"),
+            )
+        };
+        let action_button = egui::Button::image_and_text(
+            icon,
+            egui::RichText::new(text).strong().color(text_color),
+        )
+        .min_size(egui::vec2(ui.available_width(), 34.0))
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(egui::CornerRadius::same(UI_CORNER_RADIUS + 1));
+        if ui.add(action_button).clicked() {
+            if self.fit_in_progress {
+                self.request_stop_fit();
+            } else {
+                self.run_fit();
+            }
+        }
+        if self.fit_in_progress
+            && let Some(iteration) = self.fit_preview_iteration
+        {
+            ui.label(format!(
+                "{}: {iteration}",
+                tr(self.ui_language, "Iteration", "Итерация")
+            ));
+        }
     }
 
     pub(super) fn ui_status(&self, ui: &mut egui::Ui) {
         if let Some(status) = &self.status {
             let color = if status.is_error() {
-                egui::Color32::from_rgb(200, 64, 64)
+                ui.visuals().error_fg_color
             } else {
-                egui::Color32::from_rgb(64, 160, 96)
+                if ui.visuals().dark_mode {
+                    egui::Color32::from_rgb(112, 211, 202)
+                } else {
+                    egui::Color32::from_rgb(24, 131, 141)
+                }
             };
-            ui.colored_label(color, status.text(self.ui_language));
+            ui.horizontal(|ui| {
+                ui.colored_label(color, "●");
+                ui.label(status.text(self.ui_language));
+            });
         }
     }
 
@@ -1107,10 +1318,23 @@ impl CurveFitApp {
             None
         };
         let locked_tool_bounds = self.active_tool_bounds;
+        let (samples_color, fitted_color) = if ui.visuals().dark_mode {
+            (
+                egui::Color32::from_rgb(232, 140, 96),
+                egui::Color32::from_rgb(96, 204, 238),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(184, 87, 53),
+                egui::Color32::from_rgb(24, 126, 165),
+            )
+        };
 
         let plot_response = Plot::new("fit_plot")
             .height(height)
-            .legend(Legend::default())
+            .legend(Legend::default().background_alpha(0.55))
+            .show_axes([true, true])
+            .show_grid([true, true])
             .allow_drag(navigation_mode)
             .allow_zoom(navigation_mode)
             .allow_scroll(navigation_mode)
@@ -1132,13 +1356,22 @@ impl CurveFitApp {
                 if !points_slice.is_empty() {
                     plot_ui.points(
                         PlotPointsItem::new(tr(language, "Samples", "Точки"), points_slice)
-                            .radius(3.0),
+                            .radius(2.8)
+                            .color(samples_color),
                     );
                 }
                 if let Some(fitted) = spline_curve_slice {
-                    plot_ui.line(Line::new(fitted_line_name.clone(), fitted));
+                    plot_ui.line(
+                        Line::new(fitted_line_name.clone(), fitted)
+                            .width(2.2)
+                            .color(fitted_color),
+                    );
                 } else if let Some(fitted) = sampled_curve.as_deref() {
-                    plot_ui.line(Line::new(fitted_line_name.clone(), fitted));
+                    plot_ui.line(
+                        Line::new(fitted_line_name.clone(), fitted)
+                            .width(2.2)
+                            .color(fitted_color),
+                    );
                 }
             });
 
@@ -1160,6 +1393,19 @@ impl CurveFitApp {
 
     pub(super) fn ui_iteration_diagnostics(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
+        let (loss_color, residual_color, zero_color) = if ui.visuals().dark_mode {
+            (
+                egui::Color32::from_rgb(245, 126, 95),
+                egui::Color32::from_rgb(106, 198, 230),
+                egui::Color32::from_rgb(131, 147, 160),
+            )
+        } else {
+            (
+                egui::Color32::from_rgb(181, 93, 67),
+                egui::Color32::from_rgb(40, 131, 165),
+                egui::Color32::from_rgb(139, 151, 160),
+            )
+        };
         ui.heading(tr(
             language,
             "Iteration diagnostics",
@@ -1172,9 +1418,7 @@ impl CurveFitApp {
                 "Run Fit to collect iteration history.",
                 "Запустите фитинг, чтобы получить историю итераций.",
             ));
-            self.diagnostics_loss_axis_width = 0.0;
-            self.diagnostics_residual_axis_width = 0.0;
-            self.diagnostics_params_axis_width = 0.0;
+            self.diagnostics_shared_axis_width = 0.0;
             return;
         }
 
@@ -1184,44 +1428,111 @@ impl CurveFitApp {
         let plot_count = if has_residual_plot { 3.0 } else { 2.0 };
         let total_spacing = spacing * (plot_count - 1.0);
         let plot_height = ((available_height - total_spacing).max(2.0)) / plot_count;
-        let shared_axis_width = self
-            .diagnostics_loss_axis_width
-            .max(self.diagnostics_residual_axis_width)
-            .max(self.diagnostics_params_axis_width);
-        let loss_extra_padding = (shared_axis_width - self.diagnostics_loss_axis_width).max(0.0);
-        let residual_extra_padding =
-            (shared_axis_width - self.diagnostics_residual_axis_width).max(0.0);
-        let params_extra_padding =
-            (shared_axis_width - self.diagnostics_params_axis_width).max(0.0);
-        let mut measured_loss_axis_width = 0.0;
-        let mut measured_residual_axis_width = 0.0;
-        let mut measured_params_axis_width = 0.0;
+        let shared_axis_width = self.diagnostics_shared_axis_width;
+        let shared_axis_width = shared_axis_width.max(1.0);
+        let mut iteration_x_min = f64::INFINITY;
+        let mut iteration_x_max = f64::NEG_INFINITY;
+        for [iteration, _] in &self.iteration_diagnostics.loss_mse_points {
+            iteration_x_min = iteration_x_min.min(*iteration);
+            iteration_x_max = iteration_x_max.max(*iteration);
+        }
+        for series in &self.iteration_diagnostics.parameter_series {
+            for [iteration, _] in series {
+                iteration_x_min = iteration_x_min.min(*iteration);
+                iteration_x_max = iteration_x_max.max(*iteration);
+            }
+        }
+        if !iteration_x_min.is_finite() || !iteration_x_max.is_finite() {
+            iteration_x_min = 0.0;
+            iteration_x_max = 1.0;
+        }
+        if (iteration_x_max - iteration_x_min).abs() <= f64::EPSILON {
+            let padding = iteration_x_min.abs().max(1.0) * 0.05;
+            iteration_x_min -= padding;
+            iteration_x_max += padding;
+        }
+        let mut running_axis_width = shared_axis_width;
 
         {
             let loss_points = &self.iteration_diagnostics.loss_mse_points;
+            let loss_log_floor = loss_mse_log_floor(loss_points);
             ui.allocate_ui_with_layout(
                 egui::vec2(ui.available_width(), plot_height),
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    if loss_extra_padding > 0.0 {
-                        ui.add_space(loss_extra_padding);
-                    }
+                    let plot_slot_left = ui.max_rect().left();
                     let plot_response = Plot::new("loss_mse_plot")
                         .height(plot_height)
-                        .legend(Legend::default())
+                        .legend(Legend::default().background_alpha(0.55))
+                        .link_axis("diagnostics_iter_x_link", [true, false])
+                        .default_x_bounds(iteration_x_min, iteration_x_max)
+                        .auto_bounds([false, true])
+                        .y_axis_formatter(|mark, _| format!("{:.2e}", 10_f64.powf(mark.value)))
+                        .y_axis_min_width(running_axis_width)
+                        .show_grid([true, true])
                         .allow_drag(false)
                         .allow_zoom(false)
                         .allow_scroll(false)
                         .allow_double_click_reset(false)
                         .allow_boxed_zoom(false)
                         .show(ui, |plot_ui| {
-                            plot_ui.line(Line::new(
-                                tr(language, "Loss (MSE)", "Лосс (MSE)"),
-                                PlotPoints::from_iter(loss_points.iter().copied()),
-                            ));
+                            plot_ui.line(
+                                Line::new(
+                                    tr(language, "Loss (MSE)", "Лосс (MSE)"),
+                                    PlotPoints::from_iter(loss_points.iter().map(
+                                        |[iteration, mse]| {
+                                            [*iteration, loss_mse_log10(*mse, loss_log_floor)]
+                                        },
+                                    )),
+                                )
+                                .width(1.9)
+                                .color(loss_color),
+                            );
                         });
-                    measured_loss_axis_width = diagnostics_plot_y_axis_width(&plot_response);
+                    let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
+                    running_axis_width = running_axis_width.max(axis_width);
+                },
+            );
+        }
+
+        {
+            let parameter_names = &self.iteration_diagnostics.parameter_names;
+            let parameter_series = &self.iteration_diagnostics.parameter_series;
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), plot_height),
+                egui::Layout::left_to_right(egui::Align::Min),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    let plot_slot_left = ui.max_rect().left();
+                    let plot_response = Plot::new("parameter_iteration_plot")
+                        .height(plot_height)
+                        .legend(Legend::default().background_alpha(0.55))
+                        .link_axis("diagnostics_iter_x_link", [true, false])
+                        .default_x_bounds(iteration_x_min, iteration_x_max)
+                        .auto_bounds([false, true])
+                        .y_axis_min_width(running_axis_width)
+                        .show_grid([true, true])
+                        .allow_drag(false)
+                        .allow_zoom(false)
+                        .allow_scroll(false)
+                        .allow_double_click_reset(false)
+                        .allow_boxed_zoom(false)
+                        .show(ui, |plot_ui| {
+                            for (name, series) in
+                                parameter_names.iter().zip(parameter_series.iter())
+                            {
+                                plot_ui.line(
+                                    Line::new(
+                                        name.clone(),
+                                        PlotPoints::from_iter(series.iter().copied()),
+                                    )
+                                    .width(1.7),
+                                );
+                            }
+                        });
+                    let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
+                    running_axis_width = running_axis_width.max(axis_width);
                 },
             );
         }
@@ -1243,72 +1554,42 @@ impl CurveFitApp {
                 egui::Layout::left_to_right(egui::Align::Min),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    if residual_extra_padding > 0.0 {
-                        ui.add_space(residual_extra_padding);
-                    }
+                    let plot_slot_left = ui.max_rect().left();
                     let plot_response = Plot::new("residuals_diagnostics_plot")
                         .height(plot_height)
-                        .legend(Legend::default())
+                        .legend(Legend::default().background_alpha(0.55))
+                        .y_axis_min_width(running_axis_width)
+                        .show_grid([true, true])
                         .allow_drag(false)
                         .allow_zoom(false)
                         .allow_scroll(false)
                         .allow_double_click_reset(false)
                         .allow_boxed_zoom(false)
                         .show(ui, |plot_ui| {
-                            plot_ui.line(Line::new(
-                                tr(language, "Zero", "Ноль"),
-                                PlotPoints::from_iter(zero_line),
-                            ));
+                            plot_ui.line(
+                                Line::new(
+                                    tr(language, "Zero", "Ноль"),
+                                    PlotPoints::from_iter(zero_line),
+                                )
+                                .width(1.2)
+                                .color(zero_color),
+                            );
                             plot_ui.points(
                                 PlotPointsItem::new(
                                     tr(language, "Residuals", "Остатки"),
                                     residual_points.as_slice(),
                                 )
-                                .radius(2.5),
+                                .radius(2.3)
+                                .color(residual_color),
                             );
                         });
-                    measured_residual_axis_width = diagnostics_plot_y_axis_width(&plot_response);
+                    let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
+                    running_axis_width = running_axis_width.max(axis_width);
                 },
             );
         }
 
-        {
-            let parameter_names = &self.iteration_diagnostics.parameter_names;
-            let parameter_series = &self.iteration_diagnostics.parameter_series;
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), plot_height),
-                egui::Layout::left_to_right(egui::Align::Min),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    if params_extra_padding > 0.0 {
-                        ui.add_space(params_extra_padding);
-                    }
-                    let plot_response = Plot::new("parameter_iteration_plot")
-                        .height(plot_height)
-                        .legend(Legend::default())
-                        .allow_drag(false)
-                        .allow_zoom(false)
-                        .allow_scroll(false)
-                        .allow_double_click_reset(false)
-                        .allow_boxed_zoom(false)
-                        .show(ui, |plot_ui| {
-                            for (name, series) in
-                                parameter_names.iter().zip(parameter_series.iter())
-                            {
-                                plot_ui.line(Line::new(
-                                    name.clone(),
-                                    PlotPoints::from_iter(series.iter().copied()),
-                                ));
-                            }
-                        });
-                    measured_params_axis_width = diagnostics_plot_y_axis_width(&plot_response);
-                },
-            );
-        }
-
-        self.diagnostics_loss_axis_width = measured_loss_axis_width;
-        self.diagnostics_residual_axis_width = measured_residual_axis_width;
-        self.diagnostics_params_axis_width = measured_params_axis_width;
+        self.diagnostics_shared_axis_width = running_axis_width;
     }
 
     pub(super) fn ui_result(&self, ui: &mut egui::Ui) {
@@ -1367,62 +1648,129 @@ impl CurveFitApp {
                 tr(language, "Family", "Семейство"),
                 family_label(language, result.family)
             ));
-            ui.label(format!("MSE: {:.8}", metrics.mse));
-            ui.label(format!("RMSE: {:.8}", metrics.rmse));
-            ui.label(format!("MAE: {:.8}", metrics.mae));
-            ui.label(format!("R²: {:.8}", metrics.r2));
-            ui.label(format!(
-                "{}: {:.8}",
-                tr(language, "Max |error|", "Макс |ошибка|"),
-                metrics.max_abs_error
-            ));
-            ui.label(format!(
-                "{}: {}",
-                tr(language, "Iterations", "Итерации"),
-                result.iterations
-            ));
-            ui.separator();
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(tr(language, "Quality metrics", "Метрики качества")).strong(),
+            );
+            egui::Grid::new("result_quality_grid_parametric")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label("MSE");
+                    ui.monospace(format!("{:.8}", metrics.mse));
+                    ui.end_row();
+                    ui.label("RMSE");
+                    ui.monospace(format!("{:.8}", metrics.rmse));
+                    ui.end_row();
+                    ui.label("MAE");
+                    ui.monospace(format!("{:.8}", metrics.mae));
+                    ui.end_row();
+                    ui.label("R²");
+                    ui.monospace(format!("{:.8}", metrics.r2));
+                    ui.end_row();
+                    ui.label(tr(language, "Max |error|", "Макс |ошибка|"));
+                    ui.monospace(format!("{:.8}", metrics.max_abs_error));
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(tr(language, "Convergence", "Сходимость")).strong());
+            egui::Grid::new("result_convergence_grid_parametric")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label(tr(language, "Iterations", "Итерации"));
+                    ui.monospace(result.iterations.to_string());
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
             ui.label(tr(language, "Parameters", "Параметры"));
-            for (name, value) in result
-                .family
-                .parameter_names()
-                .iter()
-                .zip(result.params.values())
-            {
-                ui.label(format!("{name} = {value:.8}"));
-            }
+            egui::ScrollArea::vertical()
+                .id_salt("result_parametric_params_scroll")
+                .max_height(RESULT_PARAMS_MAX_HEIGHT)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("result_parametric_params_grid")
+                        .num_columns(2)
+                        .spacing(egui::vec2(8.0, 4.0))
+                        .show(ui, |ui| {
+                            for (name, value) in result
+                                .family
+                                .parameter_names()
+                                .iter()
+                                .zip(result.params.values())
+                            {
+                                ui.monospace(*name);
+                                ui.monospace(format!("{value:.8}"));
+                                ui.end_row();
+                            }
+                        });
+                });
         } else if let Some(result) = &self.spline_result {
             ui.label(format!(
                 "{}: {}",
                 tr(language, "Family", "Семейство"),
                 model_choice_label(language, self.selected_model)
             ));
-            ui.label(format!("MSE: {:.8}", metrics.mse));
-            ui.label(format!("RMSE: {:.8}", metrics.rmse));
-            ui.label(format!("MAE: {:.8}", metrics.mae));
-            ui.label(format!("R²: {:.8}", metrics.r2));
-            ui.label(format!(
-                "{}: {:.8}",
-                tr(language, "Max |error|", "Макс |ошибка|"),
-                metrics.max_abs_error
-            ));
-            ui.label(format!(
-                "{}: {}",
-                tr(language, "Iterations", "Итерации"),
-                result.iterations
-            ));
-            ui.separator();
-            ui.label(format!(
-                "{}: {}",
-                tr(language, "Parameters", "Параметры"),
-                result.knots.len()
-            ));
-            for (index, knot) in result.knots.iter().enumerate() {
-                ui.label(format!(
-                    "knot_y[{index}] @ x={:.8}: {:.8}",
-                    knot[0], knot[1]
-                ));
-            }
+            ui.add_space(2.0);
+            ui.label(
+                egui::RichText::new(tr(language, "Quality metrics", "Метрики качества")).strong(),
+            );
+            egui::Grid::new("result_quality_grid_spline")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label("MSE");
+                    ui.monospace(format!("{:.8}", metrics.mse));
+                    ui.end_row();
+                    ui.label("RMSE");
+                    ui.monospace(format!("{:.8}", metrics.rmse));
+                    ui.end_row();
+                    ui.label("MAE");
+                    ui.monospace(format!("{:.8}", metrics.mae));
+                    ui.end_row();
+                    ui.label("R²");
+                    ui.monospace(format!("{:.8}", metrics.r2));
+                    ui.end_row();
+                    ui.label(tr(language, "Max |error|", "Макс |ошибка|"));
+                    ui.monospace(format!("{:.8}", metrics.max_abs_error));
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(tr(language, "Convergence", "Сходимость")).strong());
+            egui::Grid::new("result_convergence_grid_spline")
+                .num_columns(2)
+                .spacing(egui::vec2(8.0, 4.0))
+                .show(ui, |ui| {
+                    ui.label(tr(language, "Iterations", "Итерации"));
+                    ui.monospace(result.iterations.to_string());
+                    ui.end_row();
+                    ui.label(tr(language, "Parameters", "Параметры"));
+                    ui.monospace(result.knots.len().to_string());
+                    ui.end_row();
+                });
+            ui.add_space(2.0);
+            ui.label(tr(language, "Parameters", "Параметры"));
+            egui::ScrollArea::vertical()
+                .id_salt("result_spline_params_scroll")
+                .max_height(RESULT_PARAMS_MAX_HEIGHT)
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    egui::Grid::new("result_spline_params_grid")
+                        .num_columns(3)
+                        .spacing(egui::vec2(8.0, 4.0))
+                        .show(ui, |ui| {
+                            ui.strong("knot");
+                            ui.strong("x");
+                            ui.strong("y");
+                            ui.end_row();
+                            for (index, knot) in result.knots.iter().enumerate() {
+                                ui.monospace(format!("[{index}]"));
+                                ui.monospace(format!("{:.8}", knot[0]));
+                                ui.monospace(format!("{:.8}", knot[1]));
+                                ui.end_row();
+                            }
+                        });
+                });
         } else {
             ui.label(tr(
                 language,
@@ -1431,4 +1779,27 @@ impl CurveFitApp {
             ));
         }
     }
+}
+
+fn loss_mse_log_floor(loss_points: &[[f64; 2]]) -> f64 {
+    let min_positive_mse = loss_points
+        .iter()
+        .map(|point| point[1])
+        .filter(|mse| mse.is_finite() && *mse > 0.0)
+        .fold(f64::INFINITY, f64::min);
+
+    if min_positive_mse.is_finite() {
+        (min_positive_mse * 0.1).max(f64::MIN_POSITIVE)
+    } else {
+        LOSS_MSE_LOG_DEFAULT_FLOOR
+    }
+}
+
+fn loss_mse_log10(mse: f64, floor: f64) -> f64 {
+    let sanitized = if mse.is_finite() && mse > 0.0 {
+        mse
+    } else {
+        floor
+    };
+    sanitized.max(floor).log10()
 }

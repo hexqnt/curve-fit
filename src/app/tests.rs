@@ -3,6 +3,7 @@ use super::{
     ParamInitMethod, StatusMessage, UiLanguage, data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
+use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{
     Arc,
@@ -401,4 +402,36 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
     app.invalidate_points_cache();
     app.refresh_status_after_points_edit();
     assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
+}
+
+#[test]
+fn fill_points_with_residuals_replaces_points_text_and_pushes_undo() {
+    let mut app = CurveFitApp {
+        points_text: "0 1\n1 2\n".to_string(),
+        residual_plot_points: vec![PlotPoint::new(0.0, -0.5), PlotPoint::new(1.0, 0.25)],
+        ..Default::default()
+    };
+
+    app.fill_points_with_residuals();
+
+    assert_eq!(
+        app.points_text,
+        "0.00000000 -0.50000000\n1.00000000 0.25000000\n"
+    );
+    assert_eq!(app.points_undo_stack, vec!["0 1\n1 2\n".to_string()]);
+    assert!(app.points_redo_stack.is_empty());
+}
+
+#[test]
+fn fill_points_with_residuals_is_noop_when_residuals_are_absent() {
+    let mut app = CurveFitApp {
+        points_text: "0 1\n1 2\n".to_string(),
+        ..Default::default()
+    };
+
+    app.fill_points_with_residuals();
+
+    assert_eq!(app.points_text, "0 1\n1 2\n");
+    assert!(app.points_undo_stack.is_empty());
+    assert!(app.points_redo_stack.is_empty());
 }

@@ -79,6 +79,9 @@ const DIAGNOSTICS_PANEL_MIN_HEIGHT: f32 = 120.0;
 const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
+const UI_CORNER_RADIUS: u8 = 6;
+const PANEL_INNER_MARGIN_X: i8 = 10;
+const PANEL_INNER_MARGIN_Y: i8 = 8;
 const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const APP_REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
@@ -487,9 +490,7 @@ pub struct CurveFitApp {
     show_left_panel: bool,
     show_right_panel: bool,
     show_diagnostics_panel: bool,
-    diagnostics_loss_axis_width: f32,
-    diagnostics_residual_axis_width: f32,
-    diagnostics_params_axis_width: f32,
+    diagnostics_shared_axis_width: f32,
     iteration_delay_seconds: f64,
     spline_knots: usize,
     spline_knot_strategy: SplineKnotStrategy,
@@ -1065,6 +1066,141 @@ impl CurveFitApp {
             self.status = Some(self.idle_status_after_points_edit());
         }
     }
+
+    fn fill_points_with_residuals(&mut self) {
+        if self.residual_plot_points.is_empty() {
+            return;
+        }
+
+        let points = match self
+            .residual_plot_points
+            .iter()
+            .map(|point| Point::try_new(point.x, point.y))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(points) => points,
+            Err(error) => {
+                self.status = Some(StatusMessage::Error(format!(
+                    "Failed to convert residual into point: {error}"
+                )));
+                return;
+            }
+        };
+
+        self.write_points_text(&points, true);
+    }
+
+    fn apply_visual_style(ctx: &egui::Context) {
+        ctx.style_mut(|style| {
+            style.spacing.item_spacing = egui::vec2(10.0, 8.0);
+            style.spacing.button_padding = egui::vec2(8.0, 5.0);
+            style.spacing.interact_size = egui::vec2(44.0, 26.0);
+            style.spacing.slider_width = 170.0;
+            style.spacing.combo_width = 180.0;
+            style.spacing.indent = 14.0;
+
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(21.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(14.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Button,
+                egui::FontId::new(14.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Monospace,
+                egui::FontId::new(13.0, egui::FontFamily::Monospace),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Small,
+                egui::FontId::new(12.0, egui::FontFamily::Proportional),
+            );
+
+            let visuals = &mut style.visuals;
+            visuals.widgets.noninteractive.corner_radius =
+                egui::CornerRadius::same(UI_CORNER_RADIUS);
+            visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(UI_CORNER_RADIUS);
+            visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(UI_CORNER_RADIUS);
+            visuals.widgets.active.corner_radius = egui::CornerRadius::same(UI_CORNER_RADIUS);
+            visuals.widgets.open.corner_radius = egui::CornerRadius::same(UI_CORNER_RADIUS);
+
+            if visuals.dark_mode {
+                visuals.panel_fill = egui::Color32::from_rgb(14, 17, 22);
+                visuals.window_fill = egui::Color32::from_rgb(17, 20, 26);
+                visuals.faint_bg_color = egui::Color32::from_rgb(24, 30, 38);
+                visuals.extreme_bg_color = egui::Color32::from_rgb(8, 11, 16);
+                visuals.code_bg_color = egui::Color32::from_rgb(10, 20, 28);
+                visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(52, 70, 85));
+                visuals.selection.bg_fill = egui::Color32::from_rgb(22, 88, 120);
+                visuals.selection.stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(152, 226, 255));
+                visuals.hyperlink_color = egui::Color32::from_rgb(94, 204, 255);
+                visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(28, 35, 44);
+                visuals.widgets.inactive.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(52, 70, 85));
+                visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(34, 49, 61);
+                visuals.widgets.hovered.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 113, 138));
+                visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(27, 84, 108);
+                visuals.widgets.active.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(86, 171, 211));
+                visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(33, 57, 73);
+                visuals.widgets.open.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 122, 150));
+            } else {
+                visuals.panel_fill = egui::Color32::from_rgb(239, 245, 249);
+                visuals.window_fill = egui::Color32::from_rgb(246, 250, 252);
+                visuals.faint_bg_color = egui::Color32::from_rgb(225, 236, 242);
+                visuals.extreme_bg_color = egui::Color32::from_rgb(251, 253, 255);
+                visuals.code_bg_color = egui::Color32::from_rgb(235, 245, 250);
+                visuals.window_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(165, 188, 201));
+                visuals.selection.bg_fill = egui::Color32::from_rgb(150, 214, 235);
+                visuals.selection.stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(20, 76, 96));
+                visuals.hyperlink_color = egui::Color32::from_rgb(0, 118, 163);
+                visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(220, 234, 241);
+                visuals.widgets.inactive.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(163, 189, 203));
+                visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(208, 227, 237);
+                visuals.widgets.hovered.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(128, 170, 192));
+                visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(183, 220, 236);
+                visuals.widgets.active.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(87, 151, 182));
+                visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(198, 224, 236);
+                visuals.widgets.open.bg_stroke =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(103, 160, 188));
+            }
+        });
+    }
+
+    fn side_panel_frame(style: &egui::Style) -> egui::Frame {
+        egui::Frame::side_top_panel(style)
+            .inner_margin(egui::Margin::symmetric(
+                PANEL_INNER_MARGIN_X,
+                PANEL_INNER_MARGIN_Y,
+            ))
+            .fill(style.visuals.panel_fill)
+            .stroke(egui::Stroke::new(
+                1.0,
+                style.visuals.widgets.noninteractive.bg_stroke.color,
+            ))
+    }
+
+    fn top_bottom_panel_frame(style: &egui::Style) -> egui::Frame {
+        egui::Frame::side_top_panel(style)
+            .inner_margin(egui::Margin::symmetric(PANEL_INNER_MARGIN_X, 6))
+            .fill(style.visuals.panel_fill)
+            .stroke(egui::Stroke::new(
+                1.0,
+                style.visuals.widgets.noninteractive.bg_stroke.color,
+            ))
+    }
 }
 
 impl Default for CurveFitApp {
@@ -1121,9 +1257,7 @@ impl Default for CurveFitApp {
             spline_initial_knot_y_inputs: Vec::new(),
             show_right_panel: true,
             show_diagnostics_panel: true,
-            diagnostics_loss_axis_width: 0.0,
-            diagnostics_residual_axis_width: 0.0,
-            diagnostics_params_axis_width: 0.0,
+            diagnostics_shared_axis_width: 0.0,
             iteration_delay_seconds: 0.25,
             fit_in_progress: false,
             fit_preview_params: None,
@@ -1153,6 +1287,7 @@ impl Default for CurveFitApp {
 
 impl eframe::App for CurveFitApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        Self::apply_visual_style(ctx);
         self.poll_fit_worker(ctx);
         self.maybe_refresh_points_cache_after_debounce();
 
@@ -1172,22 +1307,30 @@ impl eframe::App for CurveFitApp {
             }
         }
 
-        egui::TopBottomPanel::top("header_panel").show(ctx, |ui| {
-            self.ui_header(ui);
-        });
+        let panel_style = ctx.style();
+        let panel_style = panel_style.as_ref();
 
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            self.ui_status_bar(ui);
-        });
+        egui::TopBottomPanel::top("header_panel")
+            .frame(Self::top_bottom_panel_frame(panel_style))
+            .show(ctx, |ui| {
+                self.ui_header(ui);
+            });
+
+        egui::TopBottomPanel::bottom("status_bar")
+            .frame(Self::top_bottom_panel_frame(panel_style))
+            .show(ctx, |ui| {
+                self.ui_status_bar(ui);
+            });
 
         if self.show_left_panel {
             egui::SidePanel::left("points_panel")
                 .default_width(340.0)
                 .resizable(true)
+                .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
-                    self.ui_tools(ui);
-                    ui.separator();
-                    self.ui_points_editor(ui);
+                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_tools(ui));
+                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_points_editor(ui));
                 });
         }
 
@@ -1195,41 +1338,12 @@ impl eframe::App for CurveFitApp {
             egui::SidePanel::right("settings_panel")
                 .default_width(320.0)
                 .resizable(true)
+                .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
-                    let icon_tint = ui.visuals().text_color();
-                    self.ui_family_and_params(ui);
-                    self.ui_optimizer(ui);
-
-                    ui.separator();
-                    let action_button = if self.fit_in_progress {
-                        egui::Button::image_and_text(
-                            stop_icon_image(icon_tint),
-                            tr(self.ui_language, "Stop", "Стоп"),
-                        )
-                    } else {
-                        egui::Button::image_and_text(
-                            fit_icon_image(icon_tint),
-                            tr(self.ui_language, "Fit", "Фитинг"),
-                        )
-                    };
-                    if ui.add(action_button).clicked() {
-                        if self.fit_in_progress {
-                            self.request_stop_fit();
-                        } else {
-                            self.run_fit();
-                        }
-                    }
-                    if self.fit_in_progress
-                        && let Some(iteration) = self.fit_preview_iteration
-                    {
-                        ui.label(format!(
-                            "{}: {iteration}",
-                            tr(self.ui_language, "Iteration", "Итерация")
-                        ));
-                    }
-
-                    ui.separator();
-                    self.ui_result(ui);
+                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
+                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_family_and_params(ui));
+                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_optimizer(ui));
+                    Self::panel_card_frame(ui).show(ui, |ui| self.ui_result(ui));
                 });
         }
 
@@ -1238,6 +1352,7 @@ impl eframe::App for CurveFitApp {
                 .resizable(true)
                 .default_height(DIAGNOSTICS_PANEL_DEFAULT_HEIGHT)
                 .min_height(DIAGNOSTICS_PANEL_MIN_HEIGHT)
+                .frame(Self::top_bottom_panel_frame(panel_style))
                 .show(ctx, |ui| {
                     let available_height = ui.available_height();
                     ui.set_height(available_height);
