@@ -2287,14 +2287,18 @@ fn build_spline_result_from_knot_y(
     knot_y: &[f64],
     iterations: u64,
 ) -> Result<SplineResult, FitError> {
-    let knots = materialize_spline_knots(knot_x, knot_y);
-    let evaluator = build_spline_evaluator(family, knots.clone(), config.extrapolation)?;
-    let curve = sample_sorted_curve(&knots, config.samples, |x| evaluator.evaluate(x));
-    let metrics = calculate_metrics_from_evaluator(points, |x| evaluator.evaluate(x));
+    let built = build_spline_curve_from_knot_y(
+        family,
+        config.extrapolation,
+        config.samples,
+        knot_x,
+        knot_y,
+    )?;
+    let metrics = calculate_metrics_from_evaluator(points, |x| built.evaluator.evaluate(x));
 
     Ok(SplineResult {
-        knots,
-        curve,
+        knots: built.knots,
+        curve: built.curve,
         mse: metrics.mse,
         rmse: metrics.rmse,
         mae: metrics.mae,
@@ -2302,6 +2306,49 @@ fn build_spline_result_from_knot_y(
         max_abs_error: metrics.max_abs_error,
         residuals: metrics.residuals,
         iterations,
+    })
+}
+
+/// Строит стартовую кривую сплайна из пользовательской инициализации.
+///
+/// Используется UI для формирования replay-кадра `iteration = 0` до запуска оптимизации.
+pub(crate) fn build_spline_initial_curve_from_knot_y(
+    points: &Points,
+    family: SplineFamilyKind,
+    config: SplineConfig,
+    knot_y: &[f64],
+) -> Result<Vec<[f64; 2]>, FitError> {
+    let prepared = prepare_spline_inputs(points, config, family, Some(knot_y))?;
+    let built = build_spline_curve_from_knot_y(
+        family,
+        prepared.config.extrapolation,
+        prepared.config.samples,
+        prepared.knot_x.as_ref(),
+        &prepared.initial_y,
+    )?;
+    Ok(built.curve)
+}
+
+struct BuiltSplineCurve {
+    knots: Vec<[f64; 2]>,
+    evaluator: SplineEvaluator,
+    curve: Vec<[f64; 2]>,
+}
+
+fn build_spline_curve_from_knot_y(
+    family: SplineFamilyKind,
+    extrapolation: SplineExtrapolation,
+    samples: usize,
+    knot_x: &[f64],
+    knot_y: &[f64],
+) -> Result<BuiltSplineCurve, FitError> {
+    let knots = materialize_spline_knots(knot_x, knot_y);
+    let evaluator = build_spline_evaluator(family, knots.clone(), extrapolation)?;
+    let curve = sample_sorted_curve(&knots, samples, |x| evaluator.evaluate(x));
+    Ok(BuiltSplineCurve {
+        knots,
+        evaluator,
+        curve,
     })
 }
 

@@ -48,7 +48,8 @@ use crate::domain::{
 };
 use crate::fit::{
     FitError, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-    SplineKnotStrategy, SplineResult, calculate_iteration_metrics, default_spline_initial_knot_y,
+    SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
+    calculate_iteration_metrics, default_spline_initial_knot_y,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, sample_curve,
 };
 #[cfg(target_arch = "wasm32")]
@@ -979,6 +980,29 @@ impl CurveFitApp {
         self.replay_last_step_at = None;
     }
 
+    fn select_replay_last_frame(&mut self) {
+        if let Some(last_index) = self.replay_frames.len().checked_sub(1) {
+            self.set_replay_selected_index(last_index);
+        }
+    }
+
+    fn finalize_replay_after_fit_completion(&mut self) {
+        if self.replay_autoplay_on_fit && self.replay_frames.len() > 1 {
+            self.start_replay_from_beginning();
+            return;
+        }
+
+        self.pause_replay();
+        self.select_replay_last_frame();
+    }
+
+    fn finalize_replay_after_fit_stopped(&mut self) {
+        self.pause_replay();
+        if !self.replay_autoplay_on_fit {
+            self.select_replay_last_frame();
+        }
+    }
+
     fn toggle_replay_autoplay(&mut self) {
         if self.replay_autoplay {
             self.replay_autoplay = false;
@@ -992,10 +1016,8 @@ impl CurveFitApp {
 
         let at_end = self
             .replay_selected_index
-            .map_or(true, |index| index + 1 >= self.replay_frames.len());
+            .is_none_or(|index| index + 1 >= self.replay_frames.len());
         if at_end {
-            self.set_replay_selected_index(0);
-        } else if self.replay_selected_index.is_none() {
             self.set_replay_selected_index(0);
         }
 

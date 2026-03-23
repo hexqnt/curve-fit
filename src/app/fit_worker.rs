@@ -1,6 +1,16 @@
 use super::*;
 
 impl CurveFitApp {
+    fn plot_points_from_pairs<I>(pairs: I) -> Vec<PlotPoint>
+    where
+        I: IntoIterator<Item = [f64; 2]>,
+    {
+        pairs
+            .into_iter()
+            .map(|point| PlotPoint::new(point[0], point[1]))
+            .collect()
+    }
+
     fn status_is_fitting(&self) -> bool {
         matches!(
             self.status.as_ref(),
@@ -69,11 +79,7 @@ impl CurveFitApp {
             r2: result.r2,
             max_abs_error: result.max_abs_error,
         });
-        self.residual_plot_points = result
-            .residuals
-            .iter()
-            .map(|point| PlotPoint::new(point[0], point[1]))
-            .collect();
+        self.residual_plot_points = Self::plot_points_from_pairs(result.residuals.iter().copied());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -124,18 +130,13 @@ impl CurveFitApp {
                     }
                     self.iteration_diagnostics
                         .append_spline(iteration, metrics, &knot_y);
-                    self.upsert_spline_replay_frame(
-                        iteration,
-                        curve
-                            .into_iter()
-                            .map(|point| PlotPoint::new(point[0], point[1]))
-                            .collect(),
-                    );
+                    self.upsert_spline_replay_frame(iteration, Self::plot_points_from_pairs(curve));
                     self.status = Some(StatusMessage::FittingInProgress);
                 }
                 Ok(FitWorkerMessage::Stopped) => {
                     self.fit_in_progress = false;
                     self.active_fit_points = None;
+                    self.finalize_replay_after_fit_stopped();
                     if !self.discard_fit_worker_updates || self.status_is_fitting() {
                         self.status = Some(StatusMessage::FitStopped);
                     }
@@ -162,7 +163,7 @@ impl CurveFitApp {
                             result.iterations,
                             result.params.clone(),
                         );
-                        self.start_replay_from_beginning();
+                        self.finalize_replay_after_fit_completion();
                         self.fit_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
                     } else if self.status_is_fitting() {
@@ -176,11 +177,8 @@ impl CurveFitApp {
                     self.fit_in_progress = false;
                     if !self.discard_fit_worker_updates {
                         let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
-                        let spline_plot_curve = result
-                            .curve
-                            .iter()
-                            .map(|point| PlotPoint::new(point[0], point[1]))
-                            .collect();
+                        let spline_plot_curve =
+                            Self::plot_points_from_pairs(result.curve.iter().copied());
                         self.update_spline_result_metrics(&result);
                         let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
                         self.iteration_diagnostics.append_spline(
@@ -189,7 +187,7 @@ impl CurveFitApp {
                             &knot_y,
                         );
                         self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
-                        self.start_replay_from_beginning();
+                        self.finalize_replay_after_fit_completion();
                         self.spline_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
                     } else if self.status_is_fitting() {
@@ -286,7 +284,7 @@ impl CurveFitApp {
                         );
                     }
                     self.upsert_parametric_replay_frame(result.iterations, result.params.clone());
-                    self.start_replay_from_beginning();
+                    self.finalize_replay_after_fit_completion();
                     self.fit_result = Some(result);
                     self.status = Some(StatusMessage::FitCompleted);
                     self.active_fit_points = None;
@@ -295,6 +293,7 @@ impl CurveFitApp {
                 }
                 WasmRunnerStep::Parametric(Ok(IncrementalFitStep::Cancelled)) => {
                     self.fit_in_progress = false;
+                    self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
                     keep_runner = false;
@@ -316,29 +315,20 @@ impl CurveFitApp {
                 })) => {
                     self.iteration_diagnostics
                         .append_spline(iteration, metrics, &knot_y);
-                    self.upsert_spline_replay_frame(
-                        iteration,
-                        curve
-                            .into_iter()
-                            .map(|point| PlotPoint::new(point[0], point[1]))
-                            .collect(),
-                    );
+                    self.upsert_spline_replay_frame(iteration, Self::plot_points_from_pairs(curve));
                     self.status = Some(StatusMessage::FittingInProgress);
                 }
                 WasmRunnerStep::Spline(Ok(IncrementalSplineFitStep::Finished(result))) => {
                     self.fit_in_progress = false;
                     let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
-                    let spline_plot_curve = result
-                        .curve
-                        .iter()
-                        .map(|point| PlotPoint::new(point[0], point[1]))
-                        .collect();
+                    let spline_plot_curve =
+                        Self::plot_points_from_pairs(result.curve.iter().copied());
                     self.update_spline_result_metrics(&result);
                     let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
                     self.iteration_diagnostics
                         .append_spline(result.iterations, metrics, &knot_y);
                     self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
-                    self.start_replay_from_beginning();
+                    self.finalize_replay_after_fit_completion();
                     self.spline_result = Some(result);
                     self.status = Some(StatusMessage::FitCompleted);
                     self.active_fit_points = None;
@@ -347,6 +337,7 @@ impl CurveFitApp {
                 }
                 WasmRunnerStep::Spline(Ok(IncrementalSplineFitStep::Cancelled)) => {
                     self.fit_in_progress = false;
+                    self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
                     keep_runner = false;
@@ -587,6 +578,19 @@ impl CurveFitApp {
                 }
             };
             self.clear_fit_outputs();
+            let initial_curve = match build_spline_initial_curve_from_knot_y(
+                &points,
+                spline_family,
+                spline_config,
+                initial_knot_y.as_slice(),
+            ) {
+                Ok(curve) => curve,
+                Err(error) => {
+                    self.status = Some(StatusMessage::Error(error.to_string()));
+                    return;
+                }
+            };
+            self.upsert_spline_replay_frame(0, Self::plot_points_from_pairs(initial_curve));
             self.status = Some(StatusMessage::FittingInProgress);
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -649,8 +653,6 @@ impl CurveFitApp {
         self.active_fit_points = Some(points.clone());
         self.iteration_diagnostics
             .initialize(&points, &initial_params, loss_metric);
-        self.fit_preview_params = Some(initial_params.clone());
-        self.fit_preview_iteration = Some(0);
         self.upsert_parametric_replay_frame(0, initial_params.clone());
         self.status = Some(StatusMessage::FittingInProgress);
 
