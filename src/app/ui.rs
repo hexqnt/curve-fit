@@ -283,57 +283,65 @@ impl CurveFitApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.menu_button(tr(language, "View", "Вид"), |ui| {
-                        if ui
-                            .add(egui::Button::image_and_text(
-                                fit_to_content_icon_image(icon_tint),
-                                tr(language, "Fit to content", "Подогнать по содержимому"),
-                            ))
-                            .clicked()
-                        {
-                            self.fit_to_content_requested = true;
-                            ui.close();
-                        }
-                        if ui
-                            .add(egui::Button::image_and_text(
-                                center_origin_icon_image(icon_tint),
-                                tr(language, "Center to 0,0", "Центр к 0,0"),
-                            ))
-                            .clicked()
-                        {
-                            self.center_origin_requested = true;
-                            self.origin_bottom_left_requested = false;
-                            ui.close();
-                        }
-                        if ui
-                            .add(egui::Button::new(tr(
-                                language,
-                                "Set 0,0 to bottom-left",
-                                "0,0 в левый нижний угол",
-                            )))
-                            .clicked()
-                        {
-                            self.origin_bottom_left_requested = true;
-                            self.center_origin_requested = false;
-                            ui.close();
-                        }
-                    });
+                    ui.menu_image_text_button(
+                        view_icon_image(icon_tint),
+                        tr(language, "View", "Вид"),
+                        |ui| {
+                            if ui
+                                .add(egui::Button::image_and_text(
+                                    fit_to_content_icon_image(icon_tint),
+                                    tr(language, "Fit to content", "Подогнать по содержимому"),
+                                ))
+                                .clicked()
+                            {
+                                self.fit_to_content_requested = true;
+                                ui.close();
+                            }
+                            if ui
+                                .add(egui::Button::image_and_text(
+                                    center_origin_icon_image(icon_tint),
+                                    tr(language, "Center to 0,0", "Центр к 0,0"),
+                                ))
+                                .clicked()
+                            {
+                                self.center_origin_requested = true;
+                                self.origin_bottom_left_requested = false;
+                                ui.close();
+                            }
+                            if ui
+                                .add(egui::Button::new(tr(
+                                    language,
+                                    "Set 0,0 to bottom-left",
+                                    "0,0 в левый нижний угол",
+                                )))
+                                .clicked()
+                            {
+                                self.origin_bottom_left_requested = true;
+                                self.center_origin_requested = false;
+                                ui.close();
+                            }
+                        },
+                    );
 
                     ui.separator();
-                    ui.menu_button(tr(language, "Panels", "Панели"), |ui| {
-                        ui.toggle_value(
-                            &mut self.show_left_panel,
-                            tr(language, "Left panel", "Левая панель"),
-                        );
-                        ui.toggle_value(
-                            &mut self.show_right_panel,
-                            tr(language, "Right panel", "Правая панель"),
-                        );
-                        ui.toggle_value(
-                            &mut self.show_diagnostics_panel,
-                            tr(language, "Diagnostics", "Диагностика"),
-                        );
-                    });
+                    ui.menu_image_text_button(
+                        panels_icon_image(icon_tint),
+                        tr(language, "Panels", "Панели"),
+                        |ui| {
+                            ui.checkbox(
+                                &mut self.show_left_panel,
+                                tr(language, "Left panel", "Левая панель"),
+                            );
+                            ui.checkbox(
+                                &mut self.show_right_panel,
+                                tr(language, "Right panel", "Правая панель"),
+                            );
+                            ui.checkbox(
+                                &mut self.show_diagnostics_panel,
+                                tr(language, "Diagnostics", "Диагностика"),
+                            );
+                        },
+                    );
 
                     ui.separator();
                     let (min_iteration, max_iteration) =

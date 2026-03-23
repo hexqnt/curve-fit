@@ -48,6 +48,14 @@ pub(super) fn center_origin_icon_image(tint: egui::Color32) -> egui::Image<'stat
     tabler_icon!("../../assets/icons/tabler/focus-2.svg", tint)
 }
 
+pub(super) fn view_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/zoom-scan.svg", tint)
+}
+
+pub(super) fn panels_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/layout.svg", tint)
+}
+
 pub(super) fn undo_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/arrow-back-up.svg", tint)
 }
