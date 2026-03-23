@@ -1630,17 +1630,25 @@ impl eframe::App for CurveFitApp {
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
+                    let language = self.ui_language;
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.set_width(ui.available_width());
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        self.ui_tools(ui);
-                    });
-                    // ui.set_width(ui.available_width());
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        // ui.set_min_width(ui.available_width());
-                        self.ui_points_editor(ui);
-                    });
+                    Self::panel_card_collapsible(
+                        ui,
+                        "left_section_tools",
+                        tr(language, "Tools", "Инструменты"),
+                        |ui| {
+                            self.ui_tools(ui);
+                        },
+                    );
+                    Self::panel_card_collapsible(
+                        ui,
+                        "left_section_points",
+                        tr(language, "Input Points", "Точки"),
+                        |ui| {
+                            self.ui_points_editor(ui);
+                        },
+                    );
                 });
         }
 
@@ -1651,28 +1659,41 @@ impl eframe::App for CurveFitApp {
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
                 .show(ctx, |ui| {
+                    let language = self.ui_language;
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.set_width(ui.available_width());
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        // ui.set_width(ui.available_width());
-                        self.ui_family_and_params(ui);
-                    });
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        // ui.set_width(ui.available_width());
-                        self.ui_optimization_metric(ui);
-                    });
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        // ui.set_width(ui.available_width());
-                        self.ui_optimizer(ui);
-                    });
-                    Self::panel_card_frame(ui).show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
-                        // ui.set_width(ui.available_width());
-                        self.ui_result(ui);
-                    });
+                    Self::panel_card_collapsible(
+                        ui,
+                        "right_section_model",
+                        tr(language, "Model", "Модель"),
+                        |ui| {
+                            self.ui_family_and_params(ui);
+                        },
+                    );
+                    Self::panel_card_collapsible(
+                        ui,
+                        "right_section_metric",
+                        tr(language, "Optimization metric", "Метрика оптимизации"),
+                        |ui| {
+                            self.ui_optimization_metric(ui);
+                        },
+                    );
+                    Self::panel_card_collapsible(
+                        ui,
+                        "right_section_optimizer",
+                        tr(language, "Optimizer", "Оптимизатор"),
+                        |ui| {
+                            self.ui_optimizer(ui);
+                        },
+                    );
+                    Self::panel_card_collapsible(
+                        ui,
+                        "right_section_result",
+                        tr(language, "Result", "Результат"),
+                        |ui| {
+                            self.ui_result(ui);
+                        },
+                    );
                 });
         }
 

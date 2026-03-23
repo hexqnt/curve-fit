@@ -6,6 +6,8 @@ const PANEL_CARD_INNER_MARGIN_X: i8 = 10;
 const PANEL_CARD_INNER_MARGIN_Y: i8 = 8;
 const SPLINE_KNOT_INPUTS_MAX_HEIGHT: f32 = 180.0;
 const RESULT_PARAMS_MAX_HEIGHT: f32 = 190.0;
+const COLLAPSING_ICON_SCALE: f32 = 1.5;
+const COLLAPSING_HEADER_TEXT_OFFSET_X: f32 = 4.0;
 const DIAGNOSTICS_SERIES_ID_LOSS: &str = "diagnostics_series_loss";
 const DIAGNOSTICS_SERIES_ID_MSE: &str = "diagnostics_series_mse";
 const DIAGNOSTICS_SERIES_ID_RMSE: &str = "diagnostics_series_rmse";
@@ -28,6 +30,39 @@ impl CurveFitApp {
                 1.0,
                 ui.visuals().widgets.noninteractive.bg_stroke.color,
             ))
+    }
+
+    pub(super) fn panel_card_collapsible(
+        ui: &mut egui::Ui,
+        id_salt: impl std::hash::Hash,
+        title: impl Into<egui::WidgetText>,
+        add_body: impl FnOnce(&mut egui::Ui),
+    ) {
+        Self::panel_card_frame(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.scope(|ui| {
+                ui.spacing_mut().indent += COLLAPSING_HEADER_TEXT_OFFSET_X;
+                egui::CollapsingHeader::new(title.into().heading())
+                    .id_salt(id_salt)
+                    .default_open(true)
+                    .icon(|ui, openness, response| {
+                        let enlarged_rect = egui::Rect::from_center_size(
+                            response.rect.center(),
+                            response.rect.size() * COLLAPSING_ICON_SCALE,
+                        )
+                        .translate(egui::vec2(-0.5 * COLLAPSING_HEADER_TEXT_OFFSET_X, 0.0));
+                        let enlarged_response = response.clone().with_new_rect(enlarged_rect);
+                        egui::containers::collapsing_header::paint_default_icon(
+                            ui,
+                            openness,
+                            &enlarged_response,
+                        );
+                    })
+                    .show_unindented(ui, |ui| {
+                        add_body(ui);
+                    });
+            });
+        });
     }
 
     pub(super) fn action_button_style(
@@ -399,7 +434,6 @@ impl CurveFitApp {
     pub(super) fn ui_tools(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
         let icon_tint = ui.visuals().text_color();
-        ui.heading(tr(language, "Tools", "Инструменты"));
         ui.label(
             egui::RichText::new(tr(
                 language,
@@ -508,7 +542,6 @@ impl CurveFitApp {
                 parse_error_message,
             )
         };
-        ui.heading(tr(language, "Input Points", "Точки"));
         ui.label(tr(
             language,
             "One point per line: x and y separated by space, tab, or ';'",
@@ -680,7 +713,6 @@ impl CurveFitApp {
     pub(super) fn ui_family_and_params(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
         let can_edit_params = !self.fit_in_progress;
-        ui.heading(tr(language, "Model", "Модель"));
 
         let previous_model = self.selected_model;
         ui.add_enabled_ui(can_edit_params, |ui| {
@@ -993,7 +1025,6 @@ impl CurveFitApp {
     pub(super) fn ui_optimizer(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
         let icon_tint = ui.visuals().text_color();
-        ui.heading(tr(language, "Optimizer", "Оптимизатор"));
         egui::ComboBox::from_label(tr(language, "Method", "Метод"))
             .selected_text(optimizer_method_label(language, self.optimizer_method))
             .show_ui(ui, |ui| {
@@ -1296,7 +1327,6 @@ impl CurveFitApp {
 
     pub(super) fn ui_optimization_metric(&mut self, ui: &mut egui::Ui) {
         let language = self.ui_language;
-        ui.heading(tr(language, "Optimization metric", "Метрика оптимизации"));
         egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
             .selected_text(optimization_loss_metric_label(
                 language,
@@ -1761,7 +1791,6 @@ impl CurveFitApp {
 
     pub(super) fn ui_result(&self, ui: &mut egui::Ui) {
         let language = self.ui_language;
-        ui.heading(tr(language, "Result", "Результат"));
         if self.fit_in_progress {
             ui.label(tr(
                 language,
