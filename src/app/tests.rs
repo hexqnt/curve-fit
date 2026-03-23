@@ -1,15 +1,18 @@
 use super::{
     CurveFitApp, IterationDiagnostics, ModelChoice, OptimizerMethod, OptimizerPreset,
-    ParamInitMethod, StatusMessage, UiLanguage, data_based_params_for_family,
+    ParamInitMethod, ReplayFramePayload, StatusMessage, UiLanguage, data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
 use crate::fit::{IterationMetricSnapshot, OptimizationLossMetric};
+use eframe::egui;
 use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 fn line_points() -> Points {
     Points::try_from(vec![
@@ -108,6 +111,7 @@ fn optimization_metric_defaults_to_mse() {
     let app = CurveFitApp::default();
     assert_eq!(app.optimization_loss_metric, OptimizationLossMetric::Mse);
     assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
+    assert!(app.replay_autoplay_on_fit);
     assert!(app.diagnostics_hide_non_loss_by_default_pending);
 }
 
@@ -279,6 +283,88 @@ fn diagnostics_append_spline_tracks_knot_parameters() {
         diagnostics.parameter_series[1],
         vec![[1.0, -1.0], [2.0, -0.25]]
     );
+}
+
+#[test]
+fn replay_upsert_replaces_duplicate_iteration() {
+    let mut app = CurveFitApp::default();
+    app.upsert_parametric_replay_frame(3, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(3, CurveParams::Linear { a: 2.0, b: -1.0 });
+
+    assert_eq!(app.replay_frames.len(), 1);
+    assert_eq!(app.replay_frames[0].iteration, 3);
+    match &app.replay_frames[0].payload {
+        ReplayFramePayload::Parametric { params } => {
+            assert_eq!(*params, CurveParams::Linear { a: 2.0, b: -1.0 });
+        }
+        ReplayFramePayload::Spline { .. } => panic!("expected parametric replay frame"),
+    }
+}
+
+#[test]
+fn replay_start_from_beginning_selects_first_frame_and_enables_autoplay() {
+    let mut app = CurveFitApp::default();
+    app.upsert_parametric_replay_frame(1, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(2, CurveParams::Linear { a: 2.0, b: 0.5 });
+
+    app.start_replay_from_beginning();
+
+    assert_eq!(app.replay_selected_index, Some(0));
+    assert!(app.replay_autoplay);
+    assert_eq!(app.fit_preview_iteration, Some(1));
+    assert_eq!(
+        app.fit_preview_params,
+        Some(CurveParams::Linear { a: 1.0, b: 0.0 })
+    );
+}
+
+#[test]
+fn replay_start_from_beginning_respects_auto_replay_toggle() {
+    let mut app = CurveFitApp::default();
+    app.replay_autoplay_on_fit = false;
+    app.upsert_parametric_replay_frame(1, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(2, CurveParams::Linear { a: 2.0, b: 0.5 });
+
+    app.start_replay_from_beginning();
+
+    assert_eq!(app.replay_selected_index, Some(0));
+    assert!(!app.replay_autoplay);
+    assert_eq!(app.fit_preview_iteration, Some(1));
+}
+
+#[test]
+fn replay_select_nearest_iteration_updates_parametric_preview() {
+    let mut app = CurveFitApp::default();
+    app.upsert_parametric_replay_frame(2, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(10, CurveParams::Linear { a: 4.0, b: -2.0 });
+
+    app.select_nearest_replay_iteration(8);
+
+    assert_eq!(app.fit_preview_iteration, Some(10));
+    assert_eq!(
+        app.fit_preview_params,
+        Some(CurveParams::Linear { a: 4.0, b: -2.0 })
+    );
+    assert!(app.spline_plot_curve.is_none());
+}
+
+#[test]
+fn replay_select_nearest_iteration_updates_spline_preview() {
+    let mut app = CurveFitApp::default();
+    app.upsert_spline_replay_frame(1, vec![PlotPoint::new(0.0, 0.0), PlotPoint::new(1.0, 1.0)]);
+    app.upsert_spline_replay_frame(5, vec![PlotPoint::new(0.0, 1.0), PlotPoint::new(1.0, 2.0)]);
+
+    app.select_nearest_replay_iteration(4);
+
+    assert_eq!(app.fit_preview_iteration, Some(5));
+    assert!(app.fit_preview_params.is_none());
+    let spline_curve = app
+        .spline_plot_curve
+        .as_ref()
+        .expect("spline curve preview must be set");
+    assert_eq!(spline_curve.len(), 2);
+    assert_eq!(spline_curve[0], PlotPoint::new(0.0, 1.0));
+    assert_eq!(spline_curve[1], PlotPoint::new(1.0, 2.0));
 }
 
 #[test]
@@ -486,6 +572,14 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
             rmse: 0.0,
             iterations: 1,
         }),
+        replay_frames: vec![super::ReplayFrame {
+            iteration: 0,
+            payload: ReplayFramePayload::Parametric {
+                params: CurveParams::Linear { a: 1.0, b: 0.0 },
+            },
+        }],
+        replay_selected_index: Some(0),
+        replay_autoplay: true,
         ..Default::default()
     };
 
@@ -497,6 +591,81 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
     assert!(app.fit_result.is_none());
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
+    assert!(app.replay_frames.is_empty());
+    assert!(app.replay_selected_index.is_none());
+    assert!(!app.replay_autoplay);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn make_linear_fit_app() -> CurveFitApp {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Polynomial,
+        polynomial_degree: 1,
+        ..Default::default()
+    };
+    app.sync_parameter_inputs();
+    app.points_text = "0 1\n1 3\n2 5\n3 7\n".to_string();
+    app.invalidate_points_cache();
+    app
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn wait_fit_completion(app: &mut CurveFitApp) {
+    let ctx = egui::Context::default();
+    for _ in 0..20_000 {
+        app.poll_fit_worker(&ctx);
+        if !app.fit_in_progress {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    panic!("fit did not complete in time");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn successful_fit_starts_replay_from_first_frame() {
+    let mut app = make_linear_fit_app();
+    app.iteration_delay_seconds = 0.0;
+
+    app.run_fit();
+    assert!(app.fit_in_progress);
+    wait_fit_completion(&mut app);
+
+    assert!(
+        matches!(app.status, Some(StatusMessage::FitCompleted)),
+        "status after fit: {:?}",
+        app.status
+    );
+    assert!(!app.replay_frames.is_empty());
+    assert_eq!(app.replay_selected_index, Some(0));
+    assert_eq!(
+        app.fit_preview_iteration,
+        Some(app.replay_frames[0].iteration)
+    );
+    if app.replay_frames.len() > 1 {
+        assert!(app.replay_autoplay);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn replay_step_seconds_does_not_block_fit_completion() {
+    for replay_step in [0.0, 0.75, 1.5] {
+        let mut app = make_linear_fit_app();
+        app.iteration_delay_seconds = replay_step;
+
+        app.run_fit();
+        assert!(app.fit_in_progress);
+        wait_fit_completion(&mut app);
+
+        assert!(app.fit_result.is_some());
+        assert!(
+            matches!(app.status, Some(StatusMessage::FitCompleted)),
+            "status after fit: {:?}",
+            app.status
+        );
+    }
 }
 
 #[test]

@@ -68,6 +68,14 @@ pub(super) fn fit_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/player-play.svg", tint)
 }
 
+pub(super) fn replay_play_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/player-play.svg", tint)
+}
+
+pub(super) fn replay_pause_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/player-pause.svg", tint)
+}
+
 pub(super) fn stop_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/player-stop.svg", tint)
 }

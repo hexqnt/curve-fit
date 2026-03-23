@@ -248,26 +248,6 @@ impl CurveFitApp {
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let delay_supported = !self.fit_in_progress;
-                    let delay_slider =
-                        egui::Slider::new(&mut self.iteration_delay_seconds, 0.0..=3.0)
-                            .step_by(0.01)
-                            .text(tr(
-                                language,
-                                "Iteration delay, sec",
-                                "Задержка итерации, сек",
-                            ));
-                    let response = ui.add_enabled(delay_supported, delay_slider);
-                    if !delay_supported {
-                        let hint = tr(
-                            language,
-                            "Delay changes are locked while fitting is running.",
-                            "Изменение задержки недоступно во время подгонки.",
-                        );
-                        response.on_disabled_hover_text(hint);
-                    }
-
-                    ui.separator();
                     ui.menu_button(tr(language, "View", "Вид"), |ui| {
                         if ui
                             .add(egui::Button::image_and_text(
@@ -319,6 +299,54 @@ impl CurveFitApp {
                             tr(language, "Diagnostics", "Диагностика"),
                         );
                     });
+
+                    ui.separator();
+                    let (min_iteration, max_iteration) =
+                        self.replay_iteration_bounds().unwrap_or((0, 0));
+                    let mut selected_iteration =
+                        self.replay_selected_iteration().unwrap_or(min_iteration);
+                    let replay_slider_enabled =
+                        !self.fit_in_progress && !self.replay_frames.is_empty();
+                    let response = ui.add_enabled(
+                        replay_slider_enabled,
+                        egui::Slider::new(&mut selected_iteration, min_iteration..=max_iteration)
+                            .text(tr(language, "Displayed iteration", "Показываемая итерация")),
+                    );
+                    if replay_slider_enabled && response.changed() {
+                        self.pause_replay();
+                        self.select_nearest_replay_iteration(selected_iteration);
+                    }
+                    ui.checkbox(
+                        &mut self.replay_autoplay_on_fit,
+                        tr(language, "Auto-play", "Автопромотка"),
+                    );
+                    let (play_icon, play_label) = if self.replay_autoplay {
+                        (
+                            replay_pause_icon_image(icon_tint),
+                            tr(language, "Pause", "Пауза"),
+                        )
+                    } else {
+                        (
+                            replay_play_icon_image(icon_tint),
+                            tr(language, "Play", "Пуск"),
+                        )
+                    };
+                    let can_toggle_play = !self.fit_in_progress && self.replay_frames.len() > 1;
+                    if ui
+                        .add_enabled(
+                            can_toggle_play,
+                            egui::Button::image_and_text(play_icon, play_label),
+                        )
+                        .clicked()
+                    {
+                        self.toggle_replay_autoplay();
+                    }
+                    ui.separator();
+                    ui.add(
+                        egui::Slider::new(&mut self.iteration_delay_seconds, 0.0..=3.0)
+                            .step_by(0.01)
+                            .text(tr(language, "Replay step, sec", "Шаг промотки, сек")),
+                    );
                 });
             });
     }
@@ -1332,17 +1360,21 @@ impl CurveFitApp {
         };
         let fitted_curve_points = spline_curve_slice.or(sampled_curve.as_deref());
         let fitted_line_name = if spline_curve_slice.is_some() {
-            model_choice_label(language, self.selected_model).to_string()
-        } else if self.fit_in_progress {
             if let Some(iteration) = self.fit_preview_iteration {
                 format!(
                     "{} ({})",
-                    tr(language, "Fitted", "Фитинг"),
+                    model_choice_label(language, self.selected_model),
                     format_args!("{} {iteration}", tr(language, "iter", "итер."))
                 )
             } else {
-                tr(language, "Fitted", "Фитинг").to_string()
+                model_choice_label(language, self.selected_model).to_string()
             }
+        } else if let Some(iteration) = self.fit_preview_iteration {
+            format!(
+                "{} ({})",
+                tr(language, "Fitted", "Фитинг"),
+                format_args!("{} {iteration}", tr(language, "iter", "итер."))
+            )
         } else {
             tr(language, "Fitted", "Фитинг").to_string()
         };
@@ -1733,8 +1765,8 @@ impl CurveFitApp {
         if self.fit_in_progress {
             ui.label(tr(
                 language,
-                "Fitting in progress. Curve updates after each iteration.",
-                "Подгонка в процессе. Кривая обновляется после каждой итерации.",
+                "Fitting in progress. Replay starts after optimization completes.",
+                "Подгонка в процессе. Промотка начнется после завершения оптимизации.",
             ));
             if let Some(iteration) = self.fit_preview_iteration {
                 ui.label(format!(

@@ -27,9 +27,9 @@ use self::i18n::{
     center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
     fit_to_content_icon_image, github_mark_image, language_flag_image, model_choice_label,
     optimization_loss_metric_label, param_init_method_disabled_label, param_init_method_label,
-    param_init_method_name_en, redo_icon_image, reset_icon_image, spline_extrapolation_label,
-    spline_knot_strategy_label, spray_brush_label, stop_icon_image, tool_icon_image, tool_label,
-    tr, undo_icon_image,
+    param_init_method_name_en, redo_icon_image, replay_pause_icon_image, replay_play_icon_image,
+    reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
+    stop_icon_image, tool_icon_image, tool_label, tr, undo_icon_image,
 };
 use self::optimizer::{
     LbfgsInputState, NelderMeadInputState, OptimizerPreset, OptimizerUiMode,
@@ -90,6 +90,12 @@ const PANEL_INNER_MARGIN_X: i8 = 10;
 const PANEL_INNER_MARGIN_Y: i8 = 8;
 const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const APP_REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
+#[cfg(target_arch = "wasm32")]
+const WASM_FIT_BURST_STEPS: usize = 1;
+#[cfg(target_arch = "wasm32")]
+const WASM_FIT_BURST_TIME_BUDGET_MS: u64 = 6;
+#[cfg(target_arch = "wasm32")]
+const WASM_FIT_REPAINT_INTERVAL_MS: u64 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum UiLanguage {
@@ -407,6 +413,18 @@ struct ExtendedMetrics {
     max_abs_error: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ReplayFramePayload {
+    Parametric { params: CurveParams },
+    Spline { curve: Vec<PlotPoint> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ReplayFrame {
+    iteration: u64,
+    payload: ReplayFramePayload,
+}
+
 #[derive(Debug, Clone)]
 enum StatusMessage {
     Ready,
@@ -500,6 +518,11 @@ pub struct CurveFitApp {
     diagnostics_hide_non_loss_by_default_pending: bool,
     diagnostics_shared_axis_width: f32,
     iteration_delay_seconds: f64,
+    replay_frames: Vec<ReplayFrame>,
+    replay_selected_index: Option<usize>,
+    replay_autoplay_on_fit: bool,
+    replay_autoplay: bool,
+    replay_last_step_at: Option<Instant>,
     spline_knots: usize,
     spline_knot_strategy: SplineKnotStrategy,
     spline_extrapolation: SplineExtrapolation,
@@ -844,6 +867,200 @@ impl CurveFitApp {
         self.iteration_diagnostics.clear();
         self.diagnostics_hide_non_loss_by_default_pending = true;
         self.clear_fit_preview();
+        self.clear_replay_state();
+    }
+
+    fn clear_replay_state(&mut self) {
+        self.replay_frames.clear();
+        self.replay_selected_index = None;
+        self.replay_autoplay = false;
+        self.replay_last_step_at = None;
+    }
+
+    fn upsert_parametric_replay_frame(&mut self, iteration: u64, params: CurveParams) {
+        self.upsert_replay_frame(ReplayFrame {
+            iteration,
+            payload: ReplayFramePayload::Parametric { params },
+        });
+    }
+
+    fn upsert_spline_replay_frame(&mut self, iteration: u64, curve: Vec<PlotPoint>) {
+        self.upsert_replay_frame(ReplayFrame {
+            iteration,
+            payload: ReplayFramePayload::Spline { curve },
+        });
+    }
+
+    fn upsert_replay_frame(&mut self, frame: ReplayFrame) {
+        if let Some(last) = self.replay_frames.last_mut()
+            && last.iteration == frame.iteration
+        {
+            *last = frame;
+            return;
+        }
+
+        self.replay_frames.push(frame);
+    }
+
+    fn replay_iteration_bounds(&self) -> Option<(u64, u64)> {
+        let first = self.replay_frames.first()?;
+        let last = self.replay_frames.last()?;
+        Some((first.iteration, last.iteration))
+    }
+
+    fn replay_selected_iteration(&self) -> Option<u64> {
+        let index = self.replay_selected_index?;
+        self.replay_frames.get(index).map(|frame| frame.iteration)
+    }
+
+    fn set_replay_selected_index(&mut self, index: usize) {
+        let Some(frame) = self.replay_frames.get(index).cloned() else {
+            return;
+        };
+
+        self.replay_selected_index = Some(index);
+        self.fit_preview_iteration = Some(frame.iteration);
+
+        match frame.payload {
+            ReplayFramePayload::Parametric { params } => {
+                self.fit_preview_params = Some(params);
+                self.spline_plot_curve = None;
+            }
+            ReplayFramePayload::Spline { curve } => {
+                self.fit_preview_params = None;
+                self.spline_plot_curve = Some(curve);
+            }
+        }
+    }
+
+    fn select_nearest_replay_iteration(&mut self, iteration: u64) {
+        let Some(index) = self.nearest_replay_frame_index(iteration) else {
+            return;
+        };
+        self.set_replay_selected_index(index);
+    }
+
+    fn nearest_replay_frame_index(&self, iteration: u64) -> Option<usize> {
+        let frames = self.replay_frames.as_slice();
+        if frames.is_empty() {
+            return None;
+        }
+
+        match frames.binary_search_by_key(&iteration, |frame| frame.iteration) {
+            Ok(index) => Some(index),
+            Err(insert) => {
+                if insert == 0 {
+                    Some(0)
+                } else if insert >= frames.len() {
+                    Some(frames.len() - 1)
+                } else {
+                    let prev = insert - 1;
+                    let prev_distance = iteration.saturating_sub(frames[prev].iteration);
+                    let next_distance = frames[insert].iteration.saturating_sub(iteration);
+                    if next_distance < prev_distance {
+                        Some(insert)
+                    } else {
+                        Some(prev)
+                    }
+                }
+            }
+        }
+    }
+
+    fn start_replay_from_beginning(&mut self) {
+        if self.replay_frames.is_empty() {
+            self.replay_autoplay = false;
+            self.replay_last_step_at = None;
+            return;
+        }
+
+        self.set_replay_selected_index(0);
+        self.replay_autoplay = self.replay_autoplay_on_fit && self.replay_frames.len() > 1;
+        self.replay_last_step_at = None;
+    }
+
+    fn toggle_replay_autoplay(&mut self) {
+        if self.replay_autoplay {
+            self.replay_autoplay = false;
+            self.replay_last_step_at = None;
+            return;
+        }
+
+        if self.replay_frames.len() < 2 {
+            return;
+        }
+
+        let at_end = self
+            .replay_selected_index
+            .map_or(true, |index| index + 1 >= self.replay_frames.len());
+        if at_end {
+            self.set_replay_selected_index(0);
+        } else if self.replay_selected_index.is_none() {
+            self.set_replay_selected_index(0);
+        }
+
+        self.replay_autoplay = true;
+        self.replay_last_step_at = None;
+    }
+
+    fn pause_replay(&mut self) {
+        self.replay_autoplay = false;
+        self.replay_last_step_at = None;
+    }
+
+    fn tick_replay(&mut self, ctx: &egui::Context) {
+        if self.fit_in_progress || !self.replay_autoplay {
+            return;
+        }
+
+        let Some(current_index) = self.replay_selected_index else {
+            self.pause_replay();
+            return;
+        };
+        if current_index + 1 >= self.replay_frames.len() {
+            self.pause_replay();
+            return;
+        }
+
+        if self.replay_last_step_at.is_none() {
+            self.replay_last_step_at = Some(Instant::now());
+            if self.iteration_delay_seconds > 0.0 {
+                ctx.request_repaint_after(Duration::from_secs_f64(self.iteration_delay_seconds));
+            } else {
+                ctx.request_repaint();
+            }
+            return;
+        }
+
+        if self.iteration_delay_seconds <= 0.0 {
+            self.set_replay_selected_index(current_index + 1);
+            if current_index + 2 < self.replay_frames.len() {
+                ctx.request_repaint();
+            } else {
+                self.pause_replay();
+            }
+            return;
+        }
+
+        let now = Instant::now();
+        if let Some(last_step_at) = self.replay_last_step_at {
+            let elapsed = now.saturating_duration_since(last_step_at).as_secs_f64();
+            if elapsed < self.iteration_delay_seconds {
+                ctx.request_repaint_after(Duration::from_secs_f64(
+                    self.iteration_delay_seconds - elapsed,
+                ));
+                return;
+            }
+        }
+
+        self.set_replay_selected_index(current_index + 1);
+        self.replay_last_step_at = Some(now);
+
+        if current_index + 2 < self.replay_frames.len() {
+            ctx.request_repaint_after(Duration::from_secs_f64(self.iteration_delay_seconds));
+        } else {
+            self.pause_replay();
+        }
     }
 
     fn parse_points_for_edit(&mut self) -> Result<Vec<Point>, String> {
@@ -1315,7 +1532,12 @@ impl Default for CurveFitApp {
             show_diagnostics_panel: true,
             diagnostics_hide_non_loss_by_default_pending: true,
             diagnostics_shared_axis_width: 0.0,
-            iteration_delay_seconds: 0.25,
+            iteration_delay_seconds: 0.0,
+            replay_frames: Vec::new(),
+            replay_selected_index: None,
+            replay_autoplay_on_fit: true,
+            replay_autoplay: false,
+            replay_last_step_at: None,
             fit_in_progress: false,
             fit_loss_metric: OptimizationLossMetric::default(),
             fit_preview_params: None,
@@ -1347,6 +1569,7 @@ impl eframe::App for CurveFitApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Self::apply_visual_style(ctx);
         self.poll_fit_worker(ctx);
+        self.tick_replay(ctx);
         self.maybe_refresh_points_cache_after_debounce();
 
         if !self.fit_in_progress {
