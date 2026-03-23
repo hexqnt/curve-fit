@@ -1,6 +1,10 @@
 use std::f64::consts::TAU;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use eframe::egui;
 use egui_plot::{
@@ -46,19 +50,21 @@ use crate::domain::{
     CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, OptimizerConfig,
     OptimizerMethod, Point, Points, SteepestDescentConfig,
 };
-use crate::fit::{
-    FitError, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-    SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
-    calculate_iteration_metrics, default_spline_initial_knot_y,
-    fit_curve_with_progress_and_optimizer_config_and_loss_metric, sample_curve,
-};
+use crate::fit::IterationMetricSnapshot;
+use crate::fit::OptimizationLossMetric;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::fit::{FitError, fit_curve_with_progress_and_optimizer_config_and_loss_metric};
 #[cfg(target_arch = "wasm32")]
 use crate::fit::{
     IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
-use crate::fit::{IterationMetricSnapshot, OptimizationLossMetric};
+use crate::fit::{
+    SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
+    SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
+    calculate_iteration_metrics, default_spline_initial_knot_y, sample_curve,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,12 +97,7 @@ const PANEL_INNER_MARGIN_X: i8 = 10;
 const PANEL_INNER_MARGIN_Y: i8 = 8;
 const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const APP_REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
-#[cfg(target_arch = "wasm32")]
-const WASM_FIT_BURST_STEPS: usize = 1;
-#[cfg(target_arch = "wasm32")]
-const WASM_FIT_BURST_TIME_BUDGET_MS: u64 = 6;
-#[cfg(target_arch = "wasm32")]
-const WASM_FIT_REPAINT_INTERVAL_MS: u64 = 16;
+const REPLAY_FAST_REPAINT_INTERVAL_MS: u64 = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum UiLanguage {
@@ -417,7 +418,7 @@ struct ExtendedMetrics {
 #[derive(Debug, Clone, PartialEq)]
 enum ReplayFramePayload {
     Parametric { params: CurveParams },
-    Spline { curve: Vec<PlotPoint> },
+    Spline { curve: Arc<[PlotPoint]> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -431,6 +432,7 @@ enum StatusMessage {
     Ready,
     Cleared,
     FittingInProgress,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     FittingStopping,
     FitStopped,
     FitCompleted,
@@ -479,6 +481,12 @@ enum FitWorkerMessage {
 enum WasmFitRunner {
     Parametric(IncrementalFitRunner),
     Spline(IncrementalSplineFitRunner),
+}
+
+#[cfg(target_arch = "wasm32")]
+enum WasmFitJob {
+    Deferred(WasmFitRunner),
+    Running(WasmFitRunner),
 }
 
 /// Состояние и UI-логика интерактивного приложения для подгонки кривых.
@@ -538,7 +546,7 @@ pub struct CurveFitApp {
     active_fit_points: Option<Points>,
     result_metrics: Option<ExtendedMetrics>,
     residual_plot_points: Vec<PlotPoint>,
-    spline_plot_curve: Option<Vec<PlotPoint>>,
+    spline_plot_curve: Option<Arc<[PlotPoint]>>,
     #[cfg(not(target_arch = "wasm32"))]
     formula_svg_cache: Option<FormulaSvgCache>,
     sampled_curve_cache: Option<SampledCurveCache>,
@@ -551,7 +559,7 @@ pub struct CurveFitApp {
     #[cfg(not(target_arch = "wasm32"))]
     discard_fit_worker_updates: bool,
     #[cfg(target_arch = "wasm32")]
-    wasm_fit_runner: Option<WasmFitRunner>,
+    wasm_fit_job: Option<WasmFitJob>,
 }
 
 impl CurveFitApp {
@@ -888,7 +896,9 @@ impl CurveFitApp {
     fn upsert_spline_replay_frame(&mut self, iteration: u64, curve: Vec<PlotPoint>) {
         self.upsert_replay_frame(ReplayFrame {
             iteration,
-            payload: ReplayFramePayload::Spline { curve },
+            payload: ReplayFramePayload::Spline {
+                curve: curve.into(),
+            },
         });
     }
 
@@ -915,21 +925,21 @@ impl CurveFitApp {
     }
 
     fn set_replay_selected_index(&mut self, index: usize) {
-        let Some(frame) = self.replay_frames.get(index).cloned() else {
+        let Some(frame) = self.replay_frames.get(index) else {
             return;
         };
 
         self.replay_selected_index = Some(index);
         self.fit_preview_iteration = Some(frame.iteration);
 
-        match frame.payload {
+        match &frame.payload {
             ReplayFramePayload::Parametric { params } => {
-                self.fit_preview_params = Some(params);
+                self.fit_preview_params = Some(params.clone());
                 self.spline_plot_curve = None;
             }
             ReplayFramePayload::Spline { curve } => {
                 self.fit_preview_params = None;
-                self.spline_plot_curve = Some(curve);
+                self.spline_plot_curve = Some(Arc::clone(curve));
             }
         }
     }
@@ -1035,6 +1045,12 @@ impl CurveFitApp {
             return;
         }
 
+        let step_interval = if self.iteration_delay_seconds > 0.0 {
+            Duration::from_secs_f64(self.iteration_delay_seconds)
+        } else {
+            Duration::from_millis(REPLAY_FAST_REPAINT_INTERVAL_MS)
+        };
+
         let Some(current_index) = self.replay_selected_index else {
             self.pause_replay();
             return;
@@ -1044,45 +1060,27 @@ impl CurveFitApp {
             return;
         }
 
-        if self.replay_last_step_at.is_none() {
-            self.replay_last_step_at = Some(Instant::now());
-            if self.iteration_delay_seconds > 0.0 {
-                ctx.request_repaint_after(Duration::from_secs_f64(self.iteration_delay_seconds));
-            } else {
-                ctx.request_repaint();
-            }
-            return;
-        }
-
-        if self.iteration_delay_seconds <= 0.0 {
+        let now = Instant::now();
+        let should_step = self.replay_last_step_at.is_none_or(|last_step_at| {
+            now.saturating_duration_since(last_step_at) >= step_interval
+        });
+        if should_step {
             self.set_replay_selected_index(current_index + 1);
+            self.replay_last_step_at = Some(now);
             if current_index + 2 < self.replay_frames.len() {
-                ctx.request_repaint();
+                ctx.request_repaint_after(step_interval);
             } else {
                 self.pause_replay();
             }
             return;
         }
 
-        let now = Instant::now();
-        if let Some(last_step_at) = self.replay_last_step_at {
-            let elapsed = now.saturating_duration_since(last_step_at).as_secs_f64();
-            if elapsed < self.iteration_delay_seconds {
-                ctx.request_repaint_after(Duration::from_secs_f64(
-                    self.iteration_delay_seconds - elapsed,
-                ));
-                return;
-            }
-        }
-
-        self.set_replay_selected_index(current_index + 1);
-        self.replay_last_step_at = Some(now);
-
-        if current_index + 2 < self.replay_frames.len() {
-            ctx.request_repaint_after(Duration::from_secs_f64(self.iteration_delay_seconds));
-        } else {
-            self.pause_replay();
-        }
+        let elapsed = self
+            .replay_last_step_at
+            .map(|last_step_at| now.saturating_duration_since(last_step_at))
+            .unwrap_or_default();
+        let remaining = step_interval.saturating_sub(elapsed);
+        ctx.request_repaint_after(remaining);
     }
 
     fn parse_points_for_edit(&mut self) -> Result<Vec<Point>, String> {
@@ -1582,7 +1580,7 @@ impl Default for CurveFitApp {
             #[cfg(not(target_arch = "wasm32"))]
             discard_fit_worker_updates: false,
             #[cfg(target_arch = "wasm32")]
-            wasm_fit_runner: None,
+            wasm_fit_job: None,
         }
     }
 }

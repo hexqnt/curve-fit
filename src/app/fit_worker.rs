@@ -11,6 +11,7 @@ impl CurveFitApp {
             .collect()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn status_is_fitting(&self) -> bool {
         matches!(
             self.status.as_ref(),
@@ -145,11 +146,12 @@ impl CurveFitApp {
                 }
                 Ok(FitWorkerMessage::Finished(result)) => {
                     self.fit_in_progress = false;
+                    let fit_points = self.active_fit_points.take();
                     if !self.discard_fit_worker_updates {
-                        if let Some(points) = self.active_fit_points.clone() {
-                            self.update_parametric_result_metrics(&points, &result.params);
+                        if let Some(points) = fit_points.as_ref() {
+                            self.update_parametric_result_metrics(points, &result.params);
                             let metrics = calculate_iteration_metrics(
-                                &points,
+                                points,
                                 &result.params,
                                 self.fit_loss_metric,
                             );
@@ -169,7 +171,6 @@ impl CurveFitApp {
                     } else if self.status_is_fitting() {
                         self.status = Some(StatusMessage::FitStopped);
                     }
-                    self.active_fit_points = None;
                     keep_receiver = false;
                     break;
                 }
@@ -239,141 +240,33 @@ impl CurveFitApp {
 
     #[cfg(target_arch = "wasm32")]
     pub(super) fn poll_fit_worker(&mut self, ctx: &egui::Context) {
-        enum WasmRunnerStep {
-            Parametric(Result<IncrementalFitStep, FitError>),
-            Spline(Result<IncrementalSplineFitStep, FitError>),
-        }
-
-        let Some(mut runner) = self.wasm_fit_runner.take() else {
+        let Some(job) = self.wasm_fit_job.take() else {
             return;
         };
 
-        let mut keep_runner = true;
-        let burst_started_at = Instant::now();
-        for step_index in 0..WASM_FIT_BURST_STEPS {
-            let step = match &mut runner {
-                WasmFitRunner::Parametric(runner) => WasmRunnerStep::Parametric(runner.step()),
-                WasmFitRunner::Spline(runner) => WasmRunnerStep::Spline(runner.step()),
-            };
-
-            match step {
-                WasmRunnerStep::Parametric(Ok(IncrementalFitStep::Iteration {
-                    iteration,
-                    mse: _,
-                    metrics,
-                    params,
-                })) => {
-                    self.iteration_diagnostics
-                        .append(iteration, metrics, &params);
-                    self.upsert_parametric_replay_frame(iteration, params);
-                    self.status = Some(StatusMessage::FittingInProgress);
-                }
-                WasmRunnerStep::Parametric(Ok(IncrementalFitStep::Finished(result))) => {
-                    self.fit_in_progress = false;
-                    if let Some(points) = self.active_fit_points.clone() {
-                        self.update_parametric_result_metrics(&points, &result.params);
-                        let metrics = calculate_iteration_metrics(
-                            &points,
-                            &result.params,
-                            self.fit_loss_metric,
-                        );
-                        self.iteration_diagnostics.append(
-                            result.iterations,
-                            metrics,
-                            &result.params,
-                        );
-                    }
-                    self.upsert_parametric_replay_frame(result.iterations, result.params.clone());
-                    self.finalize_replay_after_fit_completion();
-                    self.fit_result = Some(result);
-                    self.status = Some(StatusMessage::FitCompleted);
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
-                WasmRunnerStep::Parametric(Ok(IncrementalFitStep::Cancelled)) => {
-                    self.fit_in_progress = false;
-                    self.finalize_replay_after_fit_stopped();
-                    self.status = Some(StatusMessage::FitStopped);
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
-                WasmRunnerStep::Parametric(Err(error)) => {
-                    self.fit_in_progress = false;
-                    self.status = Some(StatusMessage::Error(error.to_string()));
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
-                WasmRunnerStep::Spline(Ok(IncrementalSplineFitStep::Iteration {
-                    iteration,
-                    mse: _,
-                    metrics,
-                    knot_y,
-                    curve,
-                })) => {
-                    self.iteration_diagnostics
-                        .append_spline(iteration, metrics, &knot_y);
-                    self.upsert_spline_replay_frame(iteration, Self::plot_points_from_pairs(curve));
-                    self.status = Some(StatusMessage::FittingInProgress);
-                }
-                WasmRunnerStep::Spline(Ok(IncrementalSplineFitStep::Finished(result))) => {
-                    self.fit_in_progress = false;
-                    let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
-                    let spline_plot_curve =
-                        Self::plot_points_from_pairs(result.curve.iter().copied());
-                    self.update_spline_result_metrics(&result);
-                    let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
-                    self.iteration_diagnostics
-                        .append_spline(result.iterations, metrics, &knot_y);
-                    self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
-                    self.finalize_replay_after_fit_completion();
-                    self.spline_result = Some(result);
-                    self.status = Some(StatusMessage::FitCompleted);
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
-                WasmRunnerStep::Spline(Ok(IncrementalSplineFitStep::Cancelled)) => {
-                    self.fit_in_progress = false;
-                    self.finalize_replay_after_fit_stopped();
-                    self.status = Some(StatusMessage::FitStopped);
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
-                WasmRunnerStep::Spline(Err(error)) => {
-                    self.fit_in_progress = false;
-                    self.status = Some(StatusMessage::Error(error.to_string()));
-                    self.active_fit_points = None;
-                    keep_runner = false;
-                    break;
-                }
+        match job {
+            WasmFitJob::Deferred(runner) => {
+                self.wasm_fit_job = Some(WasmFitJob::Running(runner));
+                ctx.request_repaint();
             }
-
-            if step_index + 1 < WASM_FIT_BURST_STEPS
-                && burst_started_at.elapsed()
-                    >= Duration::from_millis(WASM_FIT_BURST_TIME_BUDGET_MS)
-            {
-                break;
-            }
-        }
-
-        if keep_runner {
-            self.wasm_fit_runner = Some(runner);
-            if self.fit_in_progress {
-                ctx.request_repaint_after(Duration::from_millis(WASM_FIT_REPAINT_INTERVAL_MS));
-            }
+            WasmFitJob::Running(runner) => match runner {
+                WasmFitRunner::Parametric(runner) => {
+                    self.run_wasm_parametric_fit_continuously(runner)
+                }
+                WasmFitRunner::Spline(runner) => self.run_wasm_spline_fit_continuously(runner),
+            },
         }
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub(super) fn cancel_fit_and_discard_updates(&mut self) {
+    fn cancel_wasm_fit_if_available(&mut self) {
         if !self.fit_in_progress {
             return;
         }
-        if let Some(runner) = self.wasm_fit_runner.as_mut() {
+        if let Some(job) = self.wasm_fit_job.as_mut() {
+            let runner = match job {
+                WasmFitJob::Deferred(runner) | WasmFitJob::Running(runner) => runner,
+            };
             match runner {
                 WasmFitRunner::Parametric(runner) => runner.cancel(),
                 WasmFitRunner::Spline(runner) => runner.cancel(),
@@ -391,13 +284,115 @@ impl CurveFitApp {
     }
 
     #[cfg(target_arch = "wasm32")]
+    pub(super) fn cancel_fit_and_discard_updates(&mut self) {
+        self.cancel_wasm_fit_if_available();
+    }
+
+    #[cfg(target_arch = "wasm32")]
     pub(super) fn request_stop_fit(&mut self) {
-        if let Some(runner) = self.wasm_fit_runner.as_mut() {
-            match runner {
-                WasmFitRunner::Parametric(runner) => runner.cancel(),
-                WasmFitRunner::Spline(runner) => runner.cancel(),
+        self.cancel_wasm_fit_if_available();
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_wasm_parametric_fit_continuously(&mut self, mut runner: IncrementalFitRunner) {
+        loop {
+            match runner.step() {
+                Ok(IncrementalFitStep::Iteration {
+                    iteration,
+                    mse: _,
+                    metrics,
+                    params,
+                }) => {
+                    self.iteration_diagnostics
+                        .append(iteration, metrics, &params);
+                    self.upsert_parametric_replay_frame(iteration, params);
+                    self.status = Some(StatusMessage::FittingInProgress);
+                }
+                Ok(IncrementalFitStep::Finished(result)) => {
+                    self.fit_in_progress = false;
+                    let fit_points = self.active_fit_points.take();
+                    if let Some(points) = fit_points.as_ref() {
+                        self.update_parametric_result_metrics(points, &result.params);
+                        let metrics = calculate_iteration_metrics(
+                            points,
+                            &result.params,
+                            self.fit_loss_metric,
+                        );
+                        self.iteration_diagnostics.append(
+                            result.iterations,
+                            metrics,
+                            &result.params,
+                        );
+                    }
+                    self.upsert_parametric_replay_frame(result.iterations, result.params.clone());
+                    self.finalize_replay_after_fit_completion();
+                    self.fit_result = Some(result);
+                    self.status = Some(StatusMessage::FitCompleted);
+                    break;
+                }
+                Ok(IncrementalFitStep::Cancelled) => {
+                    self.fit_in_progress = false;
+                    self.finalize_replay_after_fit_stopped();
+                    self.status = Some(StatusMessage::FitStopped);
+                    self.active_fit_points = None;
+                    break;
+                }
+                Err(error) => {
+                    self.fit_in_progress = false;
+                    self.status = Some(StatusMessage::Error(error.to_string()));
+                    self.active_fit_points = None;
+                    break;
+                }
             }
-            self.status = Some(StatusMessage::FittingStopping);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn run_wasm_spline_fit_continuously(&mut self, mut runner: IncrementalSplineFitRunner) {
+        loop {
+            match runner.step() {
+                Ok(IncrementalSplineFitStep::Iteration {
+                    iteration,
+                    mse: _,
+                    metrics,
+                    knot_y,
+                    curve,
+                }) => {
+                    self.iteration_diagnostics
+                        .append_spline(iteration, metrics, &knot_y);
+                    self.upsert_spline_replay_frame(iteration, Self::plot_points_from_pairs(curve));
+                    self.status = Some(StatusMessage::FittingInProgress);
+                }
+                Ok(IncrementalSplineFitStep::Finished(result)) => {
+                    self.fit_in_progress = false;
+                    let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
+                    let spline_plot_curve =
+                        Self::plot_points_from_pairs(result.curve.iter().copied());
+                    self.update_spline_result_metrics(&result);
+                    let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
+                    self.iteration_diagnostics
+                        .append_spline(result.iterations, metrics, &knot_y);
+                    self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
+                    self.finalize_replay_after_fit_completion();
+                    self.spline_result = Some(result);
+                    self.status = Some(StatusMessage::FitCompleted);
+                    self.active_fit_points = None;
+                    break;
+                }
+                Ok(IncrementalSplineFitStep::Cancelled) => {
+                    self.fit_in_progress = false;
+                    self.finalize_replay_after_fit_stopped();
+                    self.status = Some(StatusMessage::FitStopped);
+                    self.active_fit_points = None;
+                    break;
+                }
+                Err(error) => {
+                    self.fit_in_progress = false;
+                    self.status = Some(StatusMessage::Error(error.to_string()));
+                    self.active_fit_points = None;
+                    break;
+                }
+            }
         }
     }
 
@@ -617,7 +612,8 @@ impl CurveFitApp {
                     loss_metric,
                 ) {
                     Ok(runner) => {
-                        self.wasm_fit_runner = Some(WasmFitRunner::Spline(runner));
+                        self.wasm_fit_job =
+                            Some(WasmFitJob::Deferred(WasmFitRunner::Spline(runner)));
                         self.fit_in_progress = true;
                     }
                     Err(error) => {
@@ -679,7 +675,8 @@ impl CurveFitApp {
                 loss_metric,
             ) {
                 Ok(runner) => {
-                    self.wasm_fit_runner = Some(WasmFitRunner::Parametric(runner));
+                    self.wasm_fit_job =
+                        Some(WasmFitJob::Deferred(WasmFitRunner::Parametric(runner)));
                     self.fit_in_progress = true;
                 }
                 Err(error) => {

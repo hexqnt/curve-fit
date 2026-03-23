@@ -19,6 +19,7 @@ use crate::domain::{
 mod curve;
 mod spline;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use curve::fit_curve_with_progress_and_optimizer_config_and_loss_metric;
 pub use curve::{
     fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,

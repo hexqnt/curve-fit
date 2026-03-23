@@ -412,6 +412,24 @@ fn replay_select_nearest_iteration_updates_spline_preview() {
 }
 
 #[test]
+fn replay_spline_preview_reuses_arc_storage() {
+    let mut app = CurveFitApp::default();
+    app.upsert_spline_replay_frame(1, vec![PlotPoint::new(0.0, 0.5), PlotPoint::new(1.0, 1.5)]);
+
+    app.set_replay_selected_index(0);
+
+    let preview_curve = app
+        .spline_plot_curve
+        .as_ref()
+        .expect("spline preview must be available");
+    let stored_curve = match &app.replay_frames[0].payload {
+        ReplayFramePayload::Spline { curve } => curve,
+        ReplayFramePayload::Parametric { .. } => panic!("expected spline replay payload"),
+    };
+    assert!(std::sync::Arc::ptr_eq(preview_curve, stored_curve));
+}
+
+#[test]
 fn param_init_method_support_matrix_is_correct() {
     assert!(ParamInitMethod::Default.is_supported_for_family(CurveFamily::Arrhenius));
     assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Linear));

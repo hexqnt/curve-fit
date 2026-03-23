@@ -6,6 +6,11 @@
 
 ![Alt text](images/curve-fit-screenshot.png "Optional title text")
 
+Отличие десктопной версии от web-версии:
+
+- чуть выше производительность
+- нет подвисания при обучении(фитинге кривой)
+
 ## Run Desktop
 
 ```bash
@@ -20,13 +25,13 @@ cargo run
 rustup target add wasm32-unknown-unknown
 ```
 
-2. Установить `trunk` (если не установлен):
+1. Установить `trunk` (если не установлен):
 
 ```bash
 cargo install trunk
 ```
 
-3. Запустить web-версию:
+1. Запустить web-версию:
 
 ```bash
 trunk serve

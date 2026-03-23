@@ -92,11 +92,11 @@ pub(super) fn tool_icon_image(tool: PlotTool, tint: egui::Color32) -> egui::Imag
 pub(super) fn tool_label(language: UiLanguage, tool: PlotTool) -> &'static str {
     match (language, tool) {
         (UiLanguage::English, PlotTool::None) => "None",
-        (UiLanguage::English, PlotTool::SinglePoint) => "Single point",
+        (UiLanguage::English, PlotTool::SinglePoint) => "Point",
         (UiLanguage::English, PlotTool::Spray) => "Spray",
         (UiLanguage::English, PlotTool::Eraser) => "Eraser",
         (UiLanguage::Russian, PlotTool::None) => "Навигация",
-        (UiLanguage::Russian, PlotTool::SinglePoint) => "Одиночная точка",
+        (UiLanguage::Russian, PlotTool::SinglePoint) => "Точка",
         (UiLanguage::Russian, PlotTool::Spray) => "Спрей",
         (UiLanguage::Russian, PlotTool::Eraser) => "Ластик",
     }
