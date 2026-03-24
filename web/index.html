@@ -68,6 +68,49 @@
       height: 100%;
       display: block;
     }
+
+    .app-loader {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #f4f6f8;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+    }
+
+    .app-loader-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.875rem;
+      color: #2d3a45;
+    }
+
+    #app_loader_spinner {
+      width: 2.25rem;
+      height: 2.25rem;
+      border: 0.22rem solid #d0d7de;
+      border-top-color: #4f6f8a;
+      border-radius: 50%;
+      animation: app-loader-spin 0.75s linear infinite;
+    }
+
+    #app_loader_status {
+      font-size: 0.95rem;
+      letter-spacing: 0.01em;
+    }
+
+    .app-loader-error #app_loader_status {
+      color: #8b1e1e;
+    }
+
+    @keyframes app-loader-spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
   </style>
 </head>
 
@@ -76,9 +119,15 @@
     curve-fit is an interactive curve fitting training app. curve-fit — интерактивное учебное
     приложение для подбора кривой.
   </noscript>
+  <div id="app_loader" class="app-loader" role="status" aria-live="polite">
+    <div class="app-loader-content">
+      <div id="app_loader_spinner" aria-hidden="true"></div>
+      <div id="app_loader_status">Loading application...</div>
+    </div>
+  </div>
   <canvas id="curve_fit_canvas"></canvas>
   <link data-trunk rel="rust" href="../Cargo.toml" data-wasm-opt="z"
-    data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int" />
+    data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-simd" />
 </body>
 
 </html>
