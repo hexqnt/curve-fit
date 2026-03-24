@@ -102,6 +102,59 @@ impl CurveFitApp {
         }
     }
 
+    fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+        let desired_size = ui.spacing().interact_size.y * egui::vec2(1.50, 0.8);
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+        if response.clicked() {
+            *on = !*on;
+            response.mark_changed();
+        }
+
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
+        });
+
+        if ui.is_rect_visible(rect) {
+            let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
+            let visuals = ui.style().interact_selectable(&response, *on);
+            let rect = rect.expand(visuals.expansion);
+            let radius = 0.5 * rect.height();
+
+            ui.painter().rect(
+                rect,
+                radius,
+                visuals.bg_fill,
+                visuals.bg_stroke,
+                egui::StrokeKind::Inside,
+            );
+
+            let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
+            let center = egui::pos2(circle_x, rect.center().y);
+            ui.painter()
+                .circle(center, 0.75 * radius, visuals.bg_fill, visuals.fg_stroke);
+        }
+
+        response
+    }
+
+    fn toggle_switch_labeled(
+        ui: &mut egui::Ui,
+        on: &mut bool,
+        label: impl Into<egui::WidgetText>,
+    ) -> egui::Response {
+        ui.horizontal(|ui| {
+            let switch_response = Self::toggle_switch(ui, on);
+            let mut label_response = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
+            if label_response.clicked() {
+                *on = !*on;
+                label_response.mark_changed();
+            }
+            switch_response | label_response
+        })
+        .inner
+    }
+
     pub(super) fn next_unit_random(&mut self) -> f64 {
         self.spray_seed = self
             .spray_seed
@@ -332,15 +385,18 @@ impl CurveFitApp {
                         panels_icon_image(icon_tint),
                         tr(language, "Panels", "Панели"),
                         |ui| {
-                            ui.checkbox(
+                            Self::toggle_switch_labeled(
+                                ui,
                                 &mut self.show_left_panel,
                                 tr(language, "Left panel", "Левая панель"),
                             );
-                            ui.checkbox(
+                            Self::toggle_switch_labeled(
+                                ui,
                                 &mut self.show_right_panel,
                                 tr(language, "Right panel", "Правая панель"),
                             );
-                            ui.checkbox(
+                            Self::toggle_switch_labeled(
+                                ui,
                                 &mut self.show_diagnostics_panel,
                                 tr(language, "Diagnostics", "Диагностика"),
                             );
@@ -363,7 +419,8 @@ impl CurveFitApp {
                         self.pause_replay();
                         self.select_nearest_replay_iteration(selected_iteration);
                     }
-                    ui.checkbox(
+                    Self::toggle_switch_labeled(
+                        ui,
                         &mut self.replay_autoplay_on_fit,
                         tr(language, "Auto-play", "Автопромотка"),
                     );
