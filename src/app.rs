@@ -8,7 +8,8 @@ use web_time::Instant;
 
 use eframe::egui;
 use egui_plot::{
-    Legend, Line, Plot, PlotBounds, PlotPoint, PlotPoints, PlotResponse, Points as PlotPointsItem,
+    Legend, Line, LineStyle, Plot, PlotBounds, PlotPoint, PlotPoints, PlotResponse,
+    Points as PlotPointsItem, VLine,
 };
 
 mod diagnostics;

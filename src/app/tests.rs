@@ -302,6 +302,26 @@ fn replay_upsert_replaces_duplicate_iteration() {
 }
 
 #[test]
+fn replay_selected_iteration_matches_selected_replay_frame() {
+    let mut app = CurveFitApp::default();
+    app.upsert_parametric_replay_frame(2, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(9, CurveParams::Linear { a: 3.0, b: -1.0 });
+
+    app.set_replay_selected_index(1);
+
+    assert_eq!(app.replay_selected_iteration(), Some(9));
+}
+
+#[test]
+fn replay_selected_iteration_returns_none_without_selection() {
+    let mut app = CurveFitApp::default();
+    app.upsert_parametric_replay_frame(2, CurveParams::Linear { a: 1.0, b: 0.0 });
+    app.upsert_parametric_replay_frame(9, CurveParams::Linear { a: 3.0, b: -1.0 });
+
+    assert_eq!(app.replay_selected_iteration(), None);
+}
+
+#[test]
 fn replay_start_from_beginning_selects_first_frame_and_enables_autoplay() {
     let mut app = CurveFitApp::default();
     app.upsert_parametric_replay_frame(1, CurveParams::Linear { a: 1.0, b: 0.0 });

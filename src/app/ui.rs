@@ -15,6 +15,10 @@ const DIAGNOSTICS_SERIES_ID_MAE: &str = "diagnostics_series_mae";
 const DIAGNOSTICS_SERIES_ID_SOFT_L1: &str = "diagnostics_series_soft_l1";
 const DIAGNOSTICS_SERIES_ID_R2_ABS: &str = "diagnostics_series_r2_abs";
 const DIAGNOSTICS_SERIES_ID_MAX_ABS: &str = "diagnostics_series_max_abs";
+const DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_LOSS: &str =
+    "diagnostics_selected_iteration_marker_loss";
+const DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_PARAMS: &str =
+    "diagnostics_selected_iteration_marker_params";
 
 impl CurveFitApp {
     pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
@@ -1596,6 +1600,10 @@ impl CurveFitApp {
         } else {
             None
         };
+        let selected_iteration_x = self
+            .replay_selected_iteration()
+            .map(|iteration| iteration as f64);
+        let selected_iteration_marker_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
         let mut running_axis_width = shared_axis_width;
 
         {
@@ -1694,6 +1702,18 @@ impl CurveFitApp {
                                 .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAX_ABS))
                                 .width(1.5),
                             );
+                            if let Some(selected_iteration_x) = selected_iteration_x {
+                                plot_ui.vline(
+                                    VLine::new("", selected_iteration_x)
+                                        .id(egui::Id::new(
+                                            DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_LOSS,
+                                        ))
+                                        .width(1.0)
+                                        .color(selected_iteration_marker_color)
+                                        .style(LineStyle::dashed_dense())
+                                        .allow_hover(false),
+                                );
+                            }
                         });
                     let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
                     running_axis_width = running_axis_width.max(axis_width);
@@ -1733,6 +1753,18 @@ impl CurveFitApp {
                                         PlotPoints::from_iter(series.iter().copied()),
                                     )
                                     .width(1.7),
+                                );
+                            }
+                            if let Some(selected_iteration_x) = selected_iteration_x {
+                                plot_ui.vline(
+                                    VLine::new("", selected_iteration_x)
+                                        .id(egui::Id::new(
+                                            DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_PARAMS,
+                                        ))
+                                        .width(1.0)
+                                        .color(selected_iteration_marker_color)
+                                        .style(LineStyle::dashed_dense())
+                                        .allow_hover(false),
                                 );
                             }
                         });
