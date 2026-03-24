@@ -13,10 +13,11 @@ use argmin::solver::quasinewton::LBFGS;
 
 use crate::domain::{
     CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
-    OptimizerConfig, Point, Points, SteepestDescentConfig,
+    OptimizerConfig, Points, SteepestDescentConfig,
 };
 
 mod curve;
+mod simd;
 mod spline;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,6 +34,94 @@ pub use spline::{
     fit_monotone_cubic_spline_with_optimizer_config, fit_natural_cubic_spline,
     fit_natural_cubic_spline_with_config, fit_natural_cubic_spline_with_optimizer_config,
 };
+
+#[cfg(feature = "portable-simd")]
+#[doc(hidden)]
+pub mod simd_bench {
+    use super::{OptimizationLossMetric, simd};
+
+    pub fn polynomial_cost_scalar(
+        param: &[f64],
+        x_values: &[f64],
+        y_values: &[f64],
+        loss_metric: OptimizationLossMetric,
+    ) -> f64 {
+        simd::polynomial_cost_scalar(param, x_values, y_values, loss_metric)
+    }
+
+    pub fn polynomial_cost_simd(
+        param: &[f64],
+        x_values: &[f64],
+        y_values: &[f64],
+        loss_metric: OptimizationLossMetric,
+    ) -> f64 {
+        simd::polynomial_cost_simd(param, x_values, y_values, loss_metric)
+    }
+
+    pub fn inverse_cost_scalar(
+        param: &[f64],
+        x_values: &[f64],
+        y_values: &[f64],
+        loss_metric: OptimizationLossMetric,
+    ) -> f64 {
+        simd::inverse_cost_scalar(param, x_values, y_values, loss_metric)
+    }
+
+    pub fn inverse_cost_simd(
+        param: &[f64],
+        x_values: &[f64],
+        y_values: &[f64],
+        loss_metric: OptimizationLossMetric,
+    ) -> f64 {
+        simd::inverse_cost_simd(param, x_values, y_values, loss_metric)
+    }
+
+    pub fn polynomial_gradient_scalar(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) {
+        simd::accumulate_polynomial_gradient_scalar(
+            x_values,
+            y_values,
+            param,
+            loss_metric,
+            gradient,
+        );
+    }
+
+    pub fn polynomial_gradient_simd(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) {
+        simd::accumulate_polynomial_gradient_simd(x_values, y_values, param, loss_metric, gradient);
+    }
+
+    pub fn inverse_gradient_scalar(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) {
+        simd::accumulate_inverse_gradient_scalar(x_values, y_values, param, loss_metric, gradient);
+    }
+
+    pub fn inverse_gradient_simd(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) {
+        simd::accumulate_inverse_gradient_simd(x_values, y_values, param, loss_metric, gradient);
+    }
+}
 
 const PARAM_EPS: f64 = 1e-9;
 const LARGE_COST: f64 = 1e24;
@@ -174,38 +263,25 @@ pub struct IterationMetricSnapshot {
 struct CurveProblem {
     family: CurveFamily,
     points: Points,
+    point_x: Box<[f64]>,
+    point_y: Box<[f64]>,
     loss_metric: OptimizationLossMetric,
 }
 
 impl CurveProblem {
     fn new(family: CurveFamily, points: &Points, loss_metric: OptimizationLossMetric) -> Self {
+        let mut point_x = Vec::with_capacity(points.len());
+        let mut point_y = Vec::with_capacity(points.len());
+        for point in points.as_slice() {
+            point_x.push(point.x());
+            point_y.push(point.y());
+        }
         Self {
             family,
             points: points.clone(),
+            point_x: point_x.into_boxed_slice(),
+            point_y: point_y.into_boxed_slice(),
             loss_metric,
-        }
-    }
-}
-
-fn accumulate_polynomial_gradient(
-    points: &[Point],
-    param: &[f64],
-    loss_metric: OptimizationLossMetric,
-    gradient: &mut [f64],
-) {
-    debug_assert_eq!(gradient.len(), param.len());
-    for point in points {
-        let x = point.x();
-        let model = param
-            .iter()
-            .copied()
-            .fold(0.0, |acc, coefficient| acc * x + coefficient);
-        let residual = loss_metric.residual_derivative(model - point.y());
-
-        let mut basis = 1.0;
-        for gradient_value in gradient.iter_mut().rev() {
-            *gradient_value += residual * basis;
-            basis *= x;
         }
     }
 }
@@ -257,6 +333,21 @@ fn soft_l1_from_residuals(residuals: &[[f64; 2]]) -> f64 {
         .map(|residual| OptimizationLossMetric::SoftL1.value_from_residual(residual[1]))
         .sum::<f64>()
         / residuals.len() as f64
+}
+
+fn is_polynomial_family(family: CurveFamily) -> bool {
+    matches!(
+        family,
+        CurveFamily::Linear
+            | CurveFamily::Quadratic
+            | CurveFamily::Cubic
+            | CurveFamily::Quartic
+            | CurveFamily::Quintic
+            | CurveFamily::Sextic
+            | CurveFamily::Septic
+            | CurveFamily::Octic
+            | CurveFamily::Nonic
+    )
 }
 
 /// Число узлов сплайна по умолчанию.
@@ -1069,6 +1160,24 @@ impl CostFunction for CurveProblem {
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
+        if is_polynomial_family(self.family) {
+            return Ok(simd::polynomial_cost(
+                param,
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                self.loss_metric,
+            ));
+        }
+
+        if self.family == CurveFamily::Inverse {
+            return Ok(simd::inverse_cost(
+                param,
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                self.loss_metric,
+            ));
+        }
+
         let sample_count = self.points.len() as f64;
         let mut sum = 0.0;
 
@@ -1106,9 +1215,13 @@ impl Gradient for CurveProblem {
             | CurveFamily::Sextic
             | CurveFamily::Septic
             | CurveFamily::Octic
-            | CurveFamily::Nonic => {
-                accumulate_polynomial_gradient(points, param, self.loss_metric, &mut gradient);
-            }
+            | CurveFamily::Nonic => simd::accumulate_polynomial_gradient(
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                param,
+                self.loss_metric,
+                &mut gradient,
+            ),
             CurveFamily::Arrhenius => {
                 for point in points {
                     let x = positive_x(point.x());
@@ -1119,16 +1232,13 @@ impl Gradient for CurveProblem {
                     gradient[1] += residual * (param[0] * exp_term / x);
                 }
             }
-            CurveFamily::Inverse => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] + param[1] / x - point.y());
-                    gradient[0] += residual;
-                    gradient[1] += residual / x;
-                }
-            }
+            CurveFamily::Inverse => simd::accumulate_inverse_gradient(
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                param,
+                self.loss_metric,
+                &mut gradient,
+            ),
             CurveFamily::Logistic => {
                 for point in points {
                     let z = param[1] * (point.x() - param[2]);

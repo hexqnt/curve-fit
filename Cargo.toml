@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["curve-fitting", "spline", "optimization", "egui", "wasm"]
 categories = ["science", "mathematics", "visualization", "gui"]
 
+[features]
+default = ["portable-simd"]
+portable-simd = []
+
 [dependencies]
 argmin = { version = "0.11.0", default-features = false }
 argmin-math = { version = "0.5.1", default-features = false, features = [

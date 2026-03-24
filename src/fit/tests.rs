@@ -1,3 +1,5 @@
+#[cfg(feature = "portable-simd")]
+use super::simd;
 use super::{
     DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner, IncrementalSplineFitStep,
     OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
@@ -763,4 +765,160 @@ fn fit_curve_with_optimizer_config_can_be_cancelled_via_progress_callback() {
     );
 
     assert!(matches!(result, Err(FitError::Cancelled)));
+}
+
+#[cfg(feature = "portable-simd")]
+fn assert_close(actual: f64, expected: f64, abs_tolerance: f64, rel_tolerance: f64) {
+    let delta = (actual - expected).abs();
+    let scale = expected.abs().max(1.0);
+    assert!(
+        delta <= abs_tolerance.max(scale * rel_tolerance),
+        "expected {expected}, got {actual}, delta={delta}"
+    );
+}
+
+#[cfg(feature = "portable-simd")]
+fn test_xy_for_polynomial() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let param = vec![0.3, -0.2, 0.08, -0.005, 1.7, -4.0];
+    let x_values = (0..1031)
+        .map(|index| index as f64 / 9.0 - 60.0)
+        .collect::<Vec<_>>();
+    let y_values = x_values
+        .iter()
+        .copied()
+        .map(|x| {
+            let model = param
+                .iter()
+                .copied()
+                .fold(0.0, |acc, coefficient| acc * x + coefficient);
+            model + 0.125 * (x * 0.3).sin()
+        })
+        .collect::<Vec<_>>();
+    (param, x_values, y_values)
+}
+
+#[cfg(feature = "portable-simd")]
+fn test_xy_for_inverse() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let param = vec![1.25, -0.7];
+    let x_values = (0..1019)
+        .map(|index| index as f64 / 11.0 - 30.0)
+        .collect::<Vec<_>>();
+    let y_values = x_values
+        .iter()
+        .copied()
+        .map(|x| {
+            let x_safe = x.max(1e-9);
+            (param[0] + param[1] / x_safe) + 0.05 * (x * 0.2).cos()
+        })
+        .collect::<Vec<_>>();
+    (param, x_values, y_values)
+}
+
+#[cfg(feature = "portable-simd")]
+#[test]
+fn simd_polynomial_cost_matches_scalar_reference_for_all_loss_metrics() {
+    let (param, x_values, y_values) = test_xy_for_polynomial();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let scalar = simd::polynomial_cost_scalar(&param, &x_values, &y_values, loss_metric);
+        let simd = simd::polynomial_cost_simd(&param, &x_values, &y_values, loss_metric);
+        assert_close(simd, scalar, 1e-10, 1e-10);
+    }
+}
+
+#[cfg(feature = "portable-simd")]
+#[test]
+fn simd_inverse_cost_matches_scalar_reference_for_all_loss_metrics() {
+    let (param, x_values, y_values) = test_xy_for_inverse();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let scalar = simd::inverse_cost_scalar(&param, &x_values, &y_values, loss_metric);
+        let simd = simd::inverse_cost_simd(&param, &x_values, &y_values, loss_metric);
+        assert_close(simd, scalar, 1e-10, 1e-10);
+    }
+}
+
+#[cfg(feature = "portable-simd")]
+#[test]
+fn simd_polynomial_gradient_matches_scalar_reference_for_all_loss_metrics() {
+    let (param, x_values, y_values) = test_xy_for_polynomial();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let mut scalar_gradient = vec![0.0; param.len()];
+        simd::accumulate_polynomial_gradient_scalar(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut scalar_gradient,
+        );
+
+        let mut simd_gradient = vec![0.0; param.len()];
+        simd::accumulate_polynomial_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut simd_gradient,
+        );
+
+        for index in 0..param.len() {
+            assert_close(simd_gradient[index], scalar_gradient[index], 1e-7, 1e-7);
+        }
+    }
+}
+
+#[cfg(feature = "portable-simd")]
+#[test]
+fn simd_inverse_gradient_matches_scalar_reference_for_all_loss_metrics() {
+    let (param, x_values, y_values) = test_xy_for_inverse();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let mut scalar_gradient = vec![0.0; 2];
+        simd::accumulate_inverse_gradient_scalar(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut scalar_gradient,
+        );
+
+        let mut simd_gradient = vec![0.0; 2];
+        simd::accumulate_inverse_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut simd_gradient,
+        );
+
+        for index in 0..2 {
+            assert_close(simd_gradient[index], scalar_gradient[index], 1e-8, 1e-8);
+        }
+    }
+}
+
+#[cfg(feature = "portable-simd")]
+#[test]
+fn simd_cost_returns_large_cost_for_non_finite_inputs() {
+    let x_values = vec![0.1, 0.2, 0.3];
+    let y_values = vec![1.0, 2.0, 3.0];
+    let inf_param = vec![f64::INFINITY, 1.0];
+    let loss_metric = OptimizationLossMetric::Mse;
+
+    assert_eq!(
+        simd::polynomial_cost_scalar(&inf_param, &x_values, &y_values, loss_metric),
+        super::LARGE_COST
+    );
+    assert_eq!(
+        simd::polynomial_cost_simd(&inf_param, &x_values, &y_values, loss_metric),
+        super::LARGE_COST
+    );
+
+    let nan_y = vec![1.0, f64::NAN, 3.0];
+    let inverse_param = vec![1.0, 2.0];
+    assert_eq!(
+        simd::inverse_cost_scalar(&inverse_param, &x_values, &nan_y, loss_metric),
+        super::LARGE_COST
+    );
+    assert_eq!(
+        simd::inverse_cost_simd(&inverse_param, &x_values, &nan_y, loss_metric),
+        super::LARGE_COST
+    );
 }
