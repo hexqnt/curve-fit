@@ -20,13 +20,13 @@ argmin = { version = "0.11.0", default-features = false }
 argmin-math = { version = "0.5.1", default-features = false, features = [
     "vec",
 ] }
-egui_extras = { version = "0.33.3", default-features = false, features = [
+egui_extras = { version = "0.34.0", default-features = false, features = [
     "svg_text",
 ] }
-egui_plot = "0.34.1"
+egui_plot = "0.35.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.33.3", default-features = false, features = [
+eframe = { version = "0.34.0", default-features = false, features = [
     "default_fonts",
     "glow",
     "x11",
@@ -35,7 +35,7 @@ eframe = { version = "0.33.3", default-features = false, features = [
 sys-locale = "0.3.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-eframe = { version = "0.33.3", default-features = false, features = [
+eframe = { version = "0.34.0", default-features = false, features = [
     "default_fonts",
     "glow",
 ] }

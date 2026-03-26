@@ -1385,7 +1385,7 @@ impl CurveFitApp {
     }
 
     fn apply_visual_style(ctx: &egui::Context) {
-        ctx.style_mut(|style| {
+        ctx.global_style_mut(|style| {
             style.spacing.item_spacing = egui::vec2(10.0, 8.0);
             style.spacing.button_padding = egui::vec2(8.0, 5.0);
             style.spacing.interact_size = egui::vec2(44.0, 26.0);
@@ -1588,7 +1588,7 @@ impl Default for CurveFitApp {
 }
 
 impl eframe::App for CurveFitApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Self::apply_visual_style(ctx);
         self.poll_fit_worker(ctx);
         self.tick_replay(ctx);
@@ -1609,29 +1609,32 @@ impl eframe::App for CurveFitApp {
                 self.redo_points_edit();
             }
         }
+    }
 
-        let panel_style = ctx.style();
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx();
+        let panel_style = ctx.global_style();
         let panel_style = panel_style.as_ref();
 
-        egui::TopBottomPanel::top("header_panel")
+        egui::Panel::top("header_panel")
             .frame(Self::top_bottom_panel_frame(panel_style))
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 self.ui_header(ui);
             });
 
-        egui::TopBottomPanel::bottom("status_bar")
+        egui::Panel::bottom("status_bar")
             .frame(Self::top_bottom_panel_frame(panel_style))
-            .show(ctx, |ui| {
+            .show_inside(ui, |ui| {
                 self.ui_status_bar(ui);
             });
 
         if self.show_left_panel {
-            egui::SidePanel::left("points_panel")
-                .default_width(LEFT_PANEL_DEFAULT_WIDTH)
-                .min_width(LEFT_PANEL_MIN_WIDTH)
+            egui::Panel::left("points_panel")
+                .default_size(LEFT_PANEL_DEFAULT_WIDTH)
+                .min_size(LEFT_PANEL_MIN_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
-                .show(ctx, |ui| {
+                .show_inside(ui, |ui| {
                     let language = self.ui_language;
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.set_width(ui.available_width());
@@ -1655,12 +1658,12 @@ impl eframe::App for CurveFitApp {
         }
 
         if self.show_right_panel {
-            egui::SidePanel::right("settings_panel")
-                .default_width(RIGHT_PANEL_DEFAULT_WIDTH)
-                .min_width(RIGHT_PANEL_MIN_WIDTH)
+            egui::Panel::right("settings_panel")
+                .default_size(RIGHT_PANEL_DEFAULT_WIDTH)
+                .min_size(RIGHT_PANEL_MIN_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
-                .show(ctx, |ui| {
+                .show_inside(ui, |ui| {
                     let language = self.ui_language;
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.set_width(ui.available_width());
@@ -1700,19 +1703,19 @@ impl eframe::App for CurveFitApp {
         }
 
         if self.show_diagnostics_panel {
-            egui::TopBottomPanel::bottom("diagnostics_panel")
+            egui::Panel::bottom("diagnostics_panel")
                 .resizable(true)
-                .default_height(DIAGNOSTICS_PANEL_DEFAULT_HEIGHT)
-                .min_height(DIAGNOSTICS_PANEL_MIN_HEIGHT)
+                .default_size(DIAGNOSTICS_PANEL_DEFAULT_HEIGHT)
+                .min_size(DIAGNOSTICS_PANEL_MIN_HEIGHT)
                 .frame(Self::top_bottom_panel_frame(panel_style))
-                .show(ctx, |ui| {
+                .show_inside(ui, |ui| {
                     let available_height = ui.available_height();
                     ui.set_height(available_height);
                     self.ui_iteration_diagnostics(ui);
                 });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show_inside(ui, |ui| {
             self.ui_plot(ui, ui.available_height().max(2.0));
         });
     }
