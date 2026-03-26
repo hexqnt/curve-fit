@@ -48,6 +48,14 @@ pub(super) fn center_origin_icon_image(tint: egui::Color32) -> egui::Image<'stat
     tabler_icon!("../../assets/icons/tabler/focus-2.svg", tint)
 }
 
+pub(super) fn origin_bottom_left_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/align-box-bottom-left.svg", tint)
+}
+
+pub(super) fn open_formula_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/math-function.svg", tint)
+}
+
 pub(super) fn view_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/zoom-scan.svg", tint)
 }

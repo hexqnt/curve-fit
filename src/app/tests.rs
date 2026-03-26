@@ -111,8 +111,8 @@ fn optimization_metric_defaults_to_mse() {
     let app = CurveFitApp::default();
     assert_eq!(app.optimization_loss_metric, OptimizationLossMetric::Mse);
     assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
-    assert!(app.replay_autoplay_on_fit);
-    assert!(app.diagnostics_hide_non_loss_by_default_pending);
+    assert!(app.replay.autoplay_on_fit);
+    assert!(app.panel.diagnostics_hide_non_loss_by_default_pending);
 }
 
 #[test]
@@ -336,9 +336,9 @@ fn replay_upsert_replaces_duplicate_iteration() {
     app.upsert_parametric_replay_frame(3, CurveParams::Linear { a: 1.0, b: 0.0 });
     app.upsert_parametric_replay_frame(3, CurveParams::Linear { a: 2.0, b: -1.0 });
 
-    assert_eq!(app.replay_frames.len(), 1);
-    assert_eq!(app.replay_frames[0].iteration, 3);
-    match &app.replay_frames[0].payload {
+    assert_eq!(app.replay.frames.len(), 1);
+    assert_eq!(app.replay.frames[0].iteration, 3);
+    match &app.replay.frames[0].payload {
         ReplayFramePayload::Parametric { params } => {
             assert_eq!(*params, CurveParams::Linear { a: 2.0, b: -1.0 });
         }
@@ -374,8 +374,8 @@ fn replay_start_from_beginning_selects_first_frame_and_enables_autoplay() {
 
     app.start_replay_from_beginning();
 
-    assert_eq!(app.replay_selected_index, Some(0));
-    assert!(app.replay_autoplay);
+    assert_eq!(app.replay.selected_index, Some(0));
+    assert!(app.replay.autoplay);
     assert_eq!(app.fit_preview_iteration, Some(1));
     assert_eq!(
         app.fit_preview_params,
@@ -386,7 +386,10 @@ fn replay_start_from_beginning_selects_first_frame_and_enables_autoplay() {
 #[test]
 fn replay_start_from_beginning_respects_auto_replay_toggle() {
     let mut app = CurveFitApp {
-        replay_autoplay_on_fit: false,
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     app.upsert_parametric_replay_frame(1, CurveParams::Linear { a: 1.0, b: 0.0 });
@@ -394,15 +397,18 @@ fn replay_start_from_beginning_respects_auto_replay_toggle() {
 
     app.start_replay_from_beginning();
 
-    assert_eq!(app.replay_selected_index, Some(0));
-    assert!(!app.replay_autoplay);
+    assert_eq!(app.replay.selected_index, Some(0));
+    assert!(!app.replay.autoplay);
     assert_eq!(app.fit_preview_iteration, Some(1));
 }
 
 #[test]
 fn replay_finalize_after_fit_completion_uses_last_frame_when_auto_replay_is_disabled() {
     let mut app = CurveFitApp {
-        replay_autoplay_on_fit: false,
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            ..Default::default()
+        },
         ..Default::default()
     };
     app.upsert_parametric_replay_frame(1, CurveParams::Linear { a: 1.0, b: 0.0 });
@@ -410,20 +416,23 @@ fn replay_finalize_after_fit_completion_uses_last_frame_when_auto_replay_is_disa
 
     app.finalize_replay_after_fit_completion();
 
-    assert_eq!(app.replay_selected_index, Some(1));
+    assert_eq!(app.replay.selected_index, Some(1));
     assert_eq!(app.fit_preview_iteration, Some(9));
     assert_eq!(
         app.fit_preview_params,
         Some(CurveParams::Linear { a: 3.0, b: -1.0 })
     );
-    assert!(!app.replay_autoplay);
+    assert!(!app.replay.autoplay);
 }
 
 #[test]
 fn replay_finalize_after_fit_stopped_uses_last_frame_when_auto_replay_is_disabled() {
     let mut app = CurveFitApp {
-        replay_autoplay_on_fit: false,
-        replay_autoplay: true,
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            autoplay: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     app.upsert_parametric_replay_frame(0, CurveParams::Linear { a: 1.0, b: 0.0 });
@@ -432,13 +441,13 @@ fn replay_finalize_after_fit_stopped_uses_last_frame_when_auto_replay_is_disable
 
     app.finalize_replay_after_fit_stopped();
 
-    assert_eq!(app.replay_selected_index, Some(1));
+    assert_eq!(app.replay.selected_index, Some(1));
     assert_eq!(app.fit_preview_iteration, Some(5));
     assert_eq!(
         app.fit_preview_params,
         Some(CurveParams::Linear { a: 2.5, b: -0.5 })
     );
-    assert!(!app.replay_autoplay);
+    assert!(!app.replay.autoplay);
 }
 
 #[test]
@@ -487,7 +496,7 @@ fn replay_spline_preview_reuses_arc_storage() {
         .spline_plot_curve
         .as_ref()
         .expect("spline preview must be available");
-    let stored_curve = match &app.replay_frames[0].payload {
+    let stored_curve = match &app.replay.frames[0].payload {
         ReplayFramePayload::Spline { curve } => curve,
         ReplayFramePayload::Parametric { .. } => panic!("expected spline replay payload"),
     };
@@ -550,7 +559,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points_text = "0 1\n1 3\n2 5\n3 7\n".to_string();
+    app.points.text = "0 1\n1 3\n2 5\n3 7\n".to_string();
     app.invalidate_points_cache();
 
     app.fit_result = Some(FitResult {
@@ -676,7 +685,7 @@ fn apply_param_init_sets_error_status_on_failure() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points_text = "1 0\n2 2\n".to_string();
+    app.points.text = "1 0\n2 2\n".to_string();
     app.invalidate_points_cache();
 
     app.apply_param_init_method(ParamInitMethod::DataBased);
@@ -699,14 +708,17 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
             rmse: 0.0,
             iterations: 1,
         }),
-        replay_frames: vec![super::ReplayFrame {
-            iteration: 0,
-            payload: ReplayFramePayload::Parametric {
-                params: CurveParams::Linear { a: 1.0, b: 0.0 },
-            },
-        }],
-        replay_selected_index: Some(0),
-        replay_autoplay: true,
+        replay: super::ReplayState {
+            frames: vec![super::ReplayFrame {
+                iteration: 0,
+                payload: ReplayFramePayload::Parametric {
+                    params: CurveParams::Linear { a: 1.0, b: 0.0 },
+                },
+            }],
+            selected_index: Some(0),
+            autoplay: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -718,9 +730,9 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
     assert!(app.fit_result.is_none());
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
-    assert!(app.replay_frames.is_empty());
-    assert!(app.replay_selected_index.is_none());
-    assert!(!app.replay_autoplay);
+    assert!(app.replay.frames.is_empty());
+    assert!(app.replay.selected_index.is_none());
+    assert!(!app.replay.autoplay);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -731,7 +743,7 @@ fn make_linear_fit_app() -> CurveFitApp {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points_text = "0 1\n1 3\n2 5\n3 7\n".to_string();
+    app.points.text = "0 1\n1 3\n2 5\n3 7\n".to_string();
     app.invalidate_points_cache();
     app
 }
@@ -742,7 +754,7 @@ fn make_linear_spline_fit_app() -> CurveFitApp {
         selected_model: ModelChoice::LinearSpline,
         ..Default::default()
     };
-    app.points_text = "0 1\n1 3\n2 5\n3 7\n4 9\n5 11\n6 13\n7 15\n8 17\n9 19\n".to_string();
+    app.points.text = "0 1\n1 3\n2 5\n3 7\n4 9\n5 11\n6 13\n7 15\n8 17\n9 19\n".to_string();
     app.invalidate_points_cache();
     app
 }
@@ -764,7 +776,7 @@ fn wait_fit_completion(app: &mut CurveFitApp) {
 #[test]
 fn successful_fit_starts_replay_from_first_frame() {
     let mut app = make_linear_fit_app();
-    app.iteration_delay_seconds = 0.0;
+    app.replay.iteration_delay_seconds = 0.0;
 
     app.run_fit();
     assert!(app.fit_in_progress);
@@ -775,14 +787,14 @@ fn successful_fit_starts_replay_from_first_frame() {
         "status after fit: {:?}",
         app.status
     );
-    assert!(!app.replay_frames.is_empty());
-    assert_eq!(app.replay_selected_index, Some(0));
+    assert!(!app.replay.frames.is_empty());
+    assert_eq!(app.replay.selected_index, Some(0));
     assert_eq!(
         app.fit_preview_iteration,
-        Some(app.replay_frames[0].iteration)
+        Some(app.replay.frames[0].iteration)
     );
-    if app.replay_frames.len() > 1 {
-        assert!(app.replay_autoplay);
+    if app.replay.frames.len() > 1 {
+        assert!(app.replay.autoplay);
     }
 }
 
@@ -790,8 +802,8 @@ fn successful_fit_starts_replay_from_first_frame() {
 #[test]
 fn successful_fit_with_auto_replay_disabled_selects_last_iteration() {
     let mut app = make_linear_fit_app();
-    app.replay_autoplay_on_fit = false;
-    app.iteration_delay_seconds = 0.0;
+    app.replay.autoplay_on_fit = false;
+    app.replay.iteration_delay_seconds = 0.0;
 
     app.run_fit();
     assert!(app.fit_in_progress);
@@ -802,19 +814,19 @@ fn successful_fit_with_auto_replay_disabled_selects_last_iteration() {
         "status after fit: {:?}",
         app.status
     );
-    assert!(!app.replay_frames.is_empty());
-    let last_index = app.replay_frames.len() - 1;
-    let last_iteration = app.replay_frames[last_index].iteration;
-    assert_eq!(app.replay_selected_index, Some(last_index));
+    assert!(!app.replay.frames.is_empty());
+    let last_index = app.replay.frames.len() - 1;
+    let last_iteration = app.replay.frames[last_index].iteration;
+    assert_eq!(app.replay.selected_index, Some(last_index));
     assert_eq!(app.fit_preview_iteration, Some(last_iteration));
-    assert!(!app.replay_autoplay);
+    assert!(!app.replay.autoplay);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn run_fit_with_auto_replay_disabled_does_not_seed_preview_before_completion() {
     let mut app = make_linear_fit_app();
-    app.replay_autoplay_on_fit = false;
+    app.replay.autoplay_on_fit = false;
 
     app.run_fit();
 
@@ -829,7 +841,7 @@ fn run_fit_with_auto_replay_disabled_does_not_seed_preview_before_completion() {
 #[test]
 fn run_fit_with_auto_replay_enabled_does_not_seed_preview_before_completion() {
     let mut app = make_linear_fit_app();
-    app.replay_autoplay_on_fit = true;
+    app.replay.autoplay_on_fit = true;
 
     app.run_fit();
 
@@ -846,24 +858,27 @@ fn stopped_fit_with_auto_replay_disabled_selects_last_iteration() {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut app = CurveFitApp {
         fit_in_progress: true,
-        replay_autoplay_on_fit: false,
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            frames: vec![
+                super::ReplayFrame {
+                    iteration: 0,
+                    payload: ReplayFramePayload::Parametric {
+                        params: CurveParams::Linear { a: 1.0, b: 0.0 },
+                    },
+                },
+                super::ReplayFrame {
+                    iteration: 11,
+                    payload: ReplayFramePayload::Parametric {
+                        params: CurveParams::Linear { a: 3.0, b: -1.0 },
+                    },
+                },
+            ],
+            selected_index: Some(0),
+            ..Default::default()
+        },
         fit_worker_rx: Some(rx),
         status: Some(StatusMessage::FittingInProgress),
-        replay_frames: vec![
-            super::ReplayFrame {
-                iteration: 0,
-                payload: ReplayFramePayload::Parametric {
-                    params: CurveParams::Linear { a: 1.0, b: 0.0 },
-                },
-            },
-            super::ReplayFrame {
-                iteration: 11,
-                payload: ReplayFramePayload::Parametric {
-                    params: CurveParams::Linear { a: 3.0, b: -1.0 },
-                },
-            },
-        ],
-        replay_selected_index: Some(0),
         fit_preview_params: Some(CurveParams::Linear { a: 1.0, b: 0.0 }),
         fit_preview_iteration: Some(0),
         ..Default::default()
@@ -877,7 +892,7 @@ fn stopped_fit_with_auto_replay_disabled_selects_last_iteration() {
 
     assert!(!app.fit_in_progress);
     assert!(matches!(app.status, Some(StatusMessage::FitStopped)));
-    assert_eq!(app.replay_selected_index, Some(1));
+    assert_eq!(app.replay.selected_index, Some(1));
     assert_eq!(app.fit_preview_iteration, Some(11));
     assert_eq!(
         app.fit_preview_params,
@@ -889,7 +904,10 @@ fn stopped_fit_with_auto_replay_disabled_selects_last_iteration() {
 #[test]
 fn spline_fit_seeds_iteration_zero_replay_frame_from_initialization() {
     let mut app = CurveFitApp {
-        replay_autoplay_on_fit: false,
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            ..Default::default()
+        },
         ..make_linear_spline_fit_app()
     };
 
@@ -902,9 +920,9 @@ fn spline_fit_seeds_iteration_zero_replay_frame_from_initialization() {
         "status after fit: {:?}",
         app.status
     );
-    assert!(!app.replay_frames.is_empty());
-    assert_eq!(app.replay_frames[0].iteration, 0);
-    match &app.replay_frames[0].payload {
+    assert!(!app.replay.frames.is_empty());
+    assert_eq!(app.replay.frames[0].iteration, 0);
+    match &app.replay.frames[0].payload {
         ReplayFramePayload::Spline { curve } => {
             assert!(
                 !curve.is_empty(),
@@ -922,7 +940,7 @@ fn spline_fit_seeds_iteration_zero_replay_frame_from_initialization() {
 fn replay_step_seconds_does_not_block_fit_completion() {
     for replay_step in [0.0, 0.75, 1.5] {
         let mut app = make_linear_fit_app();
-        app.iteration_delay_seconds = replay_step;
+        app.replay.iteration_delay_seconds = replay_step;
 
         app.run_fit();
         assert!(app.fit_in_progress);
@@ -944,7 +962,7 @@ fn run_fit_invalid_input_does_not_seed_iteration_diagnostics() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points_text = "-1 2\n1 3\n".to_string();
+    app.points.text = "-1 2\n1 3\n".to_string();
     app.invalidate_points_cache();
 
     app.run_fit();
@@ -968,7 +986,7 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
         ..Default::default()
     };
 
-    app.points_text = "1 2 3\n".to_string();
+    app.points.text = "1 2 3\n".to_string();
     app.invalidate_points_cache();
     app.refresh_status_after_points_edit();
     assert!(matches!(
@@ -976,7 +994,7 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
         Some(StatusMessage::Error(message)) if message.starts_with(super::POINTS_PARSE_ERROR_PREFIX)
     ));
 
-    app.points_text = "1 2\n2 3\n".to_string();
+    app.points.text = "1 2\n2 3\n".to_string();
     app.invalidate_points_cache();
     app.refresh_status_after_points_edit();
     assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
@@ -985,7 +1003,10 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
 #[test]
 fn fill_points_with_residuals_replaces_points_text_and_pushes_undo() {
     let mut app = CurveFitApp {
-        points_text: "0 1\n1 2\n".to_string(),
+        points: super::PointsEditorState {
+            text: "0 1\n1 2\n".to_string(),
+            ..Default::default()
+        },
         residual_plot_points: vec![PlotPoint::new(0.0, -0.5), PlotPoint::new(1.0, 0.25)],
         ..Default::default()
     };
@@ -993,23 +1014,26 @@ fn fill_points_with_residuals_replaces_points_text_and_pushes_undo() {
     app.fill_points_with_residuals();
 
     assert_eq!(
-        app.points_text,
+        app.points.text,
         "0.00000000 -0.50000000\n1.00000000 0.25000000\n"
     );
-    assert_eq!(app.points_undo_stack, vec!["0 1\n1 2\n".to_string()]);
-    assert!(app.points_redo_stack.is_empty());
+    assert_eq!(app.points.undo_stack, vec!["0 1\n1 2\n".to_string()]);
+    assert!(app.points.redo_stack.is_empty());
 }
 
 #[test]
 fn fill_points_with_residuals_is_noop_when_residuals_are_absent() {
     let mut app = CurveFitApp {
-        points_text: "0 1\n1 2\n".to_string(),
+        points: super::PointsEditorState {
+            text: "0 1\n1 2\n".to_string(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
     app.fill_points_with_residuals();
 
-    assert_eq!(app.points_text, "0 1\n1 2\n");
-    assert!(app.points_undo_stack.is_empty());
-    assert!(app.points_redo_stack.is_empty());
+    assert_eq!(app.points.text, "0 1\n1 2\n");
+    assert!(app.points.undo_stack.is_empty());
+    assert!(app.points.redo_stack.is_empty());
 }

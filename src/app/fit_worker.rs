@@ -595,8 +595,8 @@ impl CurveFitApp {
                     spline_family,
                     points,
                     spline_config,
-                    optimizer_config.clone(),
-                    initial_knot_y,
+                    optimizer_config,
+                    initial_knot_y.into_vec(),
                     cancel_flag,
                 );
             }
@@ -632,7 +632,7 @@ impl CurveFitApp {
         };
 
         let initial_params = match self.parse_initial_params() {
-            Ok(params) => params,
+            Ok(params) => params.into_curve_params(),
             Err(error) => {
                 self.status = Some(StatusMessage::Error(error));
                 return;
@@ -659,7 +659,7 @@ impl CurveFitApp {
                 family,
                 points,
                 initial_params,
-                optimizer_config.clone(),
+                optimizer_config,
                 loss_metric,
                 cancel_flag,
             );

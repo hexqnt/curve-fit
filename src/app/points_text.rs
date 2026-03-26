@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use egui_plot::PlotPoint;
@@ -13,9 +14,9 @@ pub(super) fn parse_f64(field_name: &str, raw_value: &str) -> Result<f64, String
     }
 
     let normalized = if trimmed.contains(',') && !trimmed.contains('.') {
-        trimmed.replace(',', ".")
+        Cow::Owned(trimmed.replace(',', "."))
     } else {
-        trimmed.to_string()
+        Cow::Borrowed(trimmed)
     };
 
     normalized
@@ -85,7 +86,7 @@ pub(super) fn parse_points_text_cache(text: &str) -> ParsedPointsCache {
     ParsedPointsCache {
         parsed_points,
         parse_error_line,
-        plot_points,
+        plot_points: plot_points.into(),
     }
 }
 
