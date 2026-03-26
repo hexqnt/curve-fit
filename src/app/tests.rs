@@ -104,6 +104,18 @@ fn optimizer_config_matches_selected_method() {
         app.optimizer_config(),
         Ok(OptimizerConfig::SteepestDescent(_))
     ));
+
+    app.optimizer_method = OptimizerMethod::Sgd;
+    assert!(matches!(
+        app.optimizer_config(),
+        Ok(OptimizerConfig::Sgd(_))
+    ));
+
+    app.optimizer_method = OptimizerMethod::Adam;
+    assert!(matches!(
+        app.optimizer_config(),
+        Ok(OptimizerConfig::Adam(_))
+    ));
 }
 
 #[test]
@@ -174,6 +186,12 @@ fn optimizer_presets_are_stored_per_method() {
     app.optimizer_method = OptimizerMethod::SteepestDescent;
     app.apply_selected_optimizer_preset(OptimizerPreset::Fast);
 
+    app.optimizer_method = OptimizerMethod::Sgd;
+    app.apply_selected_optimizer_preset(OptimizerPreset::Balanced);
+
+    app.optimizer_method = OptimizerMethod::Adam;
+    app.apply_selected_optimizer_preset(OptimizerPreset::Precise);
+
     app.optimizer_method = OptimizerMethod::Lbfgs;
     assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Fast);
 
@@ -182,6 +200,12 @@ fn optimizer_presets_are_stored_per_method() {
 
     app.optimizer_method = OptimizerMethod::SteepestDescent;
     assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Fast);
+
+    app.optimizer_method = OptimizerMethod::Sgd;
+    assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Balanced);
+
+    app.optimizer_method = OptimizerMethod::Adam;
+    assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Precise);
 }
 
 #[test]
@@ -207,6 +231,66 @@ fn optimizer_preset_changes_active_config_values() {
         _ => panic!("Nelder-Mead must remain active"),
     };
     assert!(precise_max_iters > fast_max_iters);
+}
+
+#[test]
+fn sgd_preset_changes_active_config_values() {
+    let mut app = CurveFitApp {
+        optimizer_method: OptimizerMethod::Sgd,
+        ..Default::default()
+    };
+    app.apply_selected_optimizer_preset(OptimizerPreset::Fast);
+    let fast_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    app.apply_selected_optimizer_preset(OptimizerPreset::Precise);
+    let precise_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    let (fast_max_iters, precise_max_iters, fast_lr, precise_lr) =
+        match (fast_config, precise_config) {
+            (OptimizerConfig::Sgd(fast), OptimizerConfig::Sgd(precise)) => (
+                fast.max_iters,
+                precise.max_iters,
+                fast.learning_rate,
+                precise.learning_rate,
+            ),
+            _ => panic!("SGD must remain active"),
+        };
+    assert!(precise_max_iters > fast_max_iters);
+    assert!(precise_lr < fast_lr);
+}
+
+#[test]
+fn adam_preset_changes_active_config_values() {
+    let mut app = CurveFitApp {
+        optimizer_method: OptimizerMethod::Adam,
+        ..Default::default()
+    };
+    app.apply_selected_optimizer_preset(OptimizerPreset::Fast);
+    let fast_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    app.apply_selected_optimizer_preset(OptimizerPreset::Precise);
+    let precise_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    let (fast_max_iters, precise_max_iters, fast_lr, precise_lr) =
+        match (fast_config, precise_config) {
+            (OptimizerConfig::Adam(fast), OptimizerConfig::Adam(precise)) => (
+                fast.max_iters,
+                precise.max_iters,
+                fast.learning_rate,
+                precise.learning_rate,
+            ),
+            _ => panic!("Adam must remain active"),
+        };
+    assert!(precise_max_iters > fast_max_iters);
+    assert!(precise_lr < fast_lr);
 }
 
 #[test]

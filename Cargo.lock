@@ -456,6 +456,7 @@ dependencies = [
  "egui_extras",
  "egui_plot",
  "getrandom",
+ "stochastic_optimizers",
  "sys-locale",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2466,6 +2467,15 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "stochastic_optimizers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9730b2d5b110ec8cf367a9df064b33e73e414414d898cd652ba049bdde5fc3eb"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "strict-num"

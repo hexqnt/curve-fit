@@ -1,4 +1,6 @@
-use crate::domain::{LbfgsConfig, NelderMeadConfig, OptimizerMethod, SteepestDescentConfig};
+use crate::domain::{
+    AdamConfig, LbfgsConfig, NelderMeadConfig, OptimizerMethod, SgdConfig, SteepestDescentConfig,
+};
 
 use super::{C1_MIN, C2_MAX, STEP_MAX_MAX, STEP_MIN_MIN, UiLanguage};
 
@@ -10,9 +12,13 @@ pub(super) fn optimizer_method_label(
         (UiLanguage::English, OptimizerMethod::Lbfgs) => "LBFGS",
         (UiLanguage::English, OptimizerMethod::NelderMead) => "Nelder-Mead",
         (UiLanguage::English, OptimizerMethod::SteepestDescent) => "Steepest Descent",
+        (UiLanguage::English, OptimizerMethod::Sgd) => "SGD",
+        (UiLanguage::English, OptimizerMethod::Adam) => "Adam",
         (UiLanguage::Russian, OptimizerMethod::Lbfgs) => "LBFGS",
         (UiLanguage::Russian, OptimizerMethod::NelderMead) => "Нелдер-Мид",
         (UiLanguage::Russian, OptimizerMethod::SteepestDescent) => "Наискорейший спуск",
+        (UiLanguage::Russian, OptimizerMethod::Sgd) => "SGD",
+        (UiLanguage::Russian, OptimizerMethod::Adam) => "Adam",
     }
 }
 
@@ -116,6 +122,50 @@ pub(super) fn steepest_descent_config_from_preset(
 pub(super) fn infer_steepest_descent_preset(config: &SteepestDescentConfig) -> OptimizerPreset {
     for preset in OptimizerPreset::ALL {
         if &steepest_descent_config_from_preset(preset) == config {
+            return preset;
+        }
+    }
+    OptimizerPreset::Custom
+}
+
+pub(super) fn sgd_config_from_preset(preset: OptimizerPreset) -> SgdConfig {
+    match preset {
+        OptimizerPreset::Fast => {
+            SgdConfig::try_new(250, 3e-2).expect("fast SGD preset must be valid")
+        }
+        OptimizerPreset::Balanced => SgdConfig::default(),
+        OptimizerPreset::Precise => {
+            SgdConfig::try_new(4_000, 3e-3).expect("precise SGD preset must be valid")
+        }
+        OptimizerPreset::Custom => SgdConfig::default(),
+    }
+}
+
+pub(super) fn infer_sgd_preset(config: &SgdConfig) -> OptimizerPreset {
+    for preset in OptimizerPreset::ALL {
+        if &sgd_config_from_preset(preset) == config {
+            return preset;
+        }
+    }
+    OptimizerPreset::Custom
+}
+
+pub(super) fn adam_config_from_preset(preset: OptimizerPreset) -> AdamConfig {
+    match preset {
+        OptimizerPreset::Fast => {
+            AdamConfig::try_new(200, 2e-2).expect("fast Adam preset must be valid")
+        }
+        OptimizerPreset::Balanced => AdamConfig::default(),
+        OptimizerPreset::Precise => {
+            AdamConfig::try_new(3_000, 1e-3).expect("precise Adam preset must be valid")
+        }
+        OptimizerPreset::Custom => AdamConfig::default(),
+    }
+}
+
+pub(super) fn infer_adam_preset(config: &AdamConfig) -> OptimizerPreset {
+    for preset in OptimizerPreset::ALL {
+        if &adam_config_from_preset(preset) == config {
             return preset;
         }
     }
@@ -260,5 +310,51 @@ impl SteepestDescentInputState {
             self.width_tolerance,
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SgdInputState {
+    pub(super) max_iters: u64,
+    pub(super) learning_rate: f64,
+}
+
+impl SgdInputState {
+    pub(super) fn from_config(config: &SgdConfig) -> Self {
+        Self {
+            max_iters: config.max_iters,
+            learning_rate: config.learning_rate,
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
+    }
+
+    pub(super) fn to_config(&self) -> Result<SgdConfig, String> {
+        SgdConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AdamInputState {
+    pub(super) max_iters: u64,
+    pub(super) learning_rate: f64,
+}
+
+impl AdamInputState {
+    pub(super) fn from_config(config: &AdamConfig) -> Self {
+        Self {
+            max_iters: config.max_iters,
+            learning_rate: config.learning_rate,
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
+    }
+
+    pub(super) fn to_config(&self) -> Result<AdamConfig, String> {
+        AdamConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
     }
 }

@@ -1425,6 +1425,90 @@ impl Default for SteepestDescentConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+/// Параметры стохастического градиентного спуска (SGD).
+pub struct SgdConfig {
+    pub max_iters: u64,
+    pub learning_rate: f64,
+}
+
+impl SgdConfig {
+    /// Создает конфигурацию и валидирует ограничения аргументов.
+    pub fn try_new(max_iters: u64, learning_rate: f64) -> Result<Self, InputError> {
+        let config = Self {
+            max_iters,
+            learning_rate,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), InputError> {
+        if self.max_iters == 0 {
+            return Err(InputError::InvalidSgdConfig(
+                "max_iters must be greater than 0",
+            ));
+        }
+        if !self.learning_rate.is_finite() || self.learning_rate <= 0.0 {
+            return Err(InputError::InvalidSgdConfig(
+                "learning_rate must be finite and > 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for SgdConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 1_000,
+            learning_rate: 1e-2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+/// Параметры оптимизатора Adam.
+pub struct AdamConfig {
+    pub max_iters: u64,
+    pub learning_rate: f64,
+}
+
+impl AdamConfig {
+    /// Создает конфигурацию и валидирует ограничения аргументов.
+    pub fn try_new(max_iters: u64, learning_rate: f64) -> Result<Self, InputError> {
+        let config = Self {
+            max_iters,
+            learning_rate,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), InputError> {
+        if self.max_iters == 0 {
+            return Err(InputError::InvalidAdamConfig(
+                "max_iters must be greater than 0",
+            ));
+        }
+        if !self.learning_rate.is_finite() || self.learning_rate <= 0.0 {
+            return Err(InputError::InvalidAdamConfig(
+                "learning_rate must be finite and > 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for AdamConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 800,
+            learning_rate: 5e-3,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Метод оптимизации для подгонки параметрических моделей и сплайнов.
 pub enum OptimizerMethod {
@@ -1432,11 +1516,19 @@ pub enum OptimizerMethod {
     Lbfgs,
     NelderMead,
     SteepestDescent,
+    Sgd,
+    Adam,
 }
 
 impl OptimizerMethod {
     /// Полный список методов для UI и переборов.
-    pub const ALL: [Self; 3] = [Self::Lbfgs, Self::NelderMead, Self::SteepestDescent];
+    pub const ALL: [Self; 5] = [
+        Self::Lbfgs,
+        Self::NelderMead,
+        Self::SteepestDescent,
+        Self::Sgd,
+        Self::Adam,
+    ];
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1445,6 +1537,8 @@ pub enum OptimizerConfig {
     Lbfgs(LbfgsConfig),
     NelderMead(NelderMeadConfig),
     SteepestDescent(SteepestDescentConfig),
+    Sgd(SgdConfig),
+    Adam(AdamConfig),
 }
 
 impl OptimizerConfig {
@@ -1454,6 +1548,8 @@ impl OptimizerConfig {
             Self::Lbfgs(_) => OptimizerMethod::Lbfgs,
             Self::NelderMead(_) => OptimizerMethod::NelderMead,
             Self::SteepestDescent(_) => OptimizerMethod::SteepestDescent,
+            Self::Sgd(_) => OptimizerMethod::Sgd,
+            Self::Adam(_) => OptimizerMethod::Adam,
         }
     }
 
@@ -1463,6 +1559,8 @@ impl OptimizerConfig {
             Self::Lbfgs(config) => config.max_iters,
             Self::NelderMead(config) => config.max_iters,
             Self::SteepestDescent(config) => config.max_iters,
+            Self::Sgd(config) => config.max_iters,
+            Self::Adam(config) => config.max_iters,
         }
     }
 }
@@ -1521,6 +1619,8 @@ pub enum InputError {
     InvalidLbfgsConfig(&'static str),
     InvalidNelderMeadConfig(&'static str),
     InvalidSteepestDescentConfig(&'static str),
+    InvalidSgdConfig(&'static str),
+    InvalidAdamConfig(&'static str),
 }
 
 impl fmt::Display for InputError {
@@ -1577,6 +1677,8 @@ impl fmt::Display for InputError {
             Self::InvalidLbfgsConfig(message) => f.write_str(message),
             Self::InvalidNelderMeadConfig(message) => f.write_str(message),
             Self::InvalidSteepestDescentConfig(message) => f.write_str(message),
+            Self::InvalidSgdConfig(message) => f.write_str(message),
+            Self::InvalidAdamConfig(message) => f.write_str(message),
         }
     }
 }
@@ -1586,8 +1688,8 @@ impl std::error::Error for InputError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig, Point, Points,
-        SteepestDescentConfig,
+        AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig, Point,
+        Points, SgdConfig, SteepestDescentConfig,
     };
 
     #[test]
@@ -1711,6 +1813,30 @@ mod tests {
         assert!(result.is_err());
 
         let result = SteepestDescentConfig::try_new(100, 1e-4, 0.9, 10.0, 1.0, 1e-10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn sgd_config_validates_constraints() {
+        let result = SgdConfig::try_new(0, 1e-2);
+        assert!(result.is_err());
+
+        let result = SgdConfig::try_new(100, 0.0);
+        assert!(result.is_err());
+
+        let result = SgdConfig::try_new(100, f64::NAN);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn adam_config_validates_constraints() {
+        let result = AdamConfig::try_new(0, 1e-3);
+        assert!(result.is_err());
+
+        let result = AdamConfig::try_new(100, -1e-3);
+        assert!(result.is_err());
+
+        let result = AdamConfig::try_new(100, f64::INFINITY);
         assert!(result.is_err());
     }
 

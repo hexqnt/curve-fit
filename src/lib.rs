@@ -8,8 +8,8 @@ pub mod fit;
 
 pub use app::CurveFitApp;
 pub use domain::{
-    CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
-    OptimizerConfig, OptimizerMethod, Point, Points, SteepestDescentConfig,
+    AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
+    OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 pub use fit::{
     DEFAULT_SPLINE_KNOTS, DEFAULT_SPLINE_SAMPLES, FitError, IncrementalFitRunner,

@@ -40,10 +40,11 @@ use self::i18n::{
     stop_icon_image, tool_icon_image, tool_label, tr, undo_icon_image, view_icon_image,
 };
 use self::optimizer::{
-    LbfgsInputState, NelderMeadInputState, OptimizerPreset, OptimizerUiMode,
-    SteepestDescentInputState, infer_lbfgs_preset, infer_nelder_mead_preset,
-    infer_steepest_descent_preset, lbfgs_config_from_preset, nelder_mead_config_from_preset,
-    optimizer_method_label, optimizer_preset_label, steepest_descent_config_from_preset,
+    AdamInputState, LbfgsInputState, NelderMeadInputState, OptimizerPreset, OptimizerUiMode,
+    SgdInputState, SteepestDescentInputState, adam_config_from_preset, infer_adam_preset,
+    infer_lbfgs_preset, infer_nelder_mead_preset, infer_sgd_preset, infer_steepest_descent_preset,
+    lbfgs_config_from_preset, nelder_mead_config_from_preset, optimizer_method_label,
+    optimizer_preset_label, sgd_config_from_preset, steepest_descent_config_from_preset,
 };
 use self::param_init::{
     data_based_params_for_family, is_advanced_param_init_supported, polynomial_family,
@@ -55,8 +56,8 @@ use self::replay::ReplayState;
 #[cfg(test)]
 use self::replay::{ReplayFrame, ReplayFramePayload};
 use crate::domain::{
-    CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, OptimizerConfig,
-    OptimizerMethod, Point, Points, SteepestDescentConfig,
+    AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig,
+    OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 use crate::fit::IterationMetricSnapshot;
 use crate::fit::OptimizationLossMetric;
@@ -525,6 +526,10 @@ pub struct CurveFitApp {
     nelder_mead_preset: OptimizerPreset,
     steepest_descent_inputs: SteepestDescentInputState,
     steepest_descent_preset: OptimizerPreset,
+    sgd_inputs: SgdInputState,
+    sgd_preset: OptimizerPreset,
+    adam_inputs: AdamInputState,
+    adam_preset: OptimizerPreset,
     ui_language: UiLanguage,
     plot_tool: PlotTool,
     spray_points_per_second: usize,
@@ -590,6 +595,8 @@ impl CurveFitApp {
             OptimizerMethod::Lbfgs => self.lbfgs_preset,
             OptimizerMethod::NelderMead => self.nelder_mead_preset,
             OptimizerMethod::SteepestDescent => self.steepest_descent_preset,
+            OptimizerMethod::Sgd => self.sgd_preset,
+            OptimizerMethod::Adam => self.adam_preset,
         }
     }
 
@@ -598,6 +605,8 @@ impl CurveFitApp {
             OptimizerMethod::Lbfgs => self.lbfgs_preset = preset,
             OptimizerMethod::NelderMead => self.nelder_mead_preset = preset,
             OptimizerMethod::SteepestDescent => self.steepest_descent_preset = preset,
+            OptimizerMethod::Sgd => self.sgd_preset = preset,
+            OptimizerMethod::Adam => self.adam_preset = preset,
         }
     }
 
@@ -618,6 +627,14 @@ impl CurveFitApp {
                 );
                 self.steepest_descent_preset = preset;
             }
+            OptimizerMethod::Sgd => {
+                self.sgd_inputs = SgdInputState::from_config(&sgd_config_from_preset(preset));
+                self.sgd_preset = preset;
+            }
+            OptimizerMethod::Adam => {
+                self.adam_inputs = AdamInputState::from_config(&adam_config_from_preset(preset));
+                self.adam_preset = preset;
+            }
         }
     }
 
@@ -632,6 +649,8 @@ impl CurveFitApp {
                 .steepest_descent_inputs
                 .to_config()
                 .map(OptimizerConfig::SteepestDescent),
+            OptimizerMethod::Sgd => self.sgd_inputs.to_config().map(OptimizerConfig::Sgd),
+            OptimizerMethod::Adam => self.adam_inputs.to_config().map(OptimizerConfig::Adam),
         }
     }
 
@@ -1055,6 +1074,8 @@ impl Default for CurveFitApp {
         let default_lbfgs = LbfgsConfig::default();
         let default_nelder_mead = NelderMeadConfig::default();
         let default_steepest_descent = SteepestDescentConfig::default();
+        let default_sgd = SgdConfig::default();
+        let default_adam = AdamConfig::default();
 
         Self {
             points: PointsEditorState::default(),
@@ -1072,6 +1093,10 @@ impl Default for CurveFitApp {
                 &default_steepest_descent,
             ),
             steepest_descent_preset: infer_steepest_descent_preset(&default_steepest_descent),
+            sgd_inputs: SgdInputState::from_config(&default_sgd),
+            sgd_preset: infer_sgd_preset(&default_sgd),
+            adam_inputs: AdamInputState::from_config(&default_adam),
+            adam_preset: infer_adam_preset(&default_adam),
             ui_language: UiLanguage::English,
             plot_tool: PlotTool::SinglePoint,
             spray_points_per_second: 140,

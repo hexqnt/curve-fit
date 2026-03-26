@@ -110,6 +110,22 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     ));
                     ui.end_row();
                 }
+                OptimizerMethod::Sgd => {
+                    ui.label("max_iters");
+                    ui.monospace(app.sgd_inputs.max_iters.to_string());
+                    ui.end_row();
+                    ui.label("learning_rate");
+                    ui.monospace(format!("{:.2e}", app.sgd_inputs.learning_rate));
+                    ui.end_row();
+                }
+                OptimizerMethod::Adam => {
+                    ui.label("max_iters");
+                    ui.monospace(app.adam_inputs.max_iters.to_string());
+                    ui.end_row();
+                    ui.label("learning_rate");
+                    ui.monospace(format!("{:.2e}", app.adam_inputs.learning_rate));
+                    ui.end_row();
+                }
             });
     } else {
         ui.label(tr(
@@ -249,6 +265,39 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.steepest_descent_inputs.normalize_after_ui();
                 if app.steepest_descent_inputs != before {
                     app.steepest_descent_preset = OptimizerPreset::Custom;
+                }
+            }
+            OptimizerMethod::Sgd => {
+                let before = app.sgd_inputs.clone();
+                ui.add(
+                    egui::Slider::new(&mut app.sgd_inputs.max_iters, 10..=10_000).text("max_iters"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.sgd_inputs.learning_rate, 1e-6..=1.0)
+                        .logarithmic(true)
+                        .text("learning_rate"),
+                );
+
+                app.sgd_inputs.normalize_after_ui();
+                if app.sgd_inputs != before {
+                    app.sgd_preset = OptimizerPreset::Custom;
+                }
+            }
+            OptimizerMethod::Adam => {
+                let before = app.adam_inputs.clone();
+                ui.add(
+                    egui::Slider::new(&mut app.adam_inputs.max_iters, 10..=10_000)
+                        .text("max_iters"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.adam_inputs.learning_rate, 1e-6..=1.0)
+                        .logarithmic(true)
+                        .text("learning_rate"),
+                );
+
+                app.adam_inputs.normalize_after_ui();
+                if app.adam_inputs != before {
+                    app.adam_preset = OptimizerPreset::Custom;
                 }
             }
         }

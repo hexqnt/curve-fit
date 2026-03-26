@@ -11,8 +11,8 @@ use super::{
     fit_monotone_cubic_spline, fit_natural_cubic_spline, sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
-    CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig, OptimizerConfig, Point,
-    Points, SteepestDescentConfig,
+    AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
+    OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 
 fn build_points<F>(xs: &[f64], f: F) -> Points
@@ -150,6 +150,38 @@ fn steepest_descent_fits_linear_data() {
     .expect("linear fit with steepest descent must succeed");
 
     assert!(result.mse < 1e-10);
+}
+
+#[test]
+fn sgd_fits_linear_data() {
+    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let optimizer_config = OptimizerConfig::Sgd(SgdConfig::default());
+    let result = fit_curve_with_optimizer_config(
+        &points,
+        CurveFamily::Linear,
+        CurveParams::Linear { a: 0.2, b: 0.1 },
+        &optimizer_config,
+    )
+    .expect("linear fit with SGD must succeed");
+
+    assert!(result.mse < 1e-6);
+}
+
+#[test]
+fn adam_fits_linear_data() {
+    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let optimizer_config = OptimizerConfig::Adam(
+        AdamConfig::try_new(5_000, 2e-2).expect("adam test config must be valid"),
+    );
+    let result = fit_curve_with_optimizer_config(
+        &points,
+        CurveFamily::Linear,
+        CurveParams::Linear { a: 0.2, b: 0.1 },
+        &optimizer_config,
+    )
+    .expect("linear fit with Adam must succeed");
+
+    assert!(result.mse < 1e-6, "adam mse={}", result.mse);
 }
 
 #[test]
@@ -723,6 +755,56 @@ fn incremental_spline_runner_supports_steepest_descent() {
         &optimizer_config,
     )
     .expect("incremental spline runner with steepest descent must be created");
+
+    for _ in 0..5_000 {
+        match runner.step().expect("runner step must succeed") {
+            IncrementalSplineFitStep::Iteration { .. } => {}
+            IncrementalSplineFitStep::Finished(result) => {
+                assert!(result.iterations > 0);
+                return;
+            }
+            IncrementalSplineFitStep::Cancelled => panic!("runner must not be cancelled"),
+        }
+    }
+    panic!("runner must finish in reasonable number of steps");
+}
+
+#[test]
+fn incremental_spline_runner_supports_sgd() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let optimizer_config = OptimizerConfig::Sgd(SgdConfig::default());
+    let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config(
+        &points,
+        SplineFamilyKind::Linear,
+        SplineConfig::default(),
+        &optimizer_config,
+    )
+    .expect("incremental spline runner with SGD must be created");
+
+    for _ in 0..5_000 {
+        match runner.step().expect("runner step must succeed") {
+            IncrementalSplineFitStep::Iteration { .. } => {}
+            IncrementalSplineFitStep::Finished(result) => {
+                assert!(result.iterations > 0);
+                return;
+            }
+            IncrementalSplineFitStep::Cancelled => panic!("runner must not be cancelled"),
+        }
+    }
+    panic!("runner must finish in reasonable number of steps");
+}
+
+#[test]
+fn incremental_spline_runner_supports_adam() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let optimizer_config = OptimizerConfig::Adam(AdamConfig::default());
+    let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config(
+        &points,
+        SplineFamilyKind::Linear,
+        SplineConfig::default(),
+        &optimizer_config,
+    )
+    .expect("incremental spline runner with Adam must be created");
 
     for _ in 0..5_000 {
         match runner.step().expect("runner step must succeed") {
