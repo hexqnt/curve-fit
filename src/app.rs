@@ -79,6 +79,7 @@ const C2_MAX: f64 = 0.9999;
 const STEP_MIN_MIN: f64 = 1e-12;
 const STEP_MAX_MAX: f64 = 1e3;
 const SPRAY_GAUSSIAN_SIGMA: f64 = 1.0 / 3.0;
+const SPRAY_REFERENCE_FPS: f64 = 60.0;
 const PARAM_INIT_RANDOM_MIN: f64 = -1.0;
 const PARAM_INIT_RANDOM_MAX: f64 = 1.0;
 const SPLINE_AUTO_SAMPLES_MIN: usize = 80;
@@ -513,11 +514,13 @@ pub struct CurveFitApp {
     steepest_descent_preset: OptimizerPreset,
     ui_language: UiLanguage,
     plot_tool: PlotTool,
-    spray_density: usize,
+    spray_points_per_second: usize,
     spray_radius_rel: f64,
     spray_brush: SprayBrush,
     eraser_radius_rel: f64,
     spray_seed: u64,
+    spray_points_budget: f64,
+    spray_last_emit_at: Option<Instant>,
     fit_to_content_requested: bool,
     center_origin_requested: bool,
     origin_bottom_left_requested: bool,
@@ -1534,11 +1537,13 @@ impl Default for CurveFitApp {
             steepest_descent_preset: infer_steepest_descent_preset(&default_steepest_descent),
             ui_language: UiLanguage::English,
             plot_tool: PlotTool::SinglePoint,
-            spray_density: 5,
+            spray_points_per_second: 140,
             spray_radius_rel: 0.02,
             spray_brush: SprayBrush::Uniform,
             eraser_radius_rel: 0.03,
             spray_seed: 0xDEADBEEFCAFEBABE,
+            spray_points_budget: 0.0,
+            spray_last_emit_at: None,
             fit_to_content_requested: false,
             center_origin_requested: false,
             origin_bottom_left_requested: true,

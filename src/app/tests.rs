@@ -12,7 +12,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn line_points() -> Points {
     Points::try_from(vec![
@@ -113,6 +113,51 @@ fn optimization_metric_defaults_to_mse() {
     assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
     assert!(app.replay_autoplay_on_fit);
     assert!(app.diagnostics_hide_non_loss_by_default_pending);
+}
+
+#[test]
+fn spray_rate_limiter_emits_initial_batch_without_waiting() {
+    let mut app = CurveFitApp {
+        spray_points_per_second: 300,
+        ..Default::default()
+    };
+
+    let emitted = app.next_spray_points_to_add(Instant::now());
+
+    assert_eq!(emitted, 5);
+    assert_approx_eq(app.spray_points_budget, 0.0, 1e-12);
+}
+
+#[test]
+fn spray_rate_limiter_accumulates_fractional_points_between_frames() {
+    let start = Instant::now();
+    let mut app = CurveFitApp {
+        spray_points_per_second: 100,
+        spray_last_emit_at: Some(start),
+        ..Default::default()
+    };
+
+    let first = app.next_spray_points_to_add(start + Duration::from_millis(5));
+    let second = app.next_spray_points_to_add(start + Duration::from_millis(10));
+
+    assert_eq!(first, 0);
+    assert_eq!(second, 1);
+    assert_approx_eq(app.spray_points_budget, 0.0, 1e-12);
+}
+
+#[test]
+fn spray_rate_limiter_keeps_rate_on_large_frame_gaps() {
+    let now = Instant::now();
+    let mut app = CurveFitApp {
+        spray_points_per_second: 300,
+        spray_last_emit_at: Some(now - Duration::from_secs(1)),
+        ..Default::default()
+    };
+
+    let emitted = app.next_spray_points_to_add(now);
+
+    assert_eq!(emitted, 300);
+    assert_approx_eq(app.spray_points_budget, 0.0, 1e-12);
 }
 
 #[test]

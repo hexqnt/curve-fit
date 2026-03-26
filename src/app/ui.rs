@@ -188,6 +188,24 @@ impl CurveFitApp {
         }
     }
 
+    fn reset_spray_rate_state(&mut self) {
+        self.spray_points_budget = 0.0;
+        self.spray_last_emit_at = None;
+    }
+
+    pub(super) fn next_spray_points_to_add(&mut self, now: Instant) -> usize {
+        let elapsed_seconds = self
+            .spray_last_emit_at
+            .map(|last_emit_at| now.saturating_duration_since(last_emit_at).as_secs_f64())
+            .unwrap_or(1.0 / SPRAY_REFERENCE_FPS);
+        self.spray_last_emit_at = Some(now);
+
+        self.spray_points_budget += self.spray_points_per_second as f64 * elapsed_seconds;
+        let points_to_add = self.spray_points_budget.floor() as usize;
+        self.spray_points_budget -= points_to_add as f64;
+        points_to_add
+    }
+
     pub(super) fn add_point_from_plot(&mut self, x: f64, y: f64) {
         let mut points = match self.parse_points_for_edit() {
             Ok(points) => points,
@@ -214,7 +232,12 @@ impl CurveFitApp {
         center_y: f64,
         radius_x: f64,
         radius_y: f64,
+        points_to_add: usize,
     ) {
+        if points_to_add == 0 {
+            return;
+        }
+
         let mut points = match self.parse_points_for_edit() {
             Ok(points) => points,
             Err(error) => {
@@ -223,7 +246,7 @@ impl CurveFitApp {
             }
         };
 
-        for _ in 0..self.spray_density {
+        for _ in 0..points_to_add {
             let [offset_x, offset_y] = self.next_spray_unit_disk_offset();
             let x = center_x + offset_x * radius_x;
             let y = center_y + offset_y * radius_y;
@@ -277,6 +300,7 @@ impl CurveFitApp {
 
     pub(super) fn handle_plot_tools(&mut self, plot_response: &PlotResponse<()>) {
         if self.fit_in_progress {
+            self.reset_spray_rate_state();
             return;
         }
 
@@ -292,6 +316,15 @@ impl CurveFitApp {
         } else {
             self.active_tool_bounds = None;
         }
+
+        let spray_active = self.plot_tool == PlotTool::Spray && primary_down_on_plot;
+        if spray_active {
+            // Просим следующий кадр, чтобы поддерживать стабильный points/sec даже без движения мыши.
+            response.ctx.request_repaint();
+        } else {
+            self.reset_spray_rate_state();
+        }
+
         let bounds = plot_response.transform.bounds();
         let radius_x_scale = bounds.width().abs().max(1e-6);
         let radius_y_scale = bounds.height().abs().max(1e-6);
@@ -313,9 +346,16 @@ impl CurveFitApp {
                     && let Some(plot_pos) =
                         Self::plot_position_from_screen(plot_response, screen_pos)
                 {
+                    let points_to_add = self.next_spray_points_to_add(Instant::now());
                     let radius_x = self.spray_radius_rel * radius_x_scale;
                     let radius_y = self.spray_radius_rel * radius_y_scale;
-                    self.spray_points_from_plot(plot_pos.x, plot_pos.y, radius_x, radius_y);
+                    self.spray_points_from_plot(
+                        plot_pos.x,
+                        plot_pos.y,
+                        radius_x,
+                        radius_y,
+                        points_to_add,
+                    );
                 }
             }
             PlotTool::Eraser => {
@@ -563,11 +603,11 @@ impl CurveFitApp {
                 );
             }
             PlotTool::Spray => {
-                ui.add(egui::Slider::new(&mut self.spray_density, 1..=30).text(tr(
-                    language,
-                    "Density",
-                    "Плотность",
-                )));
+                ui.add(
+                    egui::Slider::new(&mut self.spray_points_per_second, 10..=1_000)
+                        .logarithmic(true)
+                        .text(tr(language, "Rate, px/s", "Скорость, т/с")),
+                );
                 ui.add(
                     egui::Slider::new(&mut self.spray_radius_rel, 0.002..=0.2)
                         .logarithmic(true)
