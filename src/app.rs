@@ -23,7 +23,6 @@ mod points_text;
 mod ui;
 
 use self::diagnostics::{IterationDiagnostics, diagnostics_plot_y_axis_width};
-#[cfg(target_arch = "wasm32")]
 use self::formula::formula_plain_text;
 use self::formula::model_formula_info;
 #[cfg(not(target_arch = "wasm32"))]
@@ -528,6 +527,7 @@ pub struct CurveFitApp {
     active_tool_bounds: Option<PlotBounds>,
     show_left_panel: bool,
     show_right_panel: bool,
+    show_formula_window: bool,
     show_diagnostics_panel: bool,
     diagnostics_hide_non_loss_by_default_pending: bool,
     diagnostics_shared_axis_width: f32,
@@ -1556,6 +1556,7 @@ impl Default for CurveFitApp {
             spline_duplicate_x_policy: SplineDuplicateXPolicy::default(),
             spline_initial_knot_y_inputs: Vec::new(),
             show_right_panel: true,
+            show_formula_window: false,
             show_diagnostics_panel: true,
             diagnostics_hide_non_loss_by_default_pending: true,
             diagnostics_shared_axis_width: 0.0,
@@ -1617,7 +1618,7 @@ impl eframe::App for CurveFitApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx();
+        let ctx = ui.ctx().clone();
         let panel_style = ctx.global_style();
         let panel_style = panel_style.as_ref();
 
@@ -1706,6 +1707,8 @@ impl eframe::App for CurveFitApp {
                     );
                 });
         }
+
+        self.ui_formula_window(&ctx);
 
         if self.show_diagnostics_panel {
             egui::Panel::bottom("diagnostics_panel")

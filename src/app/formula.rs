@@ -207,7 +207,6 @@ pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
 /// Возвращает человекочитаемое текстовое представление формулы.
 ///
 /// Используется как fallback для платформ, где SVG-текст может рендериться нестабильно.
-#[cfg(target_arch = "wasm32")]
 pub(super) fn formula_plain_text(formula: &str) -> String {
     latex_group_to_text(formula)
 }

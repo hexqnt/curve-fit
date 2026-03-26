@@ -878,6 +878,8 @@ impl CurveFitApp {
 
         let formula_info =
             model_formula_info(language, self.selected_model, self.polynomial_degree);
+        let plain_formula = formula_plain_text(&formula_info.full_formula);
+        let formula_preview = formula_preview_text(&plain_formula, 78);
         ui.add_space(2.0);
         egui::Frame::new()
             .inner_margin(egui::Margin::symmetric(10, 8))
@@ -888,26 +890,29 @@ impl CurveFitApp {
                 ui.visuals().widgets.noninteractive.bg_stroke.color,
             ))
             .show(ui, |ui| {
-                ui.label(
-                    egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong(),
-                );
-                #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let dark_mode = ui.visuals().dark_mode;
-                    let (svg_uri, svg_bytes) =
-                        self.cached_formula_svg(&formula_info.full_formula, dark_mode);
-                    ui.add(
-                        egui::Image::from_bytes(svg_uri, svg_bytes)
-                            .max_width(ui.available_width())
-                            .fit_to_original_size(1.0),
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(tr(language, "Model Formula", "Формула модели"))
+                            .strong(),
                     );
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let plain_formula = formula_plain_text(&formula_info.full_formula);
-                    let formula_label = egui::RichText::new(plain_formula).monospace();
-                    ui.label(formula_label);
-                }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(tr(language, "Open formula", "Открыть формулу"))
+                            .clicked()
+                        {
+                            self.show_formula_window = true;
+                        }
+                    });
+                });
+                ui.monospace(formula_preview);
+                ui.label(
+                    egui::RichText::new(tr(
+                        language,
+                        "Preview only. Open in a separate window to inspect long formulas.",
+                        "Показано превью. Откройте отдельное окно для длинных формул.",
+                    ))
+                    .small(),
+                );
                 ui.label(egui::RichText::new(formula_info.notes).small());
             });
 
@@ -1129,6 +1134,70 @@ impl CurveFitApp {
                 "Плотность сэмплирования выбирается автоматически по числу узлов и размеру данных.",
             )).small());
         }
+    }
+
+    pub(super) fn ui_formula_window(&mut self, ctx: &egui::Context) {
+        if !self.show_formula_window {
+            return;
+        }
+
+        let language = self.ui_language;
+        let formula_info =
+            model_formula_info(language, self.selected_model, self.polynomial_degree);
+        let plain_formula = formula_plain_text(&formula_info.full_formula);
+        let mut is_open = self.show_formula_window;
+        egui::Window::new(tr(language, "Model Formula", "Формула модели"))
+            .open(&mut is_open)
+            .default_size(egui::vec2(760.0, 220.0))
+            .min_width(420.0)
+            .min_height(140.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(tr(language, "Copy formula", "Скопировать формулу"))
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(plain_formula.clone());
+                    }
+                    ui.label(
+                        egui::RichText::new(tr(
+                            language,
+                            "Use horizontal scroll for very long formulas.",
+                            "Для очень длинных формул используйте горизонтальный скролл.",
+                        ))
+                        .small(),
+                    );
+                });
+                ui.add_space(4.0);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let dark_mode = ui.visuals().dark_mode;
+                    let (svg_uri, svg_bytes) =
+                        self.cached_formula_svg(&formula_info.full_formula, dark_mode);
+                    egui::ScrollArea::horizontal()
+                        .id_salt("formula_window_scroll")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Image::from_bytes(svg_uri, svg_bytes)
+                                    .fit_to_original_size(1.0),
+                            );
+                        });
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    egui::ScrollArea::horizontal()
+                        .id_salt("formula_window_scroll")
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            ui.monospace(plain_formula.as_str());
+                        });
+                }
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(formula_info.notes).small());
+            });
+        self.show_formula_window = is_open;
     }
 
     pub(super) fn ui_optimizer(&mut self, ui: &mut egui::Ui) {
@@ -2112,6 +2181,22 @@ impl CurveFitApp {
             ));
         }
     }
+}
+
+fn formula_preview_text(formula: &str, max_chars: usize) -> String {
+    if max_chars <= 3 {
+        return "...".to_string();
+    }
+
+    let total_chars = formula.chars().count();
+    if total_chars <= max_chars {
+        return formula.to_string();
+    }
+
+    let mut preview = String::with_capacity(max_chars + 3);
+    preview.extend(formula.chars().take(max_chars - 3));
+    preview.push_str("...");
+    preview
 }
 
 fn diagnostics_hidden_non_loss_series_ids() -> [egui::Id; 6] {
