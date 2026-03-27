@@ -1426,6 +1426,105 @@ impl Default for SteepestDescentConfig {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+/// Параметры Newton-CG с line-search и проверяемыми инвариантами.
+pub struct NewtonCgConfig {
+    pub max_iters: u64,
+    pub tol: f64,
+    pub curvature_threshold: f64,
+    pub c1: f64,
+    pub c2: f64,
+    pub step_min: f64,
+    pub step_max: f64,
+    pub width_tolerance: f64,
+}
+
+impl NewtonCgConfig {
+    #[allow(clippy::too_many_arguments)]
+    /// Создает конфигурацию и валидирует все ограничения аргументов.
+    pub fn try_new(
+        max_iters: u64,
+        tol: f64,
+        curvature_threshold: f64,
+        c1: f64,
+        c2: f64,
+        step_min: f64,
+        step_max: f64,
+        width_tolerance: f64,
+    ) -> Result<Self, InputError> {
+        let config = Self {
+            max_iters,
+            tol,
+            curvature_threshold,
+            c1,
+            c2,
+            step_min,
+            step_max,
+            width_tolerance,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), InputError> {
+        if self.max_iters == 0 {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "max_iters must be greater than 0",
+            ));
+        }
+        if !self.tol.is_finite() || self.tol <= 0.0 {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "tol must be finite and > 0",
+            ));
+        }
+        if !self.curvature_threshold.is_finite() || self.curvature_threshold < 0.0 {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "curvature_threshold must be finite and >= 0",
+            ));
+        }
+        if !self.c1.is_finite()
+            || !self.c2.is_finite()
+            || self.c1 <= 0.0
+            || self.c1 >= self.c2
+            || self.c2 >= 1.0
+        {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "c1 and c2 must satisfy 0 < c1 < c2 < 1",
+            ));
+        }
+        if !self.step_min.is_finite()
+            || !self.step_max.is_finite()
+            || self.step_min < 0.0
+            || self.step_max <= self.step_min
+        {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "step bounds must satisfy 0 <= step_min < step_max",
+            ));
+        }
+        if !self.width_tolerance.is_finite() || self.width_tolerance < 0.0 {
+            return Err(InputError::InvalidNewtonCgConfig(
+                "width_tolerance must be finite and >= 0",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for NewtonCgConfig {
+    fn default() -> Self {
+        Self {
+            max_iters: 200,
+            tol: 1e-10,
+            curvature_threshold: 0.0,
+            c1: 1e-4,
+            c2: 0.9,
+            step_min: 1e-12,
+            step_max: 10.0,
+            width_tolerance: 1e-10,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 /// Параметры стохастического градиентного спуска (SGD).
 pub struct SgdConfig {
     pub max_iters: u64,
@@ -1516,16 +1615,18 @@ pub enum OptimizerMethod {
     Lbfgs,
     NelderMead,
     SteepestDescent,
+    NewtonCg,
     Sgd,
     Adam,
 }
 
 impl OptimizerMethod {
     /// Полный список методов для UI и переборов.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Lbfgs,
         Self::NelderMead,
         Self::SteepestDescent,
+        Self::NewtonCg,
         Self::Sgd,
         Self::Adam,
     ];
@@ -1537,6 +1638,7 @@ pub enum OptimizerConfig {
     Lbfgs(LbfgsConfig),
     NelderMead(NelderMeadConfig),
     SteepestDescent(SteepestDescentConfig),
+    NewtonCg(NewtonCgConfig),
     Sgd(SgdConfig),
     Adam(AdamConfig),
 }
@@ -1548,6 +1650,7 @@ impl OptimizerConfig {
             Self::Lbfgs(_) => OptimizerMethod::Lbfgs,
             Self::NelderMead(_) => OptimizerMethod::NelderMead,
             Self::SteepestDescent(_) => OptimizerMethod::SteepestDescent,
+            Self::NewtonCg(_) => OptimizerMethod::NewtonCg,
             Self::Sgd(_) => OptimizerMethod::Sgd,
             Self::Adam(_) => OptimizerMethod::Adam,
         }
@@ -1559,6 +1662,7 @@ impl OptimizerConfig {
             Self::Lbfgs(config) => config.max_iters,
             Self::NelderMead(config) => config.max_iters,
             Self::SteepestDescent(config) => config.max_iters,
+            Self::NewtonCg(config) => config.max_iters,
             Self::Sgd(config) => config.max_iters,
             Self::Adam(config) => config.max_iters,
         }
@@ -1619,6 +1723,7 @@ pub enum InputError {
     InvalidLbfgsConfig(&'static str),
     InvalidNelderMeadConfig(&'static str),
     InvalidSteepestDescentConfig(&'static str),
+    InvalidNewtonCgConfig(&'static str),
     InvalidSgdConfig(&'static str),
     InvalidAdamConfig(&'static str),
 }
@@ -1677,6 +1782,7 @@ impl fmt::Display for InputError {
             Self::InvalidLbfgsConfig(message) => f.write_str(message),
             Self::InvalidNelderMeadConfig(message) => f.write_str(message),
             Self::InvalidSteepestDescentConfig(message) => f.write_str(message),
+            Self::InvalidNewtonCgConfig(message) => f.write_str(message),
             Self::InvalidSgdConfig(message) => f.write_str(message),
             Self::InvalidAdamConfig(message) => f.write_str(message),
         }
@@ -1688,8 +1794,8 @@ impl std::error::Error for InputError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig, Point,
-        Points, SgdConfig, SteepestDescentConfig,
+        AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
+        NewtonCgConfig, Point, Points, SgdConfig, SteepestDescentConfig,
     };
 
     #[test]
@@ -1813,6 +1919,24 @@ mod tests {
         assert!(result.is_err());
 
         let result = SteepestDescentConfig::try_new(100, 1e-4, 0.9, 10.0, 1.0, 1e-10);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn newton_cg_config_validates_constraints() {
+        let result = NewtonCgConfig::try_new(0, 1e-8, 0.0, 1e-4, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = NewtonCgConfig::try_new(100, 0.0, 0.0, 1e-4, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = NewtonCgConfig::try_new(100, 1e-8, -1.0, 1e-4, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = NewtonCgConfig::try_new(100, 1e-8, 0.0, 0.9, 0.9, 1e-12, 10.0, 1e-10);
+        assert!(result.is_err());
+
+        let result = NewtonCgConfig::try_new(100, 1e-8, 0.0, 1e-4, 0.9, 10.0, 1.0, 1e-10);
         assert!(result.is_err());
     }
 

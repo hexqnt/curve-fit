@@ -4,17 +4,19 @@
 use std::fmt;
 
 use argmin::core::{
-    CostFunction, Gradient, IterState, Problem, Solver, State, TerminationReason, TerminationStatus,
+    CostFunction, Gradient, Hessian, IterState, Problem, Solver, State, TerminationReason,
+    TerminationStatus,
 };
 use argmin::solver::gradientdescent::SteepestDescent;
 use argmin::solver::linesearch::MoreThuenteLineSearch;
 use argmin::solver::neldermead::NelderMead;
+use argmin::solver::newton::NewtonCG;
 use argmin::solver::quasinewton::LBFGS;
 use stochastic_optimizers::{Adam, Optimizer as StochasticOptimizer, SGD};
 
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
-    OptimizerConfig, Points, SgdConfig, SteepestDescentConfig,
+    NewtonCgConfig, OptimizerConfig, Points, SgdConfig, SteepestDescentConfig,
 };
 
 mod curve;
@@ -128,6 +130,9 @@ const PARAM_EPS: f64 = 1e-9;
 const LARGE_COST: f64 = 1e24;
 const LN_2: f64 = std::f64::consts::LN_2;
 const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
+const HESSIAN_FD_REL_STEP: f64 = 1e-4;
+const HESSIAN_FD_MIN_STEP: f64 = 1e-6;
+const HESSIAN_DIAGONAL_JITTER: f64 = 1e-9;
 
 fn positive_x(value: f64) -> f64 {
     value.max(PARAM_EPS)
@@ -170,6 +175,74 @@ fn softplus(value: f64) -> f64 {
 
 fn gradient_l2_norm(values: &[f64]) -> f64 {
     values.iter().map(|value| value * value).sum::<f64>().sqrt()
+}
+
+fn is_finite_non_negative(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+fn stabilize_hessian(hessian: &mut [Vec<f64>]) {
+    let dimension = hessian.len();
+    let mut row = 0;
+    while row < dimension {
+        let mut column = row + 1;
+        while column < dimension {
+            let value = 0.5 * (hessian[row][column] + hessian[column][row]);
+            hessian[row][column] = value;
+            hessian[column][row] = value;
+            column += 1;
+        }
+        if !hessian[row][row].is_finite() {
+            hessian[row][row] = 0.0;
+        }
+        hessian[row][row] += HESSIAN_DIAGONAL_JITTER;
+        row += 1;
+    }
+}
+
+fn scale_and_mirror_upper_hessian(hessian: &mut [Vec<f64>], scale: f64) {
+    let dimension = hessian.len();
+    let mut row = 0;
+    while row < dimension {
+        let mut column = row;
+        while column < dimension {
+            let value = hessian[row][column] * scale;
+            hessian[row][column] = value;
+            hessian[column][row] = value;
+            column += 1;
+        }
+        row += 1;
+    }
+}
+
+fn numerical_hessian_from_gradient<O>(
+    problem: &O,
+    param: &[f64],
+) -> Result<Vec<Vec<f64>>, argmin::core::Error>
+where
+    O: Gradient<Param = Vec<f64>, Gradient = Vec<f64>>,
+{
+    let dimension = param.len();
+    let mut hessian = vec![vec![0.0; dimension]; dimension];
+    let mut probe = param.to_vec();
+
+    for column in 0..dimension {
+        let step = ((param[column].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
+        probe[column] = param[column] + step;
+        let grad_plus = problem.gradient(&probe)?;
+        probe[column] = param[column] - step;
+        let grad_minus = problem.gradient(&probe)?;
+        probe[column] = param[column];
+
+        let denom = 2.0 * step;
+        for row in 0..dimension {
+            let value = (grad_plus[row] - grad_minus[row]) / denom;
+            hessian[row][column] = if value.is_finite() { value } else { 0.0 };
+        }
+    }
+
+    stabilize_hessian(&mut hessian);
+    Ok(hessian)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -247,6 +320,14 @@ impl OptimizationLossMetric {
             Self::SoftL1 => 2.0 * residual / (1.0 + residual * residual).sqrt(),
         }
     }
+
+    fn residual_second_derivative(self, residual: f64) -> f64 {
+        match self {
+            Self::Mse => 2.0,
+            Self::Mae => 0.0,
+            Self::SoftL1 => 2.0 / (1.0 + residual * residual).powf(1.5),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -284,6 +365,213 @@ impl CurveProblem {
             point_y: point_y.into_boxed_slice(),
             loss_metric,
         }
+    }
+
+    fn analytic_hessian_for_supported_families(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+        if matches!(self.loss_metric, OptimizationLossMetric::Mae) {
+            return None;
+        }
+
+        match self.family {
+            _ if is_polynomial_family(self.family) => self.analytic_polynomial_hessian(param),
+            CurveFamily::Inverse => self.analytic_inverse_hessian(param),
+            CurveFamily::ExponentialBasic => self.analytic_exponential_basic_hessian(param),
+            CurveFamily::ExponentialLinear => self.analytic_exponential_linear_hessian(param),
+            _ => None,
+        }
+    }
+
+    fn analytic_polynomial_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+        let dimension = param.len();
+        if dimension == 0 {
+            return None;
+        }
+
+        let sample_count = self.point_x.len();
+        let sample_scale = 1.0 / sample_count as f64;
+        let mut hessian = vec![vec![0.0; dimension]; dimension];
+        let mut basis = vec![0.0; dimension];
+
+        let mut index = 0;
+        while index < sample_count {
+            let x = self.point_x[index];
+            let y = self.point_y[index];
+            let model = param
+                .iter()
+                .copied()
+                .fold(0.0, |acc, coefficient| acc * x + coefficient);
+            let residual = model - y;
+            if !residual.is_finite() {
+                return None;
+            }
+
+            let weight = self.loss_metric.residual_second_derivative(residual);
+            if !is_finite_non_negative(weight) {
+                return None;
+            }
+
+            let mut basis_index = dimension;
+            let mut power = 1.0;
+            while basis_index > 0 {
+                basis_index -= 1;
+                basis[basis_index] = power;
+                power *= x;
+            }
+
+            let mut row = 0;
+            while row < dimension {
+                let basis_row = basis[row];
+                let mut column = row;
+                while column < dimension {
+                    hessian[row][column] += weight * basis_row * basis[column];
+                    column += 1;
+                }
+                row += 1;
+            }
+
+            index += 1;
+        }
+
+        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
+        stabilize_hessian(&mut hessian);
+        Some(hessian)
+    }
+
+    fn analytic_inverse_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+        if param.len() != 2 {
+            return None;
+        }
+
+        let sample_count = self.point_x.len();
+        let sample_scale = 1.0 / sample_count as f64;
+        let mut hessian = vec![vec![0.0; 2]; 2];
+
+        let mut index = 0;
+        while index < sample_count {
+            let x = positive_x(self.point_x[index]);
+            let y = self.point_y[index];
+            let inv_x = 1.0 / x;
+            let model = param[0] + param[1] * inv_x;
+            let residual = model - y;
+            if !residual.is_finite() {
+                return None;
+            }
+
+            let weight = self.loss_metric.residual_second_derivative(residual);
+            if !is_finite_non_negative(weight) {
+                return None;
+            }
+
+            hessian[0][0] += weight;
+            hessian[0][1] += weight * inv_x;
+            hessian[1][1] += weight * inv_x * inv_x;
+            index += 1;
+        }
+
+        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
+        stabilize_hessian(&mut hessian);
+        Some(hessian)
+    }
+
+    fn analytic_exponential_basic_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+        if param.len() != 3 {
+            return None;
+        }
+
+        let sample_count = self.point_x.len();
+        let sample_scale = 1.0 / sample_count as f64;
+        let mut hessian = vec![vec![0.0; 3]; 3];
+
+        let mut index = 0;
+        while index < sample_count {
+            let x = self.point_x[index];
+            let y = self.point_y[index];
+            let exp_part = (-param[2] * x).exp();
+            let model = param[0] + param[1] * exp_part;
+            let residual = model - y;
+            if !residual.is_finite() {
+                return None;
+            }
+
+            let loss_first = self.loss_metric.residual_derivative(residual);
+            let loss_second = self.loss_metric.residual_second_derivative(residual);
+            if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
+                return None;
+            }
+
+            let jac_a = 1.0;
+            let jac_b = exp_part;
+            let jac_c = -param[1] * x * exp_part;
+            let d2_model_dbdc = -x * exp_part;
+            let d2_model_dcdc = param[1] * x * x * exp_part;
+
+            hessian[0][0] += loss_second * jac_a * jac_a;
+            hessian[0][1] += loss_second * jac_a * jac_b;
+            hessian[0][2] += loss_second * jac_a * jac_c;
+            hessian[1][1] += loss_second * jac_b * jac_b;
+            hessian[1][2] += loss_second * jac_b * jac_c + loss_first * d2_model_dbdc;
+            hessian[2][2] += loss_second * jac_c * jac_c + loss_first * d2_model_dcdc;
+
+            index += 1;
+        }
+
+        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
+        stabilize_hessian(&mut hessian);
+        Some(hessian)
+    }
+
+    fn analytic_exponential_linear_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+        if param.len() != 4 {
+            return None;
+        }
+
+        let sample_count = self.point_x.len();
+        let sample_scale = 1.0 / sample_count as f64;
+        let mut hessian = vec![vec![0.0; 4]; 4];
+
+        let mut index = 0;
+        while index < sample_count {
+            let x = self.point_x[index];
+            let y = self.point_y[index];
+            let exp_part = (param[1] * x).exp();
+            let model = param[0] * exp_part + param[2] * x + param[3];
+            let residual = model - y;
+            if !residual.is_finite() {
+                return None;
+            }
+
+            let loss_first = self.loss_metric.residual_derivative(residual);
+            let loss_second = self.loss_metric.residual_second_derivative(residual);
+            if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
+                return None;
+            }
+
+            let jac_a = exp_part;
+            let jac_b = param[0] * x * exp_part;
+            let jac_c = x;
+            let jac_d = 1.0;
+            let d2_model_dadb = x * exp_part;
+            let d2_model_dbdb = param[0] * x * x * exp_part;
+
+            hessian[0][0] += loss_second * jac_a * jac_a;
+            hessian[0][1] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;
+            hessian[0][2] += loss_second * jac_a * jac_c;
+            hessian[0][3] += loss_second * jac_a * jac_d;
+
+            hessian[1][1] += loss_second * jac_b * jac_b + loss_first * d2_model_dbdb;
+            hessian[1][2] += loss_second * jac_b * jac_c;
+            hessian[1][3] += loss_second * jac_b * jac_d;
+
+            hessian[2][2] += loss_second * jac_c * jac_c;
+            hessian[2][3] += loss_second * jac_c * jac_d;
+
+            hessian[3][3] += loss_second * jac_d * jac_d;
+            index += 1;
+        }
+
+        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
+        stabilize_hessian(&mut hessian);
+        Some(hessian)
     }
 }
 
@@ -434,9 +722,11 @@ impl SplineConfig {
 
 type GradientState = IterState<Vec<f64>, Vec<f64>, (), (), (), f64>;
 type NelderMeadState = IterState<Vec<f64>, (), (), (), (), f64>;
+type NewtonCgState = IterState<Vec<f64>, Vec<f64>, (), Vec<Vec<f64>>, (), f64>;
 type LbfgsSolver = LBFGS<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, Vec<f64>, Vec<f64>, f64>;
 type SteepestDescentSolver = SteepestDescent<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>>;
 type NelderMeadSolver = NelderMead<Vec<f64>, f64>;
+type NewtonCgSolver = NewtonCG<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, f64>;
 type SgdSolver = SGD<Vec<f64>>;
 type AdamSolver = Adam<Vec<f64>>;
 
@@ -453,6 +743,7 @@ enum OptimizerSolver {
     Lbfgs(LbfgsSolver),
     NelderMead(NelderMeadSolver),
     SteepestDescent(SteepestDescentSolver),
+    NewtonCg(NewtonCgSolver),
     Sgd(SgdSolver),
     Adam(AdamSolver),
 }
@@ -461,6 +752,7 @@ enum OptimizerState {
     Lbfgs(GradientState),
     NelderMead(NelderMeadState),
     SteepestDescent(GradientState),
+    NewtonCg(NewtonCgState),
     Sgd(StochasticState),
     Adam(StochasticState),
 }
@@ -558,6 +850,20 @@ fn build_steepest_descent_solver(
     Ok(SteepestDescent::new(line_search))
 }
 
+fn build_newton_cg_solver(config: &NewtonCgConfig) -> Result<NewtonCgSolver, FitError> {
+    let line_search = build_line_search(
+        config.c1,
+        config.c2,
+        config.step_min,
+        config.step_max,
+        config.width_tolerance,
+    )?;
+    NewtonCG::new(line_search)
+        .with_curvature_threshold(config.curvature_threshold)
+        .with_tolerance(config.tol)
+        .map_err(|error| FitError::Optimizer(error.to_string()))
+}
+
 fn nelder_mead_simplex(
     initial_param: &[f64],
     simplex_scale: f64,
@@ -617,6 +923,9 @@ fn build_optimizer_solver(
         )),
         OptimizerConfig::SteepestDescent(steepest_descent) => Ok(OptimizerSolver::SteepestDescent(
             build_steepest_descent_solver(steepest_descent)?,
+        )),
+        OptimizerConfig::NewtonCg(newton_cg) => Ok(OptimizerSolver::NewtonCg(
+            build_newton_cg_solver(newton_cg)?,
         )),
         OptimizerConfig::Sgd(sgd) => Ok(OptimizerSolver::Sgd(build_sgd_solver(initial_param, sgd))),
         OptimizerConfig::Adam(adam) => Ok(OptimizerSolver::Adam(build_adam_solver(
@@ -698,6 +1007,10 @@ fn optimizer_state_best_param(state: &OptimizerState) -> Option<Vec<f64>> {
             .get_best_param()
             .or_else(|| state.get_param())
             .cloned(),
+        OptimizerState::NewtonCg(state) => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .cloned(),
         OptimizerState::Sgd(state) => Some(state.best_param.clone()),
         OptimizerState::Adam(state) => Some(state.best_param.clone()),
     }
@@ -708,6 +1021,7 @@ fn optimizer_state_current_param(state: &OptimizerState) -> Option<Vec<f64>> {
         OptimizerState::Lbfgs(state) => state.get_param().cloned(),
         OptimizerState::NelderMead(state) => state.get_param().cloned(),
         OptimizerState::SteepestDescent(state) => state.get_param().cloned(),
+        OptimizerState::NewtonCg(state) => state.get_param().cloned(),
         OptimizerState::Sgd(state) => Some(state.current_param.clone()),
         OptimizerState::Adam(state) => Some(state.current_param.clone()),
     }
@@ -718,6 +1032,7 @@ fn optimizer_state_iter(state: &OptimizerState) -> u64 {
         OptimizerState::Lbfgs(state) => state.get_iter(),
         OptimizerState::NelderMead(state) => state.get_iter(),
         OptimizerState::SteepestDescent(state) => state.get_iter(),
+        OptimizerState::NewtonCg(state) => state.get_iter(),
         OptimizerState::Sgd(state) => state.iter,
         OptimizerState::Adam(state) => state.iter,
     }
@@ -728,6 +1043,7 @@ fn optimizer_state_increment_iter(state: &mut OptimizerState) {
         OptimizerState::Lbfgs(state) => state.increment_iter(),
         OptimizerState::NelderMead(state) => state.increment_iter(),
         OptimizerState::SteepestDescent(state) => state.increment_iter(),
+        OptimizerState::NewtonCg(state) => state.increment_iter(),
         OptimizerState::Sgd(state) => state.iter = state.iter.saturating_add(1),
         OptimizerState::Adam(state) => state.iter = state.iter.saturating_add(1),
     }
@@ -836,6 +1152,15 @@ impl IncrementalFitRunner {
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::SteepestDescent(state)
+            }
+            OptimizerSolver::NewtonCg(solver) => {
+                let state = IterState::new().param(initial_values).max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::NewtonCg(state)
             }
             OptimizerSolver::Sgd(solver) => {
                 let state =
@@ -950,6 +1275,29 @@ impl IncrementalFitRunner {
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::SteepestDescent(state)
+                }
+                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(mut state)) => {
+                    if !state.terminated() {
+                        let termination = <NewtonCgSolver as Solver<
+                            CurveProblem,
+                            NewtonCgState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::NewtonCg(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::NewtonCg(state)
                 }
                 (OptimizerSolver::Sgd(solver), OptimizerState::Sgd(mut state)) => {
                     if stochastic_state_is_terminated(&state) {
@@ -1118,6 +1466,17 @@ impl IncrementalSplineFitRunner {
                 state.func_counts(&problem);
                 OptimizerState::SteepestDescent(state)
             }
+            OptimizerSolver::NewtonCg(solver) => {
+                let state = IterState::new()
+                    .param(prepared.initial_y.clone())
+                    .max_iters(max_iters);
+                let (mut state, _) = solver
+                    .init(&mut problem, state)
+                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                state.update();
+                state.func_counts(&problem);
+                OptimizerState::NewtonCg(state)
+            }
             OptimizerSolver::Sgd(solver) => {
                 let state =
                     build_stochastic_state(&mut problem, solver.parameters().clone(), max_iters)?;
@@ -1229,6 +1588,29 @@ impl IncrementalSplineFitRunner {
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::SteepestDescent(state)
+                }
+                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(mut state)) => {
+                    if !state.terminated() {
+                        let termination = <NewtonCgSolver as Solver<
+                            SplineProblem,
+                            NewtonCgState,
+                        >>::terminate_internal(
+                            solver, &state
+                        );
+                        if let TerminationStatus::Terminated(reason) = termination {
+                            state = state.terminate_with(reason);
+                        }
+                    }
+                    if state.terminated() {
+                        let final_step = self.finalize(OptimizerState::NewtonCg(state))?;
+                        return Ok(final_step);
+                    }
+                    let (mut state, _) = solver
+                        .next_iter(&mut self.problem, state)
+                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                    state.func_counts(&self.problem);
+                    state.update();
+                    OptimizerState::NewtonCg(state)
                 }
                 (OptimizerSolver::Sgd(solver), OptimizerState::Sgd(mut state)) => {
                     if stochastic_state_is_terminated(&state) {
@@ -1649,6 +2031,18 @@ impl Gradient for CurveProblem {
     }
 }
 
+impl Hessian for CurveProblem {
+    type Param = Vec<f64>;
+    type Hessian = Vec<Vec<f64>>;
+
+    fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
+        if let Some(hessian) = self.analytic_hessian_for_supported_families(param) {
+            return Ok(hessian);
+        }
+        numerical_hessian_from_gradient(self, param)
+    }
+}
+
 /// Вычисляет базовые метрики качества подгонки: `(MSE, RMSE)`.
 pub fn calculate_metrics(points: &Points, params: &CurveParams) -> (f64, f64) {
     let mse = points
@@ -1988,6 +2382,15 @@ impl Gradient for SplineProblem {
             };
         }
         Ok(gradient)
+    }
+}
+
+impl Hessian for SplineProblem {
+    type Param = Vec<f64>;
+    type Hessian = Vec<Vec<f64>>;
+
+    fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
+        numerical_hessian_from_gradient(self, param)
     }
 }
 

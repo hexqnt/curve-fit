@@ -110,6 +110,23 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     ));
                     ui.end_row();
                 }
+                OptimizerMethod::NewtonCg => {
+                    ui.label("max_iters");
+                    ui.monospace(app.newton_cg_inputs.max_iters.to_string());
+                    ui.end_row();
+                    ui.label("tol");
+                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.tol));
+                    ui.end_row();
+                    ui.label("curvature_threshold");
+                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.curvature_threshold));
+                    ui.end_row();
+                    ui.label("c1");
+                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.c1));
+                    ui.end_row();
+                    ui.label("c2");
+                    ui.monospace(format!("{:.3}", app.newton_cg_inputs.c2));
+                    ui.end_row();
+                }
                 OptimizerMethod::Sgd => {
                     ui.label("max_iters");
                     ui.monospace(app.sgd_inputs.max_iters.to_string());
@@ -265,6 +282,50 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.steepest_descent_inputs.normalize_after_ui();
                 if app.steepest_descent_inputs != before {
                     app.steepest_descent_preset = OptimizerPreset::Custom;
+                }
+            }
+            OptimizerMethod::NewtonCg => {
+                let before = app.newton_cg_inputs.clone();
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.max_iters, 10..=10_000)
+                        .text("max_iters"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.tol, 1e-14..=1e-2)
+                        .logarithmic(true)
+                        .text("tol"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.curvature_threshold, 0.0..=1e-2)
+                        .logarithmic(true)
+                        .smallest_positive(1e-14)
+                        .text("curvature_threshold"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.c1, C1_MIN..=0.2)
+                        .logarithmic(true)
+                        .text("c1"),
+                );
+                ui.add(egui::Slider::new(&mut app.newton_cg_inputs.c2, 0.1..=C2_MAX).text("c2"));
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.step_min, STEP_MIN_MIN..=1.0)
+                        .logarithmic(true)
+                        .text("step_min"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.step_max, 1e-6..=STEP_MAX_MAX)
+                        .logarithmic(true)
+                        .text("step_max"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut app.newton_cg_inputs.width_tolerance, 1e-14..=1e-3)
+                        .logarithmic(true)
+                        .text("width_tolerance"),
+                );
+
+                app.newton_cg_inputs.normalize_after_ui();
+                if app.newton_cg_inputs != before {
+                    app.newton_cg_preset = OptimizerPreset::Custom;
                 }
             }
             OptimizerMethod::Sgd => {

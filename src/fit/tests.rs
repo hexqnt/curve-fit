@@ -1,18 +1,20 @@
 #[cfg(feature = "portable-simd")]
 use super::simd;
 use super::{
-    DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner, IncrementalSplineFitStep,
-    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
-    SplineFamilyKind, SplineKnotStrategy, approximate_spline_knots, calculate_iteration_metrics,
-    calculate_metrics, evaluate_linear_spline, fit_akima_spline, fit_akima_spline_with_config,
-    fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,
+    CurveProblem, DEFAULT_SPLINE_KNOTS, FitError, HESSIAN_DIAGONAL_JITTER,
+    IncrementalSplineFitRunner, IncrementalSplineFitStep, OptimizationLossMetric, SplineConfig,
+    SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind, SplineKnotStrategy,
+    approximate_spline_knots, calculate_iteration_metrics, calculate_metrics,
+    evaluate_linear_spline, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
+    fit_curve_with_optimizer_config, fit_curve_with_progress,
     fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
-    fit_monotone_cubic_spline, fit_natural_cubic_spline, sorted_points_with_duplicate_policy,
+    fit_monotone_cubic_spline, fit_natural_cubic_spline, numerical_hessian_from_gradient,
+    sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
-    OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
+    NewtonCgConfig, OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 
 fn build_points<F>(xs: &[f64], f: F) -> Points
@@ -25,6 +27,14 @@ where
         .map(|x| Point::try_new(x, f(x)).unwrap())
         .collect::<Vec<_>>();
     Points::try_from(points).unwrap()
+}
+
+fn assert_near(actual: f64, expected: f64, epsilon: f64) {
+    let delta = (actual - expected).abs();
+    assert!(
+        delta <= epsilon,
+        "expected {expected}, got {actual}, delta={delta}, epsilon={epsilon}"
+    );
 }
 
 #[test]
@@ -57,6 +67,113 @@ fn iteration_metrics_loss_matches_selected_objective() {
     assert!((soft_l1_metrics.mse - 1.0).abs() < 1e-12);
     assert!((soft_l1_metrics.mae - 1.0).abs() < 1e-12);
     assert!((soft_l1_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+}
+
+#[test]
+fn analytic_hessian_matches_mse_polynomial_formula() {
+    use argmin::core::Hessian;
+
+    let points = build_points(&[-1.0, 0.0, 2.0], |x| 1.5 * x - 0.25);
+    let problem = CurveProblem::new(CurveFamily::Linear, &points, OptimizationLossMetric::Mse);
+    let hessian = Hessian::hessian(&problem, &vec![0.3, -0.7]).expect("hessian must be computed");
+
+    // Для линейной модели y = a*x + b и MSE:
+    // H = (2/n) * Σ [[x^2, x], [x, 1]] + диагональный jitter.
+    let n = 3.0;
+    let expected_00 = (2.0 / n) * (1.0 + 0.0 + 4.0) + HESSIAN_DIAGONAL_JITTER;
+    let expected_01 = (2.0 / n) * (-1.0 + 0.0 + 2.0);
+    let expected_11 = (2.0 / n) * 3.0 + HESSIAN_DIAGONAL_JITTER;
+
+    assert_near(hessian[0][0], expected_00, 1e-12);
+    assert_near(hessian[0][1], expected_01, 1e-12);
+    assert_near(hessian[1][0], expected_01, 1e-12);
+    assert_near(hessian[1][1], expected_11, 1e-12);
+}
+
+#[test]
+fn analytic_hessian_matches_soft_l1_inverse_formula() {
+    use argmin::core::Hessian;
+
+    let points = build_points(&[1.0, 2.0, 4.0], |x| 1.0 + 0.5 / x);
+    let params = vec![0.9, 0.3];
+    let problem = CurveProblem::new(
+        CurveFamily::Inverse,
+        &points,
+        OptimizationLossMetric::SoftL1,
+    );
+    let hessian = Hessian::hessian(&problem, &params).expect("hessian must be computed");
+
+    let mut expected_00 = 0.0;
+    let mut expected_01 = 0.0;
+    let mut expected_11 = 0.0;
+    for point in points.as_slice() {
+        let x = point.x().max(1e-9);
+        let inv_x = 1.0 / x;
+        let residual = params[0] + params[1] * inv_x - point.y();
+        let weight = 2.0 / (1.0 + residual * residual).powf(1.5);
+        expected_00 += weight;
+        expected_01 += weight * inv_x;
+        expected_11 += weight * inv_x * inv_x;
+    }
+    let sample_scale = 1.0 / points.len() as f64;
+    expected_00 = expected_00 * sample_scale + HESSIAN_DIAGONAL_JITTER;
+    expected_01 *= sample_scale;
+    expected_11 = expected_11 * sample_scale + HESSIAN_DIAGONAL_JITTER;
+
+    assert_near(hessian[0][0], expected_00, 1e-12);
+    assert_near(hessian[0][1], expected_01, 1e-12);
+    assert_near(hessian[1][0], expected_01, 1e-12);
+    assert_near(hessian[1][1], expected_11, 1e-12);
+}
+
+#[test]
+fn analytic_hessian_exponential_basic_matches_numerical_reference() {
+    use argmin::core::Hessian;
+
+    let points = build_points(&[-1.0, -0.2, 0.3, 1.1, 2.0], |x| {
+        0.8 + 1.4 * (-0.6 * x).exp()
+    });
+    let params = vec![0.5, 1.1, 0.3];
+    let problem = CurveProblem::new(
+        CurveFamily::ExponentialBasic,
+        &points,
+        OptimizationLossMetric::Mse,
+    );
+
+    let analytic = Hessian::hessian(&problem, &params).expect("analytic hessian must be computed");
+    let numerical =
+        numerical_hessian_from_gradient(&problem, &params).expect("numerical hessian must succeed");
+
+    for row in 0..3 {
+        for column in 0..3 {
+            assert_near(analytic[row][column], numerical[row][column], 5e-5);
+        }
+    }
+}
+
+#[test]
+fn analytic_hessian_exponential_linear_matches_numerical_reference() {
+    use argmin::core::Hessian;
+
+    let points = build_points(&[-1.2, -0.5, 0.0, 0.7, 1.4], |x| {
+        1.4 * (0.35 * x).exp() - 0.4 * x + 0.2
+    });
+    let params = vec![1.0, 0.2, -0.2, 0.0];
+    let problem = CurveProblem::new(
+        CurveFamily::ExponentialLinear,
+        &points,
+        OptimizationLossMetric::SoftL1,
+    );
+
+    let analytic = Hessian::hessian(&problem, &params).expect("analytic hessian must be computed");
+    let numerical =
+        numerical_hessian_from_gradient(&problem, &params).expect("numerical hessian must succeed");
+
+    for row in 0..4 {
+        for column in 0..4 {
+            assert_near(analytic[row][column], numerical[row][column], 8e-5);
+        }
+    }
 }
 
 #[test]
@@ -182,6 +299,43 @@ fn adam_fits_linear_data() {
     .expect("linear fit with Adam must succeed");
 
     assert!(result.mse < 1e-6, "adam mse={}", result.mse);
+}
+
+#[test]
+fn newton_cg_fits_linear_data() {
+    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let optimizer_config = OptimizerConfig::NewtonCg(NewtonCgConfig::default());
+    let result = fit_curve_with_optimizer_config(
+        &points,
+        CurveFamily::Linear,
+        CurveParams::Linear { a: 0.2, b: 0.1 },
+        &optimizer_config,
+    )
+    .expect("linear fit with Newton-CG must succeed");
+
+    assert!(result.mse < 1e-10, "newton-cg mse={}", result.mse);
+}
+
+#[test]
+fn newton_cg_supports_all_objective_metrics() {
+    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let optimizer_config = OptimizerConfig::NewtonCg(NewtonCgConfig::default());
+    for loss_metric in OptimizationLossMetric::ALL {
+        let result = fit_curve_with_progress_and_optimizer_config_and_loss_metric(
+            &points,
+            CurveFamily::Linear,
+            CurveParams::Linear { a: 0.2, b: 0.1 },
+            &optimizer_config,
+            loss_metric,
+            |_iteration, _params| true,
+        )
+        .expect("fit with Newton-CG and selected objective metric must succeed");
+        assert!(
+            result.mse < 1e-6,
+            "loss={loss_metric:?}, mse={}",
+            result.mse
+        );
+    }
 }
 
 #[test]
@@ -799,6 +953,31 @@ fn incremental_spline_runner_supports_adam() {
         &optimizer_config,
     )
     .expect("incremental spline runner with Adam must be created");
+
+    for _ in 0..5_000 {
+        match runner.step().expect("runner step must succeed") {
+            IncrementalSplineFitStep::Iteration { .. } => {}
+            IncrementalSplineFitStep::Finished(result) => {
+                assert!(result.iterations <= optimizer_config.max_iters());
+                return;
+            }
+            IncrementalSplineFitStep::Cancelled => panic!("runner must not be cancelled"),
+        }
+    }
+    panic!("runner must finish in reasonable number of steps");
+}
+
+#[test]
+fn incremental_spline_runner_supports_newton_cg() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let optimizer_config = OptimizerConfig::NewtonCg(NewtonCgConfig::default());
+    let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config(
+        &points,
+        SplineFamilyKind::Linear,
+        SplineConfig::default(),
+        &optimizer_config,
+    )
+    .expect("incremental spline runner with Newton-CG must be created");
 
     for _ in 0..5_000 {
         match runner.step().expect("runner step must succeed") {

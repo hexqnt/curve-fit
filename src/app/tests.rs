@@ -105,6 +105,12 @@ fn optimizer_config_matches_selected_method() {
         Ok(OptimizerConfig::SteepestDescent(_))
     ));
 
+    app.optimizer_method = OptimizerMethod::NewtonCg;
+    assert!(matches!(
+        app.optimizer_config(),
+        Ok(OptimizerConfig::NewtonCg(_))
+    ));
+
     app.optimizer_method = OptimizerMethod::Sgd;
     assert!(matches!(
         app.optimizer_config(),
@@ -186,6 +192,9 @@ fn optimizer_presets_are_stored_per_method() {
     app.optimizer_method = OptimizerMethod::SteepestDescent;
     app.apply_selected_optimizer_preset(OptimizerPreset::Fast);
 
+    app.optimizer_method = OptimizerMethod::NewtonCg;
+    app.apply_selected_optimizer_preset(OptimizerPreset::Precise);
+
     app.optimizer_method = OptimizerMethod::Sgd;
     app.apply_selected_optimizer_preset(OptimizerPreset::Balanced);
 
@@ -200,6 +209,9 @@ fn optimizer_presets_are_stored_per_method() {
 
     app.optimizer_method = OptimizerMethod::SteepestDescent;
     assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Fast);
+
+    app.optimizer_method = OptimizerMethod::NewtonCg;
+    assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Precise);
 
     app.optimizer_method = OptimizerMethod::Sgd;
     assert_eq!(app.selected_optimizer_preset(), OptimizerPreset::Balanced);
@@ -261,6 +273,33 @@ fn sgd_preset_changes_active_config_values() {
         };
     assert!(precise_max_iters > fast_max_iters);
     assert!(precise_lr < fast_lr);
+}
+
+#[test]
+fn newton_cg_preset_changes_active_config_values() {
+    let mut app = CurveFitApp {
+        optimizer_method: OptimizerMethod::NewtonCg,
+        ..Default::default()
+    };
+    app.apply_selected_optimizer_preset(OptimizerPreset::Fast);
+    let fast_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    app.apply_selected_optimizer_preset(OptimizerPreset::Precise);
+    let precise_config = app
+        .optimizer_config()
+        .expect("optimizer config must be valid");
+
+    let (fast_max_iters, precise_max_iters, fast_tol, precise_tol) =
+        match (fast_config, precise_config) {
+            (OptimizerConfig::NewtonCg(fast), OptimizerConfig::NewtonCg(precise)) => {
+                (fast.max_iters, precise.max_iters, fast.tol, precise.tol)
+            }
+            _ => panic!("Newton-CG must remain active"),
+        };
+    assert!(precise_max_iters > fast_max_iters);
+    assert!(precise_tol < fast_tol);
 }
 
 #[test]

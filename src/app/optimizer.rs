@@ -1,5 +1,6 @@
 use crate::domain::{
-    AdamConfig, LbfgsConfig, NelderMeadConfig, OptimizerMethod, SgdConfig, SteepestDescentConfig,
+    AdamConfig, LbfgsConfig, NelderMeadConfig, NewtonCgConfig, OptimizerMethod, SgdConfig,
+    SteepestDescentConfig,
 };
 
 use super::{C1_MIN, C2_MAX, STEP_MAX_MAX, STEP_MIN_MIN, UiLanguage};
@@ -12,11 +13,13 @@ pub(super) fn optimizer_method_label(
         (UiLanguage::English, OptimizerMethod::Lbfgs) => "LBFGS",
         (UiLanguage::English, OptimizerMethod::NelderMead) => "Nelder-Mead",
         (UiLanguage::English, OptimizerMethod::SteepestDescent) => "Steepest Descent",
+        (UiLanguage::English, OptimizerMethod::NewtonCg) => "Newton-CG",
         (UiLanguage::English, OptimizerMethod::Sgd) => "SGD",
         (UiLanguage::English, OptimizerMethod::Adam) => "Adam",
         (UiLanguage::Russian, OptimizerMethod::Lbfgs) => "LBFGS",
         (UiLanguage::Russian, OptimizerMethod::NelderMead) => "Нелдер-Мид",
         (UiLanguage::Russian, OptimizerMethod::SteepestDescent) => "Наискорейший спуск",
+        (UiLanguage::Russian, OptimizerMethod::NewtonCg) => "Ньютон-CG",
         (UiLanguage::Russian, OptimizerMethod::Sgd) => "SGD",
         (UiLanguage::Russian, OptimizerMethod::Adam) => "Adam",
     }
@@ -58,6 +61,29 @@ impl OptimizerPreset {
     pub(super) const ALL: [Self; 3] = [Self::Fast, Self::Balanced, Self::Precise];
 }
 
+fn infer_preset_by<T, F>(config: &T, config_from_preset: F) -> OptimizerPreset
+where
+    T: PartialEq,
+    F: Fn(OptimizerPreset) -> T,
+{
+    OptimizerPreset::ALL
+        .into_iter()
+        .find(|preset| config_from_preset(*preset).eq(config))
+        .unwrap_or(OptimizerPreset::Custom)
+}
+
+fn normalize_wolfe_line_search_inputs(
+    c1: &mut f64,
+    c2: &mut f64,
+    step_min: &mut f64,
+    step_max: &mut f64,
+) {
+    *c1 = (*c1).clamp(C1_MIN, C2_MAX - 1e-4);
+    *c2 = (*c2).clamp(*c1 + 1e-4, C2_MAX);
+    *step_min = (*step_min).clamp(STEP_MIN_MIN, STEP_MAX_MAX - 1e-6);
+    *step_max = (*step_max).clamp(*step_min + 1e-6, STEP_MAX_MAX);
+}
+
 pub(super) fn lbfgs_config_from_preset(preset: OptimizerPreset) -> LbfgsConfig {
     match preset {
         OptimizerPreset::Fast => {
@@ -74,12 +100,7 @@ pub(super) fn lbfgs_config_from_preset(preset: OptimizerPreset) -> LbfgsConfig {
 }
 
 pub(super) fn infer_lbfgs_preset(config: &LbfgsConfig) -> OptimizerPreset {
-    for preset in OptimizerPreset::ALL {
-        if &lbfgs_config_from_preset(preset) == config {
-            return preset;
-        }
-    }
-    OptimizerPreset::Custom
+    infer_preset_by(config, lbfgs_config_from_preset)
 }
 
 pub(super) fn nelder_mead_config_from_preset(preset: OptimizerPreset) -> NelderMeadConfig {
@@ -96,12 +117,7 @@ pub(super) fn nelder_mead_config_from_preset(preset: OptimizerPreset) -> NelderM
 }
 
 pub(super) fn infer_nelder_mead_preset(config: &NelderMeadConfig) -> OptimizerPreset {
-    for preset in OptimizerPreset::ALL {
-        if &nelder_mead_config_from_preset(preset) == config {
-            return preset;
-        }
-    }
-    OptimizerPreset::Custom
+    infer_preset_by(config, nelder_mead_config_from_preset)
 }
 
 pub(super) fn steepest_descent_config_from_preset(
@@ -120,12 +136,26 @@ pub(super) fn steepest_descent_config_from_preset(
 }
 
 pub(super) fn infer_steepest_descent_preset(config: &SteepestDescentConfig) -> OptimizerPreset {
-    for preset in OptimizerPreset::ALL {
-        if &steepest_descent_config_from_preset(preset) == config {
-            return preset;
+    infer_preset_by(config, steepest_descent_config_from_preset)
+}
+
+pub(super) fn newton_cg_config_from_preset(preset: OptimizerPreset) -> NewtonCgConfig {
+    match preset {
+        OptimizerPreset::Fast => {
+            NewtonCgConfig::try_new(80, 1e-8, 1e-8, 1e-4, 0.9, 1e-10, 1.0, 1e-8)
+                .expect("fast Newton-CG preset must be valid")
         }
+        OptimizerPreset::Balanced => NewtonCgConfig::default(),
+        OptimizerPreset::Precise => {
+            NewtonCgConfig::try_new(600, 1e-12, 0.0, 1e-4, 0.95, 1e-12, 10.0, 1e-12)
+                .expect("precise Newton-CG preset must be valid")
+        }
+        OptimizerPreset::Custom => NewtonCgConfig::default(),
     }
-    OptimizerPreset::Custom
+}
+
+pub(super) fn infer_newton_cg_preset(config: &NewtonCgConfig) -> OptimizerPreset {
+    infer_preset_by(config, newton_cg_config_from_preset)
 }
 
 pub(super) fn sgd_config_from_preset(preset: OptimizerPreset) -> SgdConfig {
@@ -142,12 +172,7 @@ pub(super) fn sgd_config_from_preset(preset: OptimizerPreset) -> SgdConfig {
 }
 
 pub(super) fn infer_sgd_preset(config: &SgdConfig) -> OptimizerPreset {
-    for preset in OptimizerPreset::ALL {
-        if &sgd_config_from_preset(preset) == config {
-            return preset;
-        }
-    }
-    OptimizerPreset::Custom
+    infer_preset_by(config, sgd_config_from_preset)
 }
 
 pub(super) fn adam_config_from_preset(preset: OptimizerPreset) -> AdamConfig {
@@ -164,12 +189,7 @@ pub(super) fn adam_config_from_preset(preset: OptimizerPreset) -> AdamConfig {
 }
 
 pub(super) fn infer_adam_preset(config: &AdamConfig) -> OptimizerPreset {
-    for preset in OptimizerPreset::ALL {
-        if &adam_config_from_preset(preset) == config {
-            return preset;
-        }
-    }
-    OptimizerPreset::Custom
+    infer_preset_by(config, adam_config_from_preset)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -201,11 +221,12 @@ impl LbfgsInputState {
     }
 
     pub(super) fn normalize_after_ui(&mut self) {
-        self.c1 = self.c1.clamp(C1_MIN, C2_MAX - 1e-4);
-        self.c2 = self.c2.clamp(self.c1 + 1e-4, C2_MAX);
-
-        self.step_min = self.step_min.clamp(STEP_MIN_MIN, STEP_MAX_MAX - 1e-6);
-        self.step_max = self.step_max.clamp(self.step_min + 1e-6, STEP_MAX_MAX);
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
     }
 
     pub(super) fn to_config(&self) -> Result<LbfgsConfig, String> {
@@ -294,15 +315,70 @@ impl SteepestDescentInputState {
     }
 
     pub(super) fn normalize_after_ui(&mut self) {
-        self.c1 = self.c1.clamp(C1_MIN, C2_MAX - 1e-4);
-        self.c2 = self.c2.clamp(self.c1 + 1e-4, C2_MAX);
-        self.step_min = self.step_min.clamp(STEP_MIN_MIN, STEP_MAX_MAX - 1e-6);
-        self.step_max = self.step_max.clamp(self.step_min + 1e-6, STEP_MAX_MAX);
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
     }
 
     pub(super) fn to_config(&self) -> Result<SteepestDescentConfig, String> {
         SteepestDescentConfig::try_new(
             self.max_iters,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        )
+        .map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct NewtonCgInputState {
+    pub(super) max_iters: u64,
+    pub(super) tol: f64,
+    pub(super) curvature_threshold: f64,
+    pub(super) c1: f64,
+    pub(super) c2: f64,
+    pub(super) step_min: f64,
+    pub(super) step_max: f64,
+    pub(super) width_tolerance: f64,
+}
+
+impl NewtonCgInputState {
+    pub(super) fn from_config(config: &NewtonCgConfig) -> Self {
+        Self {
+            max_iters: config.max_iters,
+            tol: config.tol,
+            curvature_threshold: config.curvature_threshold,
+            c1: config.c1,
+            c2: config.c2,
+            step_min: config.step_min,
+            step_max: config.step_max,
+            width_tolerance: config.width_tolerance,
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.tol = self.tol.clamp(1e-14, 1e-2);
+        self.curvature_threshold = self.curvature_threshold.clamp(0.0, 1e-2);
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
+        self.width_tolerance = self.width_tolerance.clamp(0.0, 1e-3);
+    }
+
+    pub(super) fn to_config(&self) -> Result<NewtonCgConfig, String> {
+        NewtonCgConfig::try_new(
+            self.max_iters,
+            self.tol,
+            self.curvature_threshold,
             self.c1,
             self.c2,
             self.step_min,
