@@ -1,5 +1,17 @@
 use super::*;
 
+#[cfg(not(target_arch = "wasm32"))]
+struct ParametricFitWorkerInput {
+    family: CurveFamily,
+    optimization_points: Points,
+    display_points: Points,
+    optimization_initial_params: CurveParams,
+    normalization: Option<ParametricNormalization>,
+    optimizer_config: OptimizerConfig,
+    loss_metric: OptimizationLossMetric,
+    cancel_flag: Arc<AtomicBool>,
+}
+
 impl CurveFitApp {
     fn plot_points_from_pairs<I>(pairs: I) -> Vec<PlotPoint>
     where
@@ -19,6 +31,13 @@ impl CurveFitApp {
         )
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    fn set_fit_stopped_status_if_fitting(&mut self) {
+        if self.status_is_fitting() {
+            self.status = Some(StatusMessage::FitStopped);
+        }
+    }
+
     pub(super) fn clear_fit_preview(&mut self) {
         self.fit_preview_params = None;
         self.fit_preview_iteration = None;
@@ -29,15 +48,16 @@ impl CurveFitApp {
         points: &Points,
         params: &CurveParams,
     ) {
-        let sample_count = points.len() as f64;
-        let y_mean = points.as_slice().iter().map(|point| point.y()).sum::<f64>() / sample_count;
+        let points_slice = points.as_slice();
+        let sample_count = points_slice.len() as f64;
+        let y_mean = points_slice.iter().map(|point| point.y()).sum::<f64>() / sample_count;
 
         let mut sse = 0.0;
         let mut sae = 0.0;
         let mut max_abs_error = 0.0_f64;
         self.residual_plot_points.clear();
-        self.residual_plot_points.reserve(points.len());
-        for point in points.as_slice() {
+        self.residual_plot_points.reserve(points_slice.len());
+        for point in points_slice {
             let residual = params.evaluate(point.x()) - point.y();
             let abs_residual = residual.abs();
             sse += residual * residual;
@@ -47,8 +67,7 @@ impl CurveFitApp {
                 .push(PlotPoint::new(point.x(), residual));
         }
 
-        let sst = points
-            .as_slice()
+        let sst = points_slice
             .iter()
             .map(|point| {
                 let centered = point.y() - y_mean;
@@ -138,8 +157,10 @@ impl CurveFitApp {
                     self.fit_in_progress = false;
                     self.active_fit_points = None;
                     self.finalize_replay_after_fit_stopped();
-                    if !self.discard_fit_worker_updates || self.status_is_fitting() {
+                    if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::FitStopped);
+                    } else {
+                        self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
                     break;
@@ -168,8 +189,8 @@ impl CurveFitApp {
                         self.finalize_replay_after_fit_completion();
                         self.fit_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
-                    } else if self.status_is_fitting() {
-                        self.status = Some(StatusMessage::FitStopped);
+                    } else {
+                        self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
                     break;
@@ -191,8 +212,8 @@ impl CurveFitApp {
                         self.finalize_replay_after_fit_completion();
                         self.spline_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
-                    } else if self.status_is_fitting() {
-                        self.status = Some(StatusMessage::FitStopped);
+                    } else {
+                        self.set_fit_stopped_status_if_fitting();
                     }
                     self.active_fit_points = None;
                     keep_receiver = false;
@@ -203,8 +224,8 @@ impl CurveFitApp {
                     self.active_fit_points = None;
                     if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::Error(error));
-                    } else if self.status_is_fitting() {
-                        self.status = Some(StatusMessage::FitStopped);
+                    } else {
+                        self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
                     break;
@@ -217,8 +238,8 @@ impl CurveFitApp {
                         self.status = Some(StatusMessage::Error(
                             "Fit worker channel disconnected unexpectedly".to_string(),
                         ));
-                    } else if self.status_is_fitting() {
-                        self.status = Some(StatusMessage::FitStopped);
+                    } else {
+                        self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
                     break;
@@ -250,9 +271,10 @@ impl CurveFitApp {
                 ctx.request_repaint();
             }
             WasmFitJob::Running(runner) => match runner {
-                WasmFitRunner::Parametric(runner) => {
-                    self.run_wasm_parametric_fit_continuously(runner)
-                }
+                WasmFitRunner::Parametric {
+                    runner,
+                    normalization,
+                } => self.run_wasm_parametric_fit_continuously(runner, normalization),
                 WasmFitRunner::Spline(runner) => self.run_wasm_spline_fit_continuously(runner),
             },
         }
@@ -268,7 +290,7 @@ impl CurveFitApp {
                 WasmFitJob::Deferred(runner) | WasmFitJob::Running(runner) => runner,
             };
             match runner {
-                WasmFitRunner::Parametric(runner) => runner.cancel(),
+                WasmFitRunner::Parametric { runner, .. } => runner.cancel(),
                 WasmFitRunner::Spline(runner) => runner.cancel(),
             }
             self.status = Some(StatusMessage::FittingStopping);
@@ -294,7 +316,11 @@ impl CurveFitApp {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn run_wasm_parametric_fit_continuously(&mut self, mut runner: IncrementalFitRunner) {
+    fn run_wasm_parametric_fit_continuously(
+        &mut self,
+        mut runner: IncrementalFitRunner,
+        normalization: Option<ParametricNormalization>,
+    ) {
         loop {
             match runner.step() {
                 Ok(IncrementalFitStep::Iteration {
@@ -303,6 +329,24 @@ impl CurveFitApp {
                     metrics,
                     params,
                 }) => {
+                    let params = if let Some(normalization) = normalization {
+                        match normalization.denormalize_params(&params) {
+                            Ok(params) => params,
+                            Err(error) => {
+                                self.fit_in_progress = false;
+                                self.status = Some(StatusMessage::Error(error));
+                                self.active_fit_points = None;
+                                break;
+                            }
+                        }
+                    } else {
+                        params
+                    };
+                    let metrics = if let Some(points) = self.active_fit_points.as_ref() {
+                        calculate_iteration_metrics(points, &params, self.fit_loss_metric)
+                    } else {
+                        metrics
+                    };
                     self.iteration_diagnostics
                         .append(iteration, metrics, &params);
                     self.upsert_parametric_replay_frame(iteration, params);
@@ -310,8 +354,22 @@ impl CurveFitApp {
                 }
                 Ok(IncrementalFitStep::Finished(result)) => {
                     self.fit_in_progress = false;
+                    let mut result = result;
+                    if let Some(normalization) = normalization {
+                        result.params = match normalization.denormalize_params(&result.params) {
+                            Ok(params) => params,
+                            Err(error) => {
+                                self.status = Some(StatusMessage::Error(error));
+                                self.active_fit_points = None;
+                                break;
+                            }
+                        };
+                    }
                     let fit_points = self.active_fit_points.take();
                     if let Some(points) = fit_points.as_ref() {
+                        let (mse, rmse) = calculate_metrics(points, &result.params);
+                        result.mse = mse;
+                        result.rmse = rmse;
                         self.update_parametric_result_metrics(points, &result.params);
                         let metrics = calculate_iteration_metrics(
                             points,
@@ -397,15 +455,17 @@ impl CurveFitApp {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn start_fit_worker(
-        &mut self,
-        family: CurveFamily,
-        points: Points,
-        initial_params: CurveParams,
-        optimizer_config: OptimizerConfig,
-        loss_metric: OptimizationLossMetric,
-        cancel_flag: Arc<AtomicBool>,
-    ) {
+    fn start_fit_worker(&mut self, input: ParametricFitWorkerInput) {
+        let ParametricFitWorkerInput {
+            family,
+            optimization_points,
+            display_points,
+            optimization_initial_params,
+            normalization,
+            optimizer_config,
+            loss_metric,
+            cancel_flag,
+        } = input;
         let (tx, rx) = mpsc::channel();
         self.fit_worker_rx = Some(rx);
         self.fit_cancel_flag = Some(cancel_flag.clone());
@@ -415,11 +475,12 @@ impl CurveFitApp {
         std::thread::spawn(move || {
             let iter_tx = tx.clone();
             let progress_cancel = cancel_flag.clone();
-            let progress_points = points.clone();
+            let progress_points = Arc::new(display_points);
+            let callback_points = Arc::clone(&progress_points);
             let result = fit_curve_with_progress_and_optimizer_config_and_loss_metric(
-                &points,
+                &optimization_points,
                 family,
-                initial_params,
+                optimization_initial_params,
                 &optimizer_config,
                 loss_metric,
                 move |iteration, params| {
@@ -427,8 +488,19 @@ impl CurveFitApp {
                         return false;
                     }
                     if let Some(params) = params {
-                        let metrics =
-                            calculate_iteration_metrics(&progress_points, &params, loss_metric);
+                        let params = if let Some(normalization) = normalization {
+                            match normalization.denormalize_params(&params) {
+                                Ok(params) => params,
+                                Err(_) => return !progress_cancel.load(Ordering::Relaxed),
+                            }
+                        } else {
+                            params
+                        };
+                        let metrics = calculate_iteration_metrics(
+                            callback_points.as_ref(),
+                            &params,
+                            loss_metric,
+                        );
                         let _ = iter_tx.send(FitWorkerMessage::Iteration {
                             iteration,
                             metrics,
@@ -441,7 +513,25 @@ impl CurveFitApp {
 
             match result {
                 Ok(result) => {
-                    let _ = tx.send(FitWorkerMessage::Finished(result));
+                    let params = if let Some(normalization) = normalization {
+                        match normalization.denormalize_params(&result.params) {
+                            Ok(params) => params,
+                            Err(error) => {
+                                let _ = tx.send(FitWorkerMessage::Failed(error));
+                                return;
+                            }
+                        }
+                    } else {
+                        result.params
+                    };
+                    let (mse, rmse) = calculate_metrics(progress_points.as_ref(), &params);
+                    let _ = tx.send(FitWorkerMessage::Finished(FitResult {
+                        family: result.family,
+                        params,
+                        mse,
+                        rmse,
+                        iterations: result.iterations,
+                    }));
                 }
                 Err(FitError::Cancelled) => {
                     let _ = tx.send(FitWorkerMessage::Stopped);
@@ -547,23 +637,10 @@ impl CurveFitApp {
         self.fit_loss_metric = loss_metric;
 
         let selected_model = self.resolved_model();
-        if matches!(
-            selected_model,
-            ResolvedModel::LinearSpline
-                | ResolvedModel::MonotoneCubicSpline
-                | ResolvedModel::NaturalCubicSpline
-                | ResolvedModel::AkimaSpline
-        ) {
-            let spline_family = match selected_model {
-                ResolvedModel::LinearSpline => SplineFamilyKind::Linear,
-                ResolvedModel::MonotoneCubicSpline => SplineFamilyKind::MonotoneCubic,
-                ResolvedModel::NaturalCubicSpline => SplineFamilyKind::NaturalCubic,
-                ResolvedModel::AkimaSpline => SplineFamilyKind::Akima,
-                ResolvedModel::Parametric(_) => unreachable!("checked by matches!"),
-            };
+        if let Some(spline_family) = selected_model.spline_family() {
             let spline_config = self
                 .spline_config_for_model(selected_model, points.len())
-                .expect("checked by matches!");
+                .expect("spline model must provide spline config");
             self.sync_spline_initial_knot_y_inputs(spline_config.knots);
             let initial_knot_y = match self.parse_spline_initial_knot_y(spline_config.knots) {
                 Ok(values) => values,
@@ -644,6 +721,35 @@ impl CurveFitApp {
             return;
         }
 
+        let mut optimization_points = points.clone();
+        let mut optimization_initial_params = initial_params.clone();
+        let normalization = if self.normalize_parametric_data {
+            let normalization = match ParametricNormalization::try_from_points(&points) {
+                Ok(normalization) => normalization,
+                Err(error) => {
+                    self.status = Some(StatusMessage::Error(error));
+                    return;
+                }
+            };
+            optimization_points = match normalization.normalize_points(&points) {
+                Ok(normalized_points) => normalized_points,
+                Err(error) => {
+                    self.status = Some(StatusMessage::Error(error));
+                    return;
+                }
+            };
+            optimization_initial_params = match normalization.normalize_params(&initial_params) {
+                Ok(normalized_params) => normalized_params,
+                Err(error) => {
+                    self.status = Some(StatusMessage::Error(error));
+                    return;
+                }
+            };
+            Some(normalization)
+        } else {
+            None
+        };
+
         // Очищаем предыдущий успешный результат только когда новый запуск уже валиден.
         self.clear_fit_outputs();
         self.active_fit_points = Some(points.clone());
@@ -655,28 +761,32 @@ impl CurveFitApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let cancel_flag = Arc::new(AtomicBool::new(false));
-            self.start_fit_worker(
+            self.start_fit_worker(ParametricFitWorkerInput {
                 family,
-                points,
-                initial_params,
+                optimization_points,
+                display_points: points,
+                optimization_initial_params,
+                normalization,
                 optimizer_config,
                 loss_metric,
                 cancel_flag,
-            );
+            });
         }
 
         #[cfg(target_arch = "wasm32")]
         {
             match IncrementalFitRunner::new_with_optimizer_config_and_loss_metric(
-                &points,
+                &optimization_points,
                 family,
-                initial_params,
+                optimization_initial_params,
                 &optimizer_config,
                 loss_metric,
             ) {
                 Ok(runner) => {
-                    self.wasm_fit_job =
-                        Some(WasmFitJob::Deferred(WasmFitRunner::Parametric(runner)));
+                    self.wasm_fit_job = Some(WasmFitJob::Deferred(WasmFitRunner::Parametric {
+                        runner,
+                        normalization,
+                    }));
                     self.fit_in_progress = true;
                 }
                 Err(error) => {

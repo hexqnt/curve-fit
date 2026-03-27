@@ -17,6 +17,7 @@ mod fit_worker;
 mod formula;
 mod i18n;
 mod input_parse;
+mod normalization;
 mod optimizer;
 mod param_init;
 mod plot_utils;
@@ -39,6 +40,7 @@ use self::i18n::{
     reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
     stop_icon_image, tool_icon_image, tool_label, tr, undo_icon_image, view_icon_image,
 };
+use self::normalization::ParametricNormalization;
 use self::optimizer::{
     AdamInputState, LbfgsInputState, NelderMeadInputState, OptimizerPreset, OptimizerUiMode,
     SgdInputState, SteepestDescentInputState, adam_config_from_preset, infer_adam_preset,
@@ -72,7 +74,7 @@ use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
 use crate::fit::{
     SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
     SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
-    calculate_iteration_metrics, default_spline_initial_knot_y, sample_curve,
+    calculate_iteration_metrics, calculate_metrics, default_spline_initial_knot_y, sample_curve,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -305,6 +307,16 @@ impl ResolvedModel {
         }
     }
 
+    fn spline_family(self) -> Option<SplineFamilyKind> {
+        match self {
+            Self::LinearSpline => Some(SplineFamilyKind::Linear),
+            Self::MonotoneCubicSpline => Some(SplineFamilyKind::MonotoneCubic),
+            Self::NaturalCubicSpline => Some(SplineFamilyKind::NaturalCubic),
+            Self::AkimaSpline => Some(SplineFamilyKind::Akima),
+            Self::Parametric(_) => None,
+        }
+    }
+
     fn spline_min_knots(self) -> Option<usize> {
         match self {
             Self::Parametric(_) => None,
@@ -501,7 +513,10 @@ enum FitWorkerMessage {
 
 #[cfg(target_arch = "wasm32")]
 enum WasmFitRunner {
-    Parametric(IncrementalFitRunner),
+    Parametric {
+        runner: IncrementalFitRunner,
+        normalization: Option<ParametricNormalization>,
+    },
     Spline(IncrementalSplineFitRunner),
 }
 
@@ -520,6 +535,7 @@ pub struct CurveFitApp {
     optimizer_method: OptimizerMethod,
     optimizer_mode: OptimizerUiMode,
     optimization_loss_metric: OptimizationLossMetric,
+    normalize_parametric_data: bool,
     lbfgs_inputs: LbfgsInputState,
     lbfgs_preset: OptimizerPreset,
     nelder_mead_inputs: NelderMeadInputState,
@@ -779,13 +795,7 @@ impl CurveFitApp {
 
     fn spline_family_and_init_config(&self) -> Option<(SplineFamilyKind, SplineConfig)> {
         let model = self.resolved_model();
-        let family = match model {
-            ResolvedModel::LinearSpline => SplineFamilyKind::Linear,
-            ResolvedModel::MonotoneCubicSpline => SplineFamilyKind::MonotoneCubic,
-            ResolvedModel::NaturalCubicSpline => SplineFamilyKind::NaturalCubic,
-            ResolvedModel::AkimaSpline => SplineFamilyKind::Akima,
-            ResolvedModel::Parametric(_) => return None,
-        };
+        let family = model.spline_family()?;
         let config = self.spline_config_for_model(model, 2)?;
         Some((family, config))
     }
@@ -1085,6 +1095,7 @@ impl Default for CurveFitApp {
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,
             optimization_loss_metric: OptimizationLossMetric::default(),
+            normalize_parametric_data: false,
             lbfgs_inputs: LbfgsInputState::from_config(&default_lbfgs),
             lbfgs_preset: infer_lbfgs_preset(&default_lbfgs),
             nelder_mead_inputs: NelderMeadInputState::from_config(&default_nelder_mead),

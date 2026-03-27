@@ -1970,16 +1970,17 @@ impl Gradient for SplineProblem {
     type Gradient = Vec<f64>;
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
-        let base_cost = self.evaluate_objective(param);
         let mut probe = param.clone();
         let mut gradient = vec![0.0; param.len()];
         for (index, gradient_value) in gradient.iter_mut().enumerate() {
-            // Численный градиент по прямой схеме конечной разности.
+            // Численный градиент по центральной схеме конечной разности.
             let step = ((param[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
             probe[index] = param[index] + step;
             let cost_plus = self.evaluate_objective(&probe);
+            probe[index] = param[index] - step;
+            let cost_minus = self.evaluate_objective(&probe);
             probe[index] = param[index];
-            let derivative = (cost_plus - base_cost) / step;
+            let derivative = (cost_plus - cost_minus) / (2.0 * step);
             *gradient_value = if derivative.is_finite() {
                 derivative
             } else {

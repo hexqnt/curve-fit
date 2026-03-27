@@ -134,7 +134,6 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             ),
         );
     }
-
     let can_fill_with_residuals = can_edit_points && !app.residual_plot_points.is_empty();
     ui.horizontal(|ui| {
         if ui
@@ -200,8 +199,21 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         "Example:\n0.0 1.5\n0.5\t2.0\n1.0;2.8",
         "Пример:\n0.0 1.5\n0.5\t2.0\n1.0;2.8",
     );
-    let text_height = ui.available_height();
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
+    let body_height = ui.text_style_height(&egui::TextStyle::Body).max(1.0);
+    let small_height = ui.text_style_height(&egui::TextStyle::Small).max(1.0);
+    // Резервируем место под нижний блок (переключатель нормализации и служебные подписи),
+    // чтобы поле ввода точек не вытесняло его за пределы видимой области.
+    let footer_reserved_height = body_height
+        + small_height
+        + if app.fit_in_progress {
+            body_height
+        } else {
+            0.0
+        }
+        + ui.spacing().item_spacing.y * 4.0
+        + 16.0;
+    let text_height = (ui.available_height() - footer_reserved_height).max(row_height * 6.0);
     let desired_rows = (text_height / row_height).floor().max(1.0) as usize;
     egui::ScrollArea::vertical()
         .id_salt("points_text_scroll")
@@ -269,6 +281,27 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             format!("{POINTS_PARSE_ERROR_PREFIX}{error}"),
         );
     }
+
+    ui.separator();
+    ui.add_enabled_ui(can_edit_points, |ui| {
+        CurveFitApp::toggle_switch_labeled(
+            ui,
+            &mut app.normalize_parametric_data,
+            tr(
+                language,
+                "Normalize x/y before fit (parametric models)",
+                "Нормализовать x/y перед фитингом (параметрические модели)",
+            ),
+        );
+    });
+    ui.label(
+        egui::RichText::new(tr(
+            language,
+            "Optimization remains iterative; displayed parameters/metrics stay in original units.",
+            "Оптимизация остается итерационной; параметры и метрики в интерфейсе остаются в исходных единицах.",
+        ))
+        .small(),
+    );
 
     if app.fit_in_progress {
         ui.label(tr(
