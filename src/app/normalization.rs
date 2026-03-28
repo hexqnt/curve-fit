@@ -138,6 +138,19 @@ impl ParametricNormalization {
                         values[4] *= y_scale;
                     }
                 }
+                CurveFamily::DampedSinusoid => {
+                    if to_normalized {
+                        values[0] /= y_scale;
+                        values[1] *= x_scale;
+                        values[2] *= x_scale;
+                        values[4] /= y_scale;
+                    } else {
+                        values[0] *= y_scale;
+                        values[1] /= x_scale;
+                        values[2] /= x_scale;
+                        values[4] *= y_scale;
+                    }
+                }
                 CurveFamily::Lorentzian => {
                     if to_normalized {
                         values[0] /= y_scale;

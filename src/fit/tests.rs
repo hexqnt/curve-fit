@@ -534,6 +534,32 @@ fn lbfgs_fits_bi_exponential_data() {
 }
 
 #[test]
+fn lbfgs_fits_damped_sinusoid_data() {
+    let points = build_points(
+        &[
+            0.0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1, 2.4, 2.7, 3.0, 3.3, 3.6,
+        ],
+        |x| 1.9 * (-0.25 * x).exp() * (2.4 * x + 0.35).sin() - 0.2,
+    );
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::DampedSinusoid,
+        CurveParams::DampedSinusoid {
+            a: 1.4,
+            k: 0.2,
+            omega: 2.0,
+            phi: 0.0,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("damped sinusoid fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
 fn lbfgs_fits_lorentzian_data() {
     let points = build_points(&[-2.0, -1.0, -0.4, 0.0, 0.4, 1.0, 2.0], |x| {
         0.4 + 2.5 / (1.0 + ((x - 0.3) / 0.8).powi(2))

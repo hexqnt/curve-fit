@@ -631,6 +631,8 @@ fn param_init_method_support_matrix_is_correct() {
     assert!(ParamInitMethod::Default.is_supported_for_family(CurveFamily::Arrhenius));
     assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Linear));
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::Power));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::BiExponential));
+    assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::DampedSinusoid));
 
     assert!(!ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Arrhenius));
     assert!(!ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::FourPl));
@@ -658,6 +660,49 @@ fn data_based_power_initialization_rejects_non_positive_y() {
         .expect_err("y <= 0 must be rejected for Power data-based init");
 
     assert!(error.contains("requires y > 0"));
+}
+
+#[test]
+fn data_based_bi_exponential_initialization_returns_finite_values() {
+    let points = points_from_pairs(&[
+        (0.0, 2.7),
+        (0.4, 2.1),
+        (0.9, 1.5),
+        (1.6, 1.0),
+        (2.3, 0.7),
+        (3.2, 0.5),
+    ]);
+    let params = data_based_params_for_family(CurveFamily::BiExponential, &points)
+        .expect("must initialize bi-exponential params");
+    let values = params.values();
+
+    assert_eq!(values.len(), CurveFamily::BiExponential.parameter_count());
+    assert!(values.iter().all(|value| value.is_finite()));
+    assert!(values[1] > 0.0, "k1 must be positive");
+    assert!(values[3] > 0.0, "k2 must be positive");
+}
+
+#[test]
+fn data_based_damped_sinusoid_initialization_returns_finite_values() {
+    let points = points_from_pairs(&[
+        (0.0, 0.6),
+        (0.5, 1.2),
+        (1.0, 0.3),
+        (1.5, -0.8),
+        (2.0, -0.5),
+        (2.5, 0.4),
+        (3.0, 0.7),
+        (3.5, 0.1),
+        (4.0, -0.4),
+    ]);
+    let params = data_based_params_for_family(CurveFamily::DampedSinusoid, &points)
+        .expect("must initialize damped sinusoid params");
+    let values = params.values();
+
+    assert_eq!(values.len(), CurveFamily::DampedSinusoid.parameter_count());
+    assert!(values.iter().all(|value| value.is_finite()));
+    assert!(values[1] > 0.0, "k must be positive");
+    assert!(values[2] > 0.0, "omega must be positive");
 }
 
 #[test]

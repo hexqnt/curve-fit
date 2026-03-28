@@ -101,6 +101,10 @@ fn eval_bi_exponential(a1: f64, k1: f64, a2: f64, k2: f64, c: f64, x: f64) -> f6
     a1 * (-k1 * x).exp() + a2 * (-k2 * x).exp() + c
 }
 
+fn eval_damped_sinusoid(a: f64, k: f64, omega: f64, phi: f64, c: f64, x: f64) -> f64 {
+    a * (-k * x).exp() * (omega * x + phi).sin() + c
+}
+
 fn eval_hyperbolic_tangent(a: f64, b: f64, c: f64, d: f64, x: f64) -> f64 {
     a * (b * (x - c)).tanh() + d
 }
@@ -240,6 +244,7 @@ pub enum CurveFamily {
     Logistic,
     Gompertz,
     BiExponential,
+    DampedSinusoid,
     Lorentzian,
     NaturalLog,
     FourPl,
@@ -258,7 +263,7 @@ pub enum CurveFamily {
 
 impl CurveFamily {
     /// Полный список семейств в стабильном порядке для UI и переборов.
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::Linear,
         Self::Quadratic,
         Self::Cubic,
@@ -273,6 +278,7 @@ impl CurveFamily {
         Self::Logistic,
         Self::Gompertz,
         Self::BiExponential,
+        Self::DampedSinusoid,
         Self::Lorentzian,
         Self::NaturalLog,
         Self::FourPl,
@@ -306,6 +312,7 @@ impl CurveFamily {
             Self::Logistic => "Logistic",
             Self::Gompertz => "Gompertz",
             Self::BiExponential => "Bi-Exponential",
+            Self::DampedSinusoid => "Damped Sinusoid",
             Self::Lorentzian => "Lorentzian",
             Self::NaturalLog => "Natural Log",
             Self::FourPl => "4PL",
@@ -340,6 +347,7 @@ impl CurveFamily {
             Self::Logistic => &["A", "B", "C"],
             Self::Gompertz => &["A", "B", "C"],
             Self::BiExponential => &["a1", "k1", "a2", "k2", "c"],
+            Self::DampedSinusoid => &["a", "k", "omega", "phi", "c"],
             Self::Lorentzian => &["A", "x0", "gamma", "C"],
             Self::NaturalLog => &["A", "B"],
             Self::FourPl => &["a", "b", "c", "d"],
@@ -395,7 +403,7 @@ impl CurveFamily {
             | Self::HyperbolicTangent
             | Self::ArctangentStep
             | Self::Softplus => 4,
-            Self::BiExponential | Self::FivePl | Self::Quartic => 5,
+            Self::BiExponential | Self::DampedSinusoid | Self::FivePl | Self::Quartic => 5,
             Self::Quintic => 6,
             Self::Sextic => 7,
             Self::Septic => 8,
@@ -540,6 +548,13 @@ impl CurveFamily {
                 k2: 0.2,
                 c: 0.0,
             },
+            Self::DampedSinusoid => CurveParams::DampedSinusoid {
+                a: 1.0,
+                k: 0.2,
+                omega: 2.0,
+                phi: 0.0,
+                c: 0.0,
+            },
             Self::Lorentzian => CurveParams::Lorentzian {
                 a: 1.0,
                 x0: 0.0,
@@ -626,6 +641,9 @@ impl CurveFamily {
             Self::Gompertz => eval_gompertz(params[0], params[1], params[2], x),
             Self::BiExponential => {
                 eval_bi_exponential(params[0], params[1], params[2], params[3], params[4], x)
+            }
+            Self::DampedSinusoid => {
+                eval_damped_sinusoid(params[0], params[1], params[2], params[3], params[4], x)
             }
             Self::Lorentzian => eval_lorentzian(params[0], params[1], params[2], params[3], x),
             Self::NaturalLog => eval_natural_log(params[0], params[1], x),
@@ -761,6 +779,13 @@ pub enum CurveParams {
         k2: f64,
         c: f64,
     },
+    DampedSinusoid {
+        a: f64,
+        k: f64,
+        omega: f64,
+        phi: f64,
+        c: f64,
+    },
     Lorentzian {
         a: f64,
         x0: f64,
@@ -856,6 +881,7 @@ impl CurveParams {
             Self::Logistic { .. } => CurveFamily::Logistic,
             Self::Gompertz { .. } => CurveFamily::Gompertz,
             Self::BiExponential { .. } => CurveFamily::BiExponential,
+            Self::DampedSinusoid { .. } => CurveFamily::DampedSinusoid,
             Self::Lorentzian { .. } => CurveFamily::Lorentzian,
             Self::NaturalLog { .. } => CurveFamily::NaturalLog,
             Self::FourPl { .. } => CurveFamily::FourPl,
@@ -928,6 +954,13 @@ impl CurveParams {
             Self::Logistic { a, b, c } => vec![*a, *b, *c],
             Self::Gompertz { a, b, c } => vec![*a, *b, *c],
             Self::BiExponential { a1, k1, a2, k2, c } => vec![*a1, *k1, *a2, *k2, *c],
+            Self::DampedSinusoid {
+                a,
+                k,
+                omega,
+                phi,
+                c,
+            } => vec![*a, *k, *omega, *phi, *c],
             Self::Lorentzian { a, x0, gamma, c } => vec![*a, *x0, *gamma, *c],
             Self::NaturalLog { a, b } => vec![*a, *b],
             Self::FourPl { a, b, c, d } => vec![*a, *b, *c, *d],
@@ -1002,6 +1035,13 @@ impl CurveParams {
             Self::BiExponential { a1, k1, a2, k2, c } => {
                 eval_bi_exponential(*a1, *k1, *a2, *k2, *c, x)
             }
+            Self::DampedSinusoid {
+                a,
+                k,
+                omega,
+                phi,
+                c,
+            } => eval_damped_sinusoid(*a, *k, *omega, *phi, *c, x),
             Self::Lorentzian { a, x0, gamma, c } => eval_lorentzian(*a, *x0, *gamma, *c, x),
             Self::NaturalLog { a, b } => eval_natural_log(*a, *b, x),
             Self::FourPl { a, b, c, d } => eval_four_pl(*a, *b, *c, *d, x),
@@ -1141,6 +1181,13 @@ impl CurveParams {
                 k1: values[1],
                 a2: values[2],
                 k2: values[3],
+                c: values[4],
+            },
+            CurveFamily::DampedSinusoid => Self::DampedSinusoid {
+                a: values[0],
+                k: values[1],
+                omega: values[2],
+                phi: values[3],
                 c: values[4],
             },
             CurveFamily::Lorentzian => Self::Lorentzian {

@@ -23,6 +23,7 @@ pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
             CurveFamily::Logistic
                 | CurveFamily::Gompertz
                 | CurveFamily::BiExponential
+                | CurveFamily::DampedSinusoid
                 | CurveFamily::Gaussian
                 | CurveFamily::ExponentialBasic
                 | CurveFamily::Power
@@ -44,6 +45,7 @@ pub(super) fn data_based_params_for_family(
         CurveFamily::Logistic => data_based_logistic_params(points),
         CurveFamily::Gompertz => data_based_gompertz_params(points),
         CurveFamily::BiExponential => data_based_bi_exponential_params(points),
+        CurveFamily::DampedSinusoid => data_based_damped_sinusoid_params(points),
         CurveFamily::Gaussian => data_based_gaussian_params(points),
         CurveFamily::ExponentialBasic => data_based_exponential_basic_params(points),
         CurveFamily::Power => data_based_power_params(points),
@@ -93,6 +95,34 @@ fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, Stri
 
     CurveParams::try_from_values(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c])
         .map_err(|error| error.to_string())
+}
+
+fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, String> {
+    let sorted = sorted_by_x(points);
+    let first = sorted[0];
+    let last = sorted[sorted.len() - 1];
+    let x_span = (last.x() - first.x()).abs().max(PARAM_INIT_SPAN_EPS);
+    let (_, _, y_min, y_max, _) = point_extrema(points);
+    let center = mean_y(points);
+    let amplitude = ((y_max - y_min) * 0.5).abs().max(PARAM_INIT_SPAN_EPS);
+    let k = 0.5 / x_span;
+    let zero_crossings = count_centered_sign_changes(&sorted, center);
+    let omega = if zero_crossings > 0 {
+        std::f64::consts::PI * zero_crossings as f64 / x_span
+    } else {
+        std::f64::consts::TAU / x_span
+    };
+    let denom = (amplitude * (-k * first.x()).exp())
+        .abs()
+        .max(PARAM_INIT_SPAN_EPS);
+    let ratio = ((first.y() - center) / denom).clamp(-1.0, 1.0);
+    let phi = ratio.asin() - omega * first.x();
+
+    CurveParams::try_from_values(
+        CurveFamily::DampedSinusoid,
+        vec![amplitude, k, omega, phi, center],
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn data_based_gaussian_params(points: &Points) -> Result<CurveParams, String> {
@@ -224,4 +254,29 @@ fn y_at_x_bounds(points: &Points) -> (f64, f64) {
     }
 
     (y_at_min_x, y_at_max_x)
+}
+
+fn mean_y(points: &Points) -> f64 {
+    points.as_slice().iter().map(|point| point.y()).sum::<f64>() / points.len() as f64
+}
+
+fn sorted_by_x(points: &Points) -> Vec<crate::domain::Point> {
+    let mut sorted = points.as_slice().to_vec();
+    sorted.sort_by(|left, right| left.x().total_cmp(&right.x()));
+    sorted
+}
+
+fn count_centered_sign_changes(sorted: &[crate::domain::Point], center: f64) -> usize {
+    let mut sign_changes = 0_usize;
+    let mut previous = sorted[0].y() - center;
+    for point in sorted.iter().skip(1) {
+        let current = point.y() - center;
+        if previous * current < 0.0 {
+            sign_changes += 1;
+        }
+        if current.abs() > PARAM_INIT_SPAN_EPS {
+            previous = current;
+        }
+    }
+    sign_changes
 }

@@ -212,6 +212,7 @@ enum ModelChoice {
     Logistic,
     Gompertz,
     BiExponential,
+    DampedSinusoid,
     Lorentzian,
     NaturalLog,
     FourPl,
@@ -233,13 +234,14 @@ enum ModelChoice {
 }
 
 impl ModelChoice {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 25] = [
         Self::Polynomial,
         Self::Arrhenius,
         Self::Inverse,
         Self::Logistic,
         Self::Gompertz,
         Self::BiExponential,
+        Self::DampedSinusoid,
         Self::Lorentzian,
         Self::NaturalLog,
         Self::FourPl,
@@ -283,6 +285,7 @@ impl ResolvedModel {
             ModelChoice::Logistic => Self::Parametric(CurveFamily::Logistic),
             ModelChoice::Gompertz => Self::Parametric(CurveFamily::Gompertz),
             ModelChoice::BiExponential => Self::Parametric(CurveFamily::BiExponential),
+            ModelChoice::DampedSinusoid => Self::Parametric(CurveFamily::DampedSinusoid),
             ModelChoice::Lorentzian => Self::Parametric(CurveFamily::Lorentzian),
             ModelChoice::NaturalLog => Self::Parametric(CurveFamily::NaturalLog),
             ModelChoice::FourPl => Self::Parametric(CurveFamily::FourPl),
@@ -371,6 +374,7 @@ fn model_group(model: ModelChoice) -> ModelGroup {
         ModelChoice::Arrhenius
         | ModelChoice::Inverse
         | ModelChoice::BiExponential
+        | ModelChoice::DampedSinusoid
         | ModelChoice::NaturalLog
         | ModelChoice::MichaelisMenten
         | ModelChoice::ExponentialBasic

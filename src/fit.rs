@@ -1786,6 +1786,23 @@ impl Gradient for CurveProblem {
                     gradient[4] += residual;
                 }
             }
+            CurveFamily::DampedSinusoid => {
+                for point in points {
+                    let x = point.x();
+                    let exp_part = (-param[1] * x).exp();
+                    let angle = param[2] * x + param[3];
+                    let sin_part = angle.sin();
+                    let cos_part = angle.cos();
+                    let model = param[0] * exp_part * sin_part + param[4];
+                    let residual = self.loss_metric.residual_derivative(model - point.y());
+
+                    gradient[0] += residual * exp_part * sin_part;
+                    gradient[1] += residual * (-param[0] * x * exp_part * sin_part);
+                    gradient[2] += residual * (param[0] * exp_part * cos_part * x);
+                    gradient[3] += residual * (param[0] * exp_part * cos_part);
+                    gradient[4] += residual;
+                }
+            }
             CurveFamily::Lorentzian => {
                 for point in points {
                     let a = param[0];

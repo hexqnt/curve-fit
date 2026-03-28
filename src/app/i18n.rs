@@ -190,17 +190,17 @@ pub(super) fn param_init_method_disabled_label(
 ) -> &'static str {
     match (language, method) {
         (UiLanguage::English, ParamInitMethod::DataBased) => {
-            "Data-based (Polynomial/Logistic/Gompertz/Bi-Exponential/Gaussian/Exponential (Basic)/Power only)"
+            "Data-based (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power only)"
         }
         (UiLanguage::English, ParamInitMethod::Randomized) => {
-            "Randomized (Polynomial/Logistic/Gompertz/Bi-Exponential/Gaussian/Exponential (Basic)/Power only)"
+            "Randomized (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power only)"
         }
         (UiLanguage::English, ParamInitMethod::Default) => "Default",
         (UiLanguage::Russian, ParamInitMethod::DataBased) => {
-            "По данным (только Polynomial/Logistic/Gompertz/Bi-Exponential/Gaussian/Exponential (Basic)/Power)"
+            "По данным (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power)"
         }
         (UiLanguage::Russian, ParamInitMethod::Randomized) => {
-            "Случайно (только Polynomial/Logistic/Gompertz/Bi-Exponential/Gaussian/Exponential (Basic)/Power)"
+            "Случайно (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power)"
         }
         (UiLanguage::Russian, ParamInitMethod::Default) => "По умолчанию",
     }
@@ -214,6 +214,7 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::English, ModelChoice::Logistic) => "Logistic",
         (UiLanguage::English, ModelChoice::Gompertz) => "Gompertz",
         (UiLanguage::English, ModelChoice::BiExponential) => "Bi-Exponential",
+        (UiLanguage::English, ModelChoice::DampedSinusoid) => "Damped Sinusoid",
         (UiLanguage::English, ModelChoice::Lorentzian) => "Lorentzian",
         (UiLanguage::English, ModelChoice::NaturalLog) => "Natural Log",
         (UiLanguage::English, ModelChoice::FourPl) => "4PL",
@@ -238,6 +239,7 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::Russian, ModelChoice::Logistic) => "Логистическая",
         (UiLanguage::Russian, ModelChoice::Gompertz) => "Гомпертц",
         (UiLanguage::Russian, ModelChoice::BiExponential) => "Би-экспонента",
+        (UiLanguage::Russian, ModelChoice::DampedSinusoid) => "Затухающая синусоида",
         (UiLanguage::Russian, ModelChoice::Lorentzian) => "Лоренциан",
         (UiLanguage::Russian, ModelChoice::NaturalLog) => "Натуральный логарифм",
         (UiLanguage::Russian, ModelChoice::FourPl) => "4PL",
@@ -275,6 +277,7 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::English, CurveFamily::Logistic) => "Logistic",
         (UiLanguage::English, CurveFamily::Gompertz) => "Gompertz",
         (UiLanguage::English, CurveFamily::BiExponential) => "Bi-Exponential",
+        (UiLanguage::English, CurveFamily::DampedSinusoid) => "Damped Sinusoid",
         (UiLanguage::English, CurveFamily::Lorentzian) => "Lorentzian",
         (UiLanguage::English, CurveFamily::NaturalLog) => "Natural Log",
         (UiLanguage::English, CurveFamily::FourPl) => "4PL",
@@ -303,6 +306,7 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::Russian, CurveFamily::Logistic) => "Логистическая",
         (UiLanguage::Russian, CurveFamily::Gompertz) => "Гомпертц",
         (UiLanguage::Russian, CurveFamily::BiExponential) => "Би-экспонента",
+        (UiLanguage::Russian, CurveFamily::DampedSinusoid) => "Затухающая синусоида",
         (UiLanguage::Russian, CurveFamily::Lorentzian) => "Лоренциан",
         (UiLanguage::Russian, CurveFamily::NaturalLog) => "Натуральный логарифм",
         (UiLanguage::Russian, CurveFamily::FourPl) => "4PL",
