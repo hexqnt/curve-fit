@@ -275,6 +275,10 @@ impl From<InputError> for FitError {
     }
 }
 
+fn optimizer_error(error: impl fmt::Display) -> FitError {
+    FitError::Optimizer(error.to_string())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Целевая метрика, по которой оптимизатор минимизирует ошибку.
 pub enum OptimizationLossMetric {
@@ -800,11 +804,11 @@ fn build_line_search(
 ) -> Result<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, FitError> {
     MoreThuenteLineSearch::new()
         .with_c(c1, c2)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_bounds(step_min, step_max)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_width_tolerance(width_tolerance)
-        .map_err(|error| FitError::Optimizer(error.to_string()))
+        .map_err(optimizer_error)
 }
 
 fn build_lbfgs_solver(config: &LbfgsConfig) -> Result<LbfgsSolver, FitError> {
@@ -817,9 +821,9 @@ fn build_lbfgs_solver(config: &LbfgsConfig) -> Result<LbfgsSolver, FitError> {
     )?;
     LBFGS::new(line_search, config.history_size)
         .with_tolerance_grad(config.tol_grad)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_tolerance_cost(config.tol_cost)
-        .map_err(|error| FitError::Optimizer(error.to_string()))
+        .map_err(optimizer_error)
 }
 
 fn build_steepest_descent_solver(
@@ -846,7 +850,7 @@ fn build_newton_cg_solver(config: &NewtonCgConfig) -> Result<NewtonCgSolver, Fit
     NewtonCG::new(line_search)
         .with_curvature_threshold(config.curvature_threshold)
         .with_tolerance(config.tol)
-        .map_err(|error| FitError::Optimizer(error.to_string()))
+        .map_err(optimizer_error)
 }
 
 fn nelder_mead_simplex(
@@ -854,8 +858,8 @@ fn nelder_mead_simplex(
     simplex_scale: f64,
 ) -> Result<Vec<Vec<f64>>, FitError> {
     if initial_param.is_empty() {
-        return Err(FitError::Optimizer(
-            "Nelder-Mead requires at least one optimization parameter".to_string(),
+        return Err(optimizer_error(
+            "Nelder-Mead requires at least one optimization parameter",
         ));
     }
 
@@ -878,15 +882,15 @@ fn build_nelder_mead_solver(
     let simplex = nelder_mead_simplex(initial_param, config.simplex_scale)?;
     NelderMead::new(simplex)
         .with_sd_tolerance(config.sd_tolerance)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_alpha(config.alpha)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_gamma(config.gamma)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_rho(config.rho)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?
+        .map_err(optimizer_error)?
         .with_sigma(config.sigma)
-        .map_err(|error| FitError::Optimizer(error.to_string()))
+        .map_err(optimizer_error)
 }
 
 fn build_sgd_solver(initial_param: &[f64], config: &SgdConfig) -> SgdSolver {
@@ -932,9 +936,7 @@ fn build_stochastic_state<O>(
 where
     O: CostFunction<Param = Vec<f64>, Output = f64>,
 {
-    let cost = problem
-        .cost(&initial_param)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+    let cost = problem.cost(&initial_param).map_err(optimizer_error)?;
     Ok(StochasticState {
         current_param: initial_param.clone(),
         best_param: initial_param,
@@ -959,15 +961,11 @@ where
 {
     let gradient = problem
         .gradient(&state.current_param)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+        .map_err(optimizer_error)?;
     solver.step(&gradient);
 
     let current_param = solver.parameters().clone();
-    let current_cost = finite_cost_or_large(
-        problem
-            .cost(&current_param)
-            .map_err(|error| FitError::Optimizer(error.to_string()))?,
-    );
+    let current_cost = finite_cost_or_large(problem.cost(&current_param).map_err(optimizer_error)?);
 
     if current_cost < state.best_cost {
         state.best_cost = current_cost;
@@ -1047,9 +1045,7 @@ where
     let Some(param) = state.get_param().cloned() else {
         return Ok(state);
     };
-    let gradient = problem
-        .gradient(&param)
-        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+    let gradient = problem.gradient(&param).map_err(optimizer_error)?;
     state = state.gradient(gradient.clone());
     if gradient_l2_norm(&gradient) <= STEEPEST_DESCENT_GRAD_TOL {
         state = state.terminate_with(TerminationReason::SolverConverged);
@@ -1111,9 +1107,7 @@ impl IncrementalFitRunner {
                 let state = IterState::new()
                     .param(initial_values.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::Lbfgs(state)
@@ -1122,27 +1116,21 @@ impl IncrementalFitRunner {
                 let state = IterState::new()
                     .param(initial_values.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::NelderMead(state)
             }
             OptimizerSolver::SteepestDescent(solver) => {
                 let state = IterState::new().param(initial_values).max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::SteepestDescent(state)
             }
             OptimizerSolver::NewtonCg(solver) => {
                 let state = IterState::new().param(initial_values).max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::NewtonCg(state)
@@ -1206,7 +1194,7 @@ impl IncrementalFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::Lbfgs(state)
@@ -1229,7 +1217,7 @@ impl IncrementalFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::NelderMead(state)
@@ -1256,7 +1244,7 @@ impl IncrementalFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::SteepestDescent(state)
@@ -1279,7 +1267,7 @@ impl IncrementalFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::NewtonCg(state)
@@ -1301,8 +1289,8 @@ impl IncrementalFitRunner {
                     OptimizerState::Adam(state)
                 }
                 _ => {
-                    return Err(FitError::Optimizer(
-                        "Optimizer solver/state mismatch in incremental fit runner".to_string(),
+                    return Err(optimizer_error(
+                        "Optimizer solver/state mismatch in incremental fit runner",
                     ));
                 }
             };
@@ -1422,9 +1410,7 @@ impl IncrementalSplineFitRunner {
                 let state = IterState::new()
                     .param(prepared.initial_y.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::Lbfgs(state)
@@ -1433,9 +1419,7 @@ impl IncrementalSplineFitRunner {
                 let state = IterState::new()
                     .param(prepared.initial_y.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::NelderMead(state)
@@ -1444,9 +1428,7 @@ impl IncrementalSplineFitRunner {
                 let state = IterState::new()
                     .param(prepared.initial_y.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::SteepestDescent(state)
@@ -1455,9 +1437,7 @@ impl IncrementalSplineFitRunner {
                 let state = IterState::new()
                     .param(prepared.initial_y.clone())
                     .max_iters(max_iters);
-                let (mut state, _) = solver
-                    .init(&mut problem, state)
-                    .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::NewtonCg(state)
@@ -1519,7 +1499,7 @@ impl IncrementalSplineFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::Lbfgs(state)
@@ -1542,7 +1522,7 @@ impl IncrementalSplineFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::NelderMead(state)
@@ -1569,7 +1549,7 @@ impl IncrementalSplineFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::SteepestDescent(state)
@@ -1592,7 +1572,7 @@ impl IncrementalSplineFitRunner {
                     }
                     let (mut state, _) = solver
                         .next_iter(&mut self.problem, state)
-                        .map_err(|error| FitError::Optimizer(error.to_string()))?;
+                        .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
                     OptimizerState::NewtonCg(state)
@@ -1614,8 +1594,8 @@ impl IncrementalSplineFitRunner {
                     OptimizerState::Adam(state)
                 }
                 _ => {
-                    return Err(FitError::Optimizer(
-                        "Optimizer solver/state mismatch in incremental spline runner".to_string(),
+                    return Err(optimizer_error(
+                        "Optimizer solver/state mismatch in incremental spline runner",
                     ));
                 }
             };

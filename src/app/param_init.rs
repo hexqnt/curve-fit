@@ -55,6 +55,10 @@ pub(super) fn data_based_params_for_family(
     }
 }
 
+fn build_curve_params(family: CurveFamily, values: Vec<f64>) -> Result<CurveParams, String> {
+    CurveParams::try_from_values(family, values).map_err(|error| error.to_string())
+}
+
 fn data_based_polynomial_params(
     family: CurveFamily,
     points: &Points,
@@ -64,19 +68,17 @@ fn data_based_polynomial_params(
     let mut values = vec![0.0; parameter_count];
     values[parameter_count - 2] = slope;
     values[parameter_count - 1] = intercept;
-    CurveParams::try_from_values(family, values).map_err(|error| error.to_string())
+    build_curve_params(family, values)
 }
 
 fn data_based_logistic_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    CurveParams::try_from_values(CurveFamily::Logistic, vec![a, b, c])
-        .map_err(|error| error.to_string())
+    build_curve_params(CurveFamily::Logistic, vec![a, b, c])
 }
 
 fn data_based_gompertz_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    CurveParams::try_from_values(CurveFamily::Gompertz, vec![a, b, c])
-        .map_err(|error| error.to_string())
+    build_curve_params(CurveFamily::Gompertz, vec![a, b, c])
 }
 
 fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, String> {
@@ -93,8 +95,7 @@ fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, Stri
     let k2 = 0.5 / x_span;
     let c = y_at_max_x;
 
-    CurveParams::try_from_values(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c])
-        .map_err(|error| error.to_string())
+    build_curve_params(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c])
 }
 
 fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, String> {
@@ -118,19 +119,17 @@ fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, Str
     let ratio = ((first.y() - center) / denom).clamp(-1.0, 1.0);
     let phi = ratio.asin() - omega * first.x();
 
-    CurveParams::try_from_values(
+    build_curve_params(
         CurveFamily::DampedSinusoid,
         vec![amplitude, k, omega, phi, center],
     )
-    .map_err(|error| error.to_string())
 }
 
 fn data_based_gaussian_params(points: &Points) -> Result<CurveParams, String> {
     let (x_min, x_max, _, y_max, x_at_y_max) = point_extrema(points);
     let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
     let sigma = (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
-    CurveParams::try_from_values(CurveFamily::Gaussian, vec![y_max, x_at_y_max, sigma])
-        .map_err(|error| error.to_string())
+    build_curve_params(CurveFamily::Gaussian, vec![y_max, x_at_y_max, sigma])
 }
 
 fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, String> {
@@ -140,44 +139,23 @@ fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, S
     if amplitude.abs() < PARAM_INIT_SPAN_EPS {
         amplitude = 1.0;
     }
-    CurveParams::try_from_values(
+    build_curve_params(
         CurveFamily::ExponentialBasic,
         vec![y_min, amplitude, 1.0 / x_span],
     )
-    .map_err(|error| error.to_string())
 }
 
 fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    let mut sum_xx = 0.0;
-    let mut sum_xy = 0.0;
-    let sample_count = points.len() as f64;
-
-    for point in points.as_slice() {
+    let (slope, intercept) = linear_regression_by(points, |point| {
         if point.x() <= 0.0 {
             return Err("Data-based initialization for family Power requires x > 0".to_string());
         }
         if point.y() <= 0.0 {
             return Err("Data-based initialization for family Power requires y > 0".to_string());
         }
-        let log_x = point.x().ln();
-        let log_y = point.y().ln();
-        sum_x += log_x;
-        sum_y += log_y;
-        sum_xx += log_x * log_x;
-        sum_xy += log_x * log_y;
-    }
-
-    let denominator = sample_count * sum_xx - sum_x * sum_x;
-    let slope = if denominator.abs() <= PARAM_INIT_SPAN_EPS {
-        0.0
-    } else {
-        (sample_count * sum_xy - sum_x * sum_y) / denominator
-    };
-    let intercept = (sum_y - slope * sum_x) / sample_count;
-    CurveParams::try_from_values(CurveFamily::Power, vec![intercept.exp(), slope])
-        .map_err(|error| error.to_string())
+        Ok((point.x().ln(), point.y().ln()))
+    })?;
+    build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope])
 }
 
 fn data_based_sigmoid_abc(points: &Points) -> (f64, f64, f64) {
@@ -187,6 +165,13 @@ fn data_based_sigmoid_abc(points: &Points) -> (f64, f64, f64) {
 }
 
 fn linear_regression(points: &Points) -> Result<(f64, f64), String> {
+    linear_regression_by(points, |point| Ok((point.x(), point.y())))
+}
+
+fn linear_regression_by<F>(points: &Points, mut map_point: F) -> Result<(f64, f64), String>
+where
+    F: FnMut(crate::domain::Point) -> Result<(f64, f64), String>,
+{
     if points.len() < 2 {
         return Err("Linear regression requires at least two points".to_string());
     }
@@ -197,11 +182,12 @@ fn linear_regression(points: &Points) -> Result<(f64, f64), String> {
     let mut sum_xy = 0.0;
     let sample_count = points.len() as f64;
 
-    for point in points.as_slice() {
-        sum_x += point.x();
-        sum_y += point.y();
-        sum_xx += point.x() * point.x();
-        sum_xy += point.x() * point.y();
+    for point in points.as_slice().iter().copied() {
+        let (x, y) = map_point(point)?;
+        sum_x += x;
+        sum_y += y;
+        sum_xx += x * x;
+        sum_xy += x * y;
     }
 
     let denominator = sample_count * sum_xx - sum_x * sum_x;

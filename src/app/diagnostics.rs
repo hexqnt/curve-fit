@@ -95,27 +95,27 @@ impl IterationDiagnostics {
     fn reset_for_family(&mut self, family: CurveFamily) {
         self.family = Some(family);
         self.spline_parameter_count = None;
-        self.clear_metric_points();
-        self.parameter_names = family
-            .parameter_names()
-            .iter()
-            .map(|name| (*name).to_string())
-            .collect();
-        self.parameter_series = (0..self.parameter_names.len())
-            .map(|_| Vec::new())
-            .collect();
+        self.reset_parameter_series(
+            family
+                .parameter_names()
+                .iter()
+                .map(|name| (*name).to_string()),
+        );
     }
 
     fn reset_for_spline(&mut self, parameter_count: usize) {
         self.family = None;
         self.spline_parameter_count = Some(parameter_count);
+        self.reset_parameter_series((0..parameter_count).map(|index| format!("knot_y[{index}]")));
+    }
+
+    fn reset_parameter_series<I>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
         self.clear_metric_points();
-        self.parameter_names = (0..parameter_count)
-            .map(|index| format!("knot_y[{index}]"))
-            .collect();
-        self.parameter_series = (0..self.parameter_names.len())
-            .map(|_| Vec::new())
-            .collect();
+        self.parameter_names = names.into_iter().collect();
+        self.parameter_series = vec![Vec::new(); self.parameter_names.len()];
     }
 
     /// Очищает только временные ряды метрик, не трогая метаданные параметров.

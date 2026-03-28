@@ -504,6 +504,130 @@ impl StatusMessage {
     }
 }
 
+enum ActiveOptimizerView<'a> {
+    Lbfgs {
+        inputs: &'a LbfgsInputState,
+        preset: OptimizerPreset,
+    },
+    NelderMead {
+        inputs: &'a NelderMeadInputState,
+        preset: OptimizerPreset,
+    },
+    SteepestDescent {
+        inputs: &'a SteepestDescentInputState,
+        preset: OptimizerPreset,
+    },
+    NewtonCg {
+        inputs: &'a NewtonCgInputState,
+        preset: OptimizerPreset,
+    },
+    Sgd {
+        inputs: &'a SgdInputState,
+        preset: OptimizerPreset,
+    },
+    Adam {
+        inputs: &'a AdamInputState,
+        preset: OptimizerPreset,
+    },
+}
+
+impl ActiveOptimizerView<'_> {
+    fn preset(self) -> OptimizerPreset {
+        match self {
+            Self::Lbfgs { preset, .. }
+            | Self::NelderMead { preset, .. }
+            | Self::SteepestDescent { preset, .. }
+            | Self::NewtonCg { preset, .. }
+            | Self::Sgd { preset, .. }
+            | Self::Adam { preset, .. } => preset,
+        }
+    }
+
+    fn config(self) -> Result<OptimizerConfig, String> {
+        match self {
+            Self::Lbfgs { inputs, .. } => inputs.to_config().map(OptimizerConfig::Lbfgs),
+            Self::NelderMead { inputs, .. } => inputs.to_config().map(OptimizerConfig::NelderMead),
+            Self::SteepestDescent { inputs, .. } => {
+                inputs.to_config().map(OptimizerConfig::SteepestDescent)
+            }
+            Self::NewtonCg { inputs, .. } => inputs.to_config().map(OptimizerConfig::NewtonCg),
+            Self::Sgd { inputs, .. } => inputs.to_config().map(OptimizerConfig::Sgd),
+            Self::Adam { inputs, .. } => inputs.to_config().map(OptimizerConfig::Adam),
+        }
+    }
+}
+
+enum ActiveOptimizerViewMut<'a> {
+    Lbfgs {
+        inputs: &'a mut LbfgsInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+    NelderMead {
+        inputs: &'a mut NelderMeadInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+    SteepestDescent {
+        inputs: &'a mut SteepestDescentInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+    NewtonCg {
+        inputs: &'a mut NewtonCgInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+    Sgd {
+        inputs: &'a mut SgdInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+    Adam {
+        inputs: &'a mut AdamInputState,
+        preset: &'a mut OptimizerPreset,
+    },
+}
+
+impl ActiveOptimizerViewMut<'_> {
+    fn set_preset(self, value: OptimizerPreset) {
+        match self {
+            Self::Lbfgs { preset, .. }
+            | Self::NelderMead { preset, .. }
+            | Self::SteepestDescent { preset, .. }
+            | Self::NewtonCg { preset, .. }
+            | Self::Sgd { preset, .. }
+            | Self::Adam { preset, .. } => *preset = value,
+        }
+    }
+
+    fn apply_preset(self, value: OptimizerPreset) {
+        match self {
+            Self::Lbfgs { inputs, preset } => {
+                *inputs = LbfgsInputState::from_config(&lbfgs_config_from_preset(value));
+                *preset = value;
+            }
+            Self::NelderMead { inputs, preset } => {
+                *inputs = NelderMeadInputState::from_config(&nelder_mead_config_from_preset(value));
+                *preset = value;
+            }
+            Self::SteepestDescent { inputs, preset } => {
+                *inputs = SteepestDescentInputState::from_config(
+                    &steepest_descent_config_from_preset(value),
+                );
+                *preset = value;
+            }
+            Self::NewtonCg { inputs, preset } => {
+                *inputs = NewtonCgInputState::from_config(&newton_cg_config_from_preset(value));
+                *preset = value;
+            }
+            Self::Sgd { inputs, preset } => {
+                *inputs = SgdInputState::from_config(&sgd_config_from_preset(value));
+                *preset = value;
+            }
+            Self::Adam { inputs, preset } => {
+                *inputs = AdamInputState::from_config(&adam_config_from_preset(value));
+                *preset = value;
+            }
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 enum FitWorkerMessage {
@@ -621,79 +745,78 @@ impl CurveFitApp {
         ResolvedModel::from_choice(self.selected_model, self.polynomial_degree)
     }
 
-    fn selected_optimizer_preset(&self) -> OptimizerPreset {
+    fn active_optimizer_view(&self) -> ActiveOptimizerView<'_> {
         match self.optimizer_method {
-            OptimizerMethod::Lbfgs => self.lbfgs_preset,
-            OptimizerMethod::NelderMead => self.nelder_mead_preset,
-            OptimizerMethod::SteepestDescent => self.steepest_descent_preset,
-            OptimizerMethod::NewtonCg => self.newton_cg_preset,
-            OptimizerMethod::Sgd => self.sgd_preset,
-            OptimizerMethod::Adam => self.adam_preset,
+            OptimizerMethod::Lbfgs => ActiveOptimizerView::Lbfgs {
+                inputs: &self.lbfgs_inputs,
+                preset: self.lbfgs_preset,
+            },
+            OptimizerMethod::NelderMead => ActiveOptimizerView::NelderMead {
+                inputs: &self.nelder_mead_inputs,
+                preset: self.nelder_mead_preset,
+            },
+            OptimizerMethod::SteepestDescent => ActiveOptimizerView::SteepestDescent {
+                inputs: &self.steepest_descent_inputs,
+                preset: self.steepest_descent_preset,
+            },
+            OptimizerMethod::NewtonCg => ActiveOptimizerView::NewtonCg {
+                inputs: &self.newton_cg_inputs,
+                preset: self.newton_cg_preset,
+            },
+            OptimizerMethod::Sgd => ActiveOptimizerView::Sgd {
+                inputs: &self.sgd_inputs,
+                preset: self.sgd_preset,
+            },
+            OptimizerMethod::Adam => ActiveOptimizerView::Adam {
+                inputs: &self.adam_inputs,
+                preset: self.adam_preset,
+            },
         }
+    }
+
+    fn active_optimizer_view_mut(&mut self) -> ActiveOptimizerViewMut<'_> {
+        match self.optimizer_method {
+            OptimizerMethod::Lbfgs => ActiveOptimizerViewMut::Lbfgs {
+                inputs: &mut self.lbfgs_inputs,
+                preset: &mut self.lbfgs_preset,
+            },
+            OptimizerMethod::NelderMead => ActiveOptimizerViewMut::NelderMead {
+                inputs: &mut self.nelder_mead_inputs,
+                preset: &mut self.nelder_mead_preset,
+            },
+            OptimizerMethod::SteepestDescent => ActiveOptimizerViewMut::SteepestDescent {
+                inputs: &mut self.steepest_descent_inputs,
+                preset: &mut self.steepest_descent_preset,
+            },
+            OptimizerMethod::NewtonCg => ActiveOptimizerViewMut::NewtonCg {
+                inputs: &mut self.newton_cg_inputs,
+                preset: &mut self.newton_cg_preset,
+            },
+            OptimizerMethod::Sgd => ActiveOptimizerViewMut::Sgd {
+                inputs: &mut self.sgd_inputs,
+                preset: &mut self.sgd_preset,
+            },
+            OptimizerMethod::Adam => ActiveOptimizerViewMut::Adam {
+                inputs: &mut self.adam_inputs,
+                preset: &mut self.adam_preset,
+            },
+        }
+    }
+
+    fn selected_optimizer_preset(&self) -> OptimizerPreset {
+        self.active_optimizer_view().preset()
     }
 
     fn set_selected_optimizer_preset(&mut self, preset: OptimizerPreset) {
-        match self.optimizer_method {
-            OptimizerMethod::Lbfgs => self.lbfgs_preset = preset,
-            OptimizerMethod::NelderMead => self.nelder_mead_preset = preset,
-            OptimizerMethod::SteepestDescent => self.steepest_descent_preset = preset,
-            OptimizerMethod::NewtonCg => self.newton_cg_preset = preset,
-            OptimizerMethod::Sgd => self.sgd_preset = preset,
-            OptimizerMethod::Adam => self.adam_preset = preset,
-        }
+        self.active_optimizer_view_mut().set_preset(preset);
     }
 
     fn apply_selected_optimizer_preset(&mut self, preset: OptimizerPreset) {
-        match self.optimizer_method {
-            OptimizerMethod::Lbfgs => {
-                self.lbfgs_inputs = LbfgsInputState::from_config(&lbfgs_config_from_preset(preset));
-                self.lbfgs_preset = preset;
-            }
-            OptimizerMethod::NelderMead => {
-                self.nelder_mead_inputs =
-                    NelderMeadInputState::from_config(&nelder_mead_config_from_preset(preset));
-                self.nelder_mead_preset = preset;
-            }
-            OptimizerMethod::SteepestDescent => {
-                self.steepest_descent_inputs = SteepestDescentInputState::from_config(
-                    &steepest_descent_config_from_preset(preset),
-                );
-                self.steepest_descent_preset = preset;
-            }
-            OptimizerMethod::NewtonCg => {
-                self.newton_cg_inputs =
-                    NewtonCgInputState::from_config(&newton_cg_config_from_preset(preset));
-                self.newton_cg_preset = preset;
-            }
-            OptimizerMethod::Sgd => {
-                self.sgd_inputs = SgdInputState::from_config(&sgd_config_from_preset(preset));
-                self.sgd_preset = preset;
-            }
-            OptimizerMethod::Adam => {
-                self.adam_inputs = AdamInputState::from_config(&adam_config_from_preset(preset));
-                self.adam_preset = preset;
-            }
-        }
+        self.active_optimizer_view_mut().apply_preset(preset);
     }
 
     fn optimizer_config(&self) -> Result<OptimizerConfig, String> {
-        match self.optimizer_method {
-            OptimizerMethod::Lbfgs => self.lbfgs_inputs.to_config().map(OptimizerConfig::Lbfgs),
-            OptimizerMethod::NelderMead => self
-                .nelder_mead_inputs
-                .to_config()
-                .map(OptimizerConfig::NelderMead),
-            OptimizerMethod::SteepestDescent => self
-                .steepest_descent_inputs
-                .to_config()
-                .map(OptimizerConfig::SteepestDescent),
-            OptimizerMethod::NewtonCg => self
-                .newton_cg_inputs
-                .to_config()
-                .map(OptimizerConfig::NewtonCg),
-            OptimizerMethod::Sgd => self.sgd_inputs.to_config().map(OptimizerConfig::Sgd),
-            OptimizerMethod::Adam => self.adam_inputs.to_config().map(OptimizerConfig::Adam),
-        }
+        self.active_optimizer_view().config()
     }
 
     fn auto_spline_samples(points_len: usize, knots: usize) -> usize {

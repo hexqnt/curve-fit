@@ -2,6 +2,40 @@ use super::*;
 
 const NORMALIZATION_SCALE_EPS: f64 = 1e-9;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScaleDirection {
+    ToNormalized,
+    FromNormalized,
+}
+
+impl ScaleDirection {
+    fn apply(self, value: f64, factor: f64) -> f64 {
+        match self {
+            Self::ToNormalized => value * factor,
+            Self::FromNormalized => value / factor,
+        }
+    }
+
+    fn error_prefix(self) -> &'static str {
+        match self {
+            Self::ToNormalized => "Failed to normalize parameters",
+            Self::FromNormalized => "Failed to denormalize parameters",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ParamScale {
+    x_exp: i32,
+    y_exp: i32,
+}
+
+impl ParamScale {
+    const fn new(x_exp: i32, y_exp: i32) -> Self {
+        Self { x_exp, y_exp }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Масштабирующая нормализация параметрических моделей без сдвига.
 ///
@@ -52,239 +86,40 @@ impl ParametricNormalization {
 
     /// Переводит параметры из исходного масштаба в нормализованный.
     pub(super) fn normalize_params(self, params: &CurveParams) -> Result<CurveParams, String> {
-        self.transform_params(params, true)
+        self.transform_params(params, ScaleDirection::ToNormalized)
     }
 
     /// Переводит параметры из нормализованного масштаба обратно в исходный.
     pub(super) fn denormalize_params(self, params: &CurveParams) -> Result<CurveParams, String> {
-        self.transform_params(params, false)
+        self.transform_params(params, ScaleDirection::FromNormalized)
     }
 
     fn transform_params(
         self,
         params: &CurveParams,
-        to_normalized: bool,
+        direction: ScaleDirection,
     ) -> Result<CurveParams, String> {
         let family = params.family();
         let mut values = params.values();
-        let x_scale = self.x_scale;
-        let y_scale = self.y_scale;
 
         if family.is_polynomial() {
-            let degree = values.len().saturating_sub(1);
-            for (index, value) in values.iter_mut().enumerate() {
-                let power = (degree - index) as i32;
-                let x_factor = x_scale.powi(power);
-                if to_normalized {
-                    *value = *value * x_factor / y_scale;
-                } else {
-                    *value = *value * y_scale / x_factor;
-                }
+            self.transform_polynomial_params(&mut values, direction);
+        } else if let Some(scales) = Self::static_param_scales(family) {
+            if values.len() != scales.len() {
+                return Err(format!(
+                    "{}: internal scale map mismatch for {} (values={}, scales={})",
+                    direction.error_prefix(),
+                    family.label(),
+                    values.len(),
+                    scales.len()
+                ));
+            }
+            for (value, scale) in values.iter_mut().zip(scales.iter().copied()) {
+                self.transform_value(value, scale, direction);
             }
         } else {
             match family {
-                CurveFamily::Arrhenius => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale;
-                    }
-                }
-                CurveFamily::Inverse => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale * y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale * y_scale;
-                    }
-                }
-                CurveFamily::Logistic => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] *= x_scale;
-                    }
-                }
-                CurveFamily::Gompertz => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] *= x_scale;
-                    }
-                }
-                CurveFamily::BiExponential => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] /= y_scale;
-                        values[3] *= x_scale;
-                        values[4] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] *= y_scale;
-                        values[3] /= x_scale;
-                        values[4] *= y_scale;
-                    }
-                }
-                CurveFamily::DampedSinusoid => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] *= x_scale;
-                        values[4] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] /= x_scale;
-                        values[4] *= y_scale;
-                    }
-                }
-                CurveFamily::Lorentzian => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale;
-                        values[2] /= x_scale;
-                        values[3] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale;
-                        values[2] *= x_scale;
-                        values[3] *= y_scale;
-                    }
-                }
-                CurveFamily::NaturalLog => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale;
-                    }
-                }
-                CurveFamily::FourPl => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[2] /= x_scale;
-                        values[3] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[2] *= x_scale;
-                        values[3] *= y_scale;
-                    }
-                }
-                CurveFamily::FivePl => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[2] /= x_scale;
-                        values[3] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[2] *= x_scale;
-                        values[3] *= y_scale;
-                    }
-                }
-                CurveFamily::MichaelisMenten => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale;
-                    }
-                }
-                CurveFamily::ExponentialBasic => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= y_scale;
-                        values[2] *= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= y_scale;
-                        values[2] /= x_scale;
-                    }
-                }
-                CurveFamily::ExponentialLinear => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] = values[2] * x_scale / y_scale;
-                        values[3] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] = values[2] * y_scale / x_scale;
-                        values[3] *= y_scale;
-                    }
-                }
-                CurveFamily::ExponentialHalfLife => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= y_scale;
-                        values[2] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= y_scale;
-                        values[2] *= x_scale;
-                    }
-                }
-                CurveFamily::FallingExponential => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] = values[1] * x_scale / y_scale;
-                        values[2] *= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] = values[1] * y_scale / x_scale;
-                        values[2] /= x_scale;
-                    }
-                }
-                CurveFamily::HyperbolicTangent
-                | CurveFamily::ArctangentStep
-                | CurveFamily::Softplus => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] *= x_scale;
-                        values[2] /= x_scale;
-                        values[3] /= y_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] /= x_scale;
-                        values[2] *= x_scale;
-                        values[3] *= y_scale;
-                    }
-                }
-                CurveFamily::Power => {
-                    let power = values[1];
-                    let x_factor = x_scale.powf(power);
-                    if to_normalized {
-                        values[0] = values[0] * x_factor / y_scale;
-                    } else {
-                        values[0] = values[0] * y_scale / x_factor;
-                    }
-                }
-                CurveFamily::Gaussian => {
-                    if to_normalized {
-                        values[0] /= y_scale;
-                        values[1] /= x_scale;
-                        values[2] /= x_scale;
-                    } else {
-                        values[0] *= y_scale;
-                        values[1] *= x_scale;
-                        values[2] *= x_scale;
-                    }
-                }
+                CurveFamily::Power => self.transform_power_params(&mut values, direction),
                 CurveFamily::Linear
                 | CurveFamily::Quadratic
                 | CurveFamily::Cubic
@@ -294,16 +129,142 @@ impl ParametricNormalization {
                 | CurveFamily::Septic
                 | CurveFamily::Octic
                 | CurveFamily::Nonic => unreachable!("handled by polynomial branch above"),
+                _ => unreachable!("handled by static scale table above"),
             }
         }
 
-        CurveParams::try_from_values(family, values).map_err(|error| {
-            if to_normalized {
-                format!("Failed to normalize parameters: {error}")
-            } else {
-                format!("Failed to denormalize parameters: {error}")
-            }
-        })
+        CurveParams::try_from_values(family, values)
+            .map_err(|error| format!("{}: {error}", direction.error_prefix()))
+    }
+
+    fn transform_polynomial_params(self, values: &mut [f64], direction: ScaleDirection) {
+        let degree = values.len() - 1;
+        for (index, value) in values.iter_mut().enumerate() {
+            let power = (degree - index) as i32;
+            self.transform_value(value, ParamScale::new(power, -1), direction);
+        }
+    }
+
+    fn transform_power_params(self, values: &mut [f64], direction: ScaleDirection) {
+        let power = values[1];
+        let factor = self.x_scale.powf(power) / self.y_scale;
+        values[0] = direction.apply(values[0], factor);
+    }
+
+    fn transform_value(self, value: &mut f64, scale: ParamScale, direction: ScaleDirection) {
+        let factor = self.scale_factor(scale);
+        *value = direction.apply(*value, factor);
+    }
+
+    fn scale_factor(self, scale: ParamScale) -> f64 {
+        self.x_scale.powi(scale.x_exp) * self.y_scale.powi(scale.y_exp)
+    }
+
+    fn static_param_scales(family: CurveFamily) -> Option<&'static [ParamScale]> {
+        const ARRHENIUS_SCALES: [ParamScale; 2] = [ParamScale::new(0, -1), ParamScale::new(-1, 0)];
+        const INVERSE_SCALES: [ParamScale; 2] = [ParamScale::new(0, -1), ParamScale::new(-1, -1)];
+        const LOGISTIC_SCALES: [ParamScale; 3] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(-1, 0),
+        ];
+        const BI_EXPONENTIAL_SCALES: [ParamScale; 5] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const DAMPED_SINUSOID_SCALES: [ParamScale; 5] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(1, 0),
+            ParamScale::new(0, 0),
+            ParamScale::new(0, -1),
+        ];
+        const LORENTZIAN_SCALES: [ParamScale; 4] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const NATURAL_LOG_SCALES: [ParamScale; 2] =
+            [ParamScale::new(0, -1), ParamScale::new(-1, 0)];
+        const FOUR_PL_SCALES: [ParamScale; 4] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(0, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const FIVE_PL_SCALES: [ParamScale; 5] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(0, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, 0),
+        ];
+        const EXPONENTIAL_BASIC_SCALES: [ParamScale; 3] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+        ];
+        const EXPONENTIAL_LINEAR_SCALES: [ParamScale; 4] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(1, -1),
+            ParamScale::new(0, -1),
+        ];
+        const EXPONENTIAL_HALF_LIFE_SCALES: [ParamScale; 3] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(-1, 0),
+        ];
+        const FALLING_EXPONENTIAL_SCALES: [ParamScale; 3] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, -1),
+            ParamScale::new(1, 0),
+        ];
+        const STEP_LIKE_SCALES: [ParamScale; 4] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const GAUSSIAN_SCALES: [ParamScale; 3] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+        ];
+
+        match family {
+            CurveFamily::Arrhenius => Some(&ARRHENIUS_SCALES),
+            CurveFamily::Inverse => Some(&INVERSE_SCALES),
+            CurveFamily::Logistic | CurveFamily::Gompertz => Some(&LOGISTIC_SCALES),
+            CurveFamily::BiExponential => Some(&BI_EXPONENTIAL_SCALES),
+            CurveFamily::DampedSinusoid => Some(&DAMPED_SINUSOID_SCALES),
+            CurveFamily::Lorentzian => Some(&LORENTZIAN_SCALES),
+            CurveFamily::NaturalLog | CurveFamily::MichaelisMenten => Some(&NATURAL_LOG_SCALES),
+            CurveFamily::FourPl => Some(&FOUR_PL_SCALES),
+            CurveFamily::FivePl => Some(&FIVE_PL_SCALES),
+            CurveFamily::ExponentialBasic => Some(&EXPONENTIAL_BASIC_SCALES),
+            CurveFamily::ExponentialLinear => Some(&EXPONENTIAL_LINEAR_SCALES),
+            CurveFamily::ExponentialHalfLife => Some(&EXPONENTIAL_HALF_LIFE_SCALES),
+            CurveFamily::FallingExponential => Some(&FALLING_EXPONENTIAL_SCALES),
+            CurveFamily::HyperbolicTangent
+            | CurveFamily::ArctangentStep
+            | CurveFamily::Softplus => Some(&STEP_LIKE_SCALES),
+            CurveFamily::Gaussian => Some(&GAUSSIAN_SCALES),
+            CurveFamily::Power
+            | CurveFamily::Linear
+            | CurveFamily::Quadratic
+            | CurveFamily::Cubic
+            | CurveFamily::Quartic
+            | CurveFamily::Quintic
+            | CurveFamily::Sextic
+            | CurveFamily::Septic
+            | CurveFamily::Octic
+            | CurveFamily::Nonic => None,
+        }
     }
 }
 
