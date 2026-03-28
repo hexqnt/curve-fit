@@ -16,21 +16,6 @@ pub(super) struct ParametricNormalization {
     y_scale: f64,
 }
 
-fn is_polynomial_family(family: CurveFamily) -> bool {
-    matches!(
-        family,
-        CurveFamily::Linear
-            | CurveFamily::Quadratic
-            | CurveFamily::Cubic
-            | CurveFamily::Quartic
-            | CurveFamily::Quintic
-            | CurveFamily::Sextic
-            | CurveFamily::Septic
-            | CurveFamily::Octic
-            | CurveFamily::Nonic
-    )
-}
-
 impl ParametricNormalization {
     /// Строит коэффициенты нормализации по максимальным абсолютным значениям `x` и `y`.
     pub(super) fn try_from_points(points: &Points) -> Result<Self, String> {
@@ -85,7 +70,7 @@ impl ParametricNormalization {
         let x_scale = self.x_scale;
         let y_scale = self.y_scale;
 
-        if is_polynomial_family(family) {
+        if family.is_polynomial() {
             let degree = values.len().saturating_sub(1);
             for (index, value) in values.iter_mut().enumerate() {
                 let power = (degree - index) as i32;
@@ -117,6 +102,17 @@ impl ParametricNormalization {
                     }
                 }
                 CurveFamily::Logistic => {
+                    if to_normalized {
+                        values[0] /= y_scale;
+                        values[1] *= x_scale;
+                        values[2] /= x_scale;
+                    } else {
+                        values[0] *= y_scale;
+                        values[1] /= x_scale;
+                        values[2] *= x_scale;
+                    }
+                }
+                CurveFamily::Gompertz => {
                     if to_normalized {
                         values[0] /= y_scale;
                         values[1] *= x_scale;

@@ -210,6 +210,7 @@ enum ModelChoice {
     Arrhenius,
     Inverse,
     Logistic,
+    Gompertz,
     Lorentzian,
     NaturalLog,
     FourPl,
@@ -231,11 +232,12 @@ enum ModelChoice {
 }
 
 impl ModelChoice {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
         Self::Polynomial,
         Self::Arrhenius,
         Self::Inverse,
         Self::Logistic,
+        Self::Gompertz,
         Self::Lorentzian,
         Self::NaturalLog,
         Self::FourPl,
@@ -277,6 +279,7 @@ impl ResolvedModel {
             ModelChoice::Arrhenius => Self::Parametric(CurveFamily::Arrhenius),
             ModelChoice::Inverse => Self::Parametric(CurveFamily::Inverse),
             ModelChoice::Logistic => Self::Parametric(CurveFamily::Logistic),
+            ModelChoice::Gompertz => Self::Parametric(CurveFamily::Gompertz),
             ModelChoice::Lorentzian => Self::Parametric(CurveFamily::Lorentzian),
             ModelChoice::NaturalLog => Self::Parametric(CurveFamily::NaturalLog),
             ModelChoice::FourPl => Self::Parametric(CurveFamily::FourPl),
@@ -351,6 +354,7 @@ fn model_group(model: ModelChoice) -> ModelGroup {
     match model {
         ModelChoice::Polynomial => ModelGroup::Polynomial,
         ModelChoice::Logistic
+        | ModelChoice::Gompertz
         | ModelChoice::FourPl
         | ModelChoice::FivePl
         | ModelChoice::HyperbolicTangent

@@ -16,26 +16,12 @@ pub(super) fn polynomial_family(degree: usize) -> CurveFamily {
     }
 }
 
-fn is_polynomial_family(family: CurveFamily) -> bool {
-    matches!(
-        family,
-        CurveFamily::Linear
-            | CurveFamily::Quadratic
-            | CurveFamily::Cubic
-            | CurveFamily::Quartic
-            | CurveFamily::Quintic
-            | CurveFamily::Sextic
-            | CurveFamily::Septic
-            | CurveFamily::Octic
-            | CurveFamily::Nonic
-    )
-}
-
 pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
-    is_polynomial_family(family)
+    family.is_polynomial()
         || matches!(
             family,
             CurveFamily::Logistic
+                | CurveFamily::Gompertz
                 | CurveFamily::Gaussian
                 | CurveFamily::ExponentialBasic
                 | CurveFamily::Power
@@ -49,12 +35,13 @@ pub(super) fn data_based_params_for_family(
     family: CurveFamily,
     points: &Points,
 ) -> Result<CurveParams, String> {
-    if is_polynomial_family(family) {
+    if family.is_polynomial() {
         return data_based_polynomial_params(family, points);
     }
 
     match family {
         CurveFamily::Logistic => data_based_logistic_params(points),
+        CurveFamily::Gompertz => data_based_gompertz_params(points),
         CurveFamily::Gaussian => data_based_gaussian_params(points),
         CurveFamily::ExponentialBasic => data_based_exponential_basic_params(points),
         CurveFamily::Power => data_based_power_params(points),
@@ -77,13 +64,15 @@ fn data_based_polynomial_params(
 }
 
 fn data_based_logistic_params(points: &Points) -> Result<CurveParams, String> {
-    let (x_min, x_max, _, y_max, _) = point_extrema(points);
-    let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
-    CurveParams::try_from_values(
-        CurveFamily::Logistic,
-        vec![y_max, 4.0 / x_span, (x_min + x_max) * 0.5],
-    )
-    .map_err(|error| error.to_string())
+    let (a, b, c) = data_based_sigmoid_abc(points);
+    CurveParams::try_from_values(CurveFamily::Logistic, vec![a, b, c])
+        .map_err(|error| error.to_string())
+}
+
+fn data_based_gompertz_params(points: &Points) -> Result<CurveParams, String> {
+    let (a, b, c) = data_based_sigmoid_abc(points);
+    CurveParams::try_from_values(CurveFamily::Gompertz, vec![a, b, c])
+        .map_err(|error| error.to_string())
 }
 
 fn data_based_gaussian_params(points: &Points) -> Result<CurveParams, String> {
@@ -139,6 +128,12 @@ fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
     let intercept = (sum_y - slope * sum_x) / sample_count;
     CurveParams::try_from_values(CurveFamily::Power, vec![intercept.exp(), slope])
         .map_err(|error| error.to_string())
+}
+
+fn data_based_sigmoid_abc(points: &Points) -> (f64, f64, f64) {
+    let (x_min, x_max, _, y_max, _) = point_extrema(points);
+    let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
+    (y_max, 4.0 / x_span, (x_min + x_max) * 0.5)
 }
 
 fn linear_regression(points: &Points) -> Result<(f64, f64), String> {

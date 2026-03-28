@@ -490,6 +490,27 @@ fn lbfgs_fits_logistic_data() {
 }
 
 #[test]
+fn lbfgs_fits_gompertz_data() {
+    let points = build_points(&[-2.0, -1.2, -0.5, 0.0, 0.5, 1.0, 1.6, 2.2], |x| {
+        4.8 * (-(-1.6 * (x - 0.4)).exp()).exp()
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Gompertz,
+        CurveParams::Gompertz {
+            a: 3.5,
+            b: 0.8,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("gompertz fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
 fn lbfgs_fits_lorentzian_data() {
     let points = build_points(&[-2.0, -1.0, -0.4, 0.0, 0.4, 1.0, 2.0], |x| {
         0.4 + 2.5 / (1.0 + ((x - 0.3) / 0.8).powi(2))

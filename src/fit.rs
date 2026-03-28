@@ -373,7 +373,7 @@ impl CurveProblem {
         }
 
         match self.family {
-            _ if is_polynomial_family(self.family) => self.analytic_polynomial_hessian(param),
+            family if family.is_polynomial() => self.analytic_polynomial_hessian(param),
             CurveFamily::Inverse => self.analytic_inverse_hessian(param),
             CurveFamily::ExponentialBasic => self.analytic_exponential_basic_hessian(param),
             CurveFamily::ExponentialLinear => self.analytic_exponential_linear_hessian(param),
@@ -622,21 +622,6 @@ fn soft_l1_from_residuals(residuals: &[[f64; 2]]) -> f64 {
         .map(|residual| OptimizationLossMetric::SoftL1.value_from_residual(residual[1]))
         .sum::<f64>()
         / residuals.len() as f64
-}
-
-fn is_polynomial_family(family: CurveFamily) -> bool {
-    matches!(
-        family,
-        CurveFamily::Linear
-            | CurveFamily::Quadratic
-            | CurveFamily::Cubic
-            | CurveFamily::Quartic
-            | CurveFamily::Quintic
-            | CurveFamily::Sextic
-            | CurveFamily::Septic
-            | CurveFamily::Octic
-            | CurveFamily::Nonic
-    )
 }
 
 /// Число узлов сплайна по умолчанию.
@@ -1689,7 +1674,7 @@ impl CostFunction for CurveProblem {
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
-        if is_polynomial_family(self.family) {
+        if self.family.is_polynomial() {
             return Ok(simd::polynomial_cost(
                 param,
                 self.point_x.as_ref(),
@@ -1736,15 +1721,7 @@ impl Gradient for CurveProblem {
         let sample_scale = 1.0 / points.len() as f64;
 
         match self.family {
-            CurveFamily::Linear
-            | CurveFamily::Quadratic
-            | CurveFamily::Cubic
-            | CurveFamily::Quartic
-            | CurveFamily::Quintic
-            | CurveFamily::Sextic
-            | CurveFamily::Septic
-            | CurveFamily::Octic
-            | CurveFamily::Nonic => simd::accumulate_polynomial_gradient(
+            family if family.is_polynomial() => simd::accumulate_polynomial_gradient(
                 self.point_x.as_ref(),
                 self.point_y.as_ref(),
                 param,
@@ -1779,6 +1756,19 @@ impl Gradient for CurveProblem {
                     gradient[0] += residual * s;
                     gradient[1] += residual * (param[0] * ds_dz * (point.x() - param[2]));
                     gradient[2] += residual * (param[0] * ds_dz * (-param[1]));
+                }
+            }
+            CurveFamily::Gompertz => {
+                for point in points {
+                    let x_centered = point.x() - param[2];
+                    let exp_inner = (-param[1] * x_centered).exp();
+                    let exp_outer = (-exp_inner).exp();
+                    let model = param[0] * exp_outer;
+                    let residual = self.loss_metric.residual_derivative(model - point.y());
+
+                    gradient[0] += residual * exp_outer;
+                    gradient[1] += residual * (param[0] * exp_outer * exp_inner * x_centered);
+                    gradient[2] += residual * (-param[0] * exp_outer * exp_inner * param[1]);
                 }
             }
             CurveFamily::Lorentzian => {
@@ -2018,6 +2008,7 @@ impl Gradient for CurveProblem {
                     gradient[2] += residual * d_model_d_c * d_c_raw;
                 }
             }
+            _ => unreachable!("polynomial families are handled by the guarded branch above"),
         }
 
         for value in &mut gradient {

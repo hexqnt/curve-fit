@@ -92,6 +92,11 @@ fn eval_logistic(a: f64, b: f64, c: f64, x: f64) -> f64 {
     a / (1.0 + exponent.exp())
 }
 
+fn eval_gompertz(a: f64, b: f64, c: f64, x: f64) -> f64 {
+    let inner = (-b * (x - c)).exp();
+    a * (-inner).exp()
+}
+
 fn eval_hyperbolic_tangent(a: f64, b: f64, c: f64, d: f64, x: f64) -> f64 {
     a * (b * (x - c)).tanh() + d
 }
@@ -229,6 +234,7 @@ pub enum CurveFamily {
     Arrhenius,
     Inverse,
     Logistic,
+    Gompertz,
     Lorentzian,
     NaturalLog,
     FourPl,
@@ -247,7 +253,7 @@ pub enum CurveFamily {
 
 impl CurveFamily {
     /// Полный список семейств в стабильном порядке для UI и переборов.
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::Linear,
         Self::Quadratic,
         Self::Cubic,
@@ -260,6 +266,7 @@ impl CurveFamily {
         Self::Arrhenius,
         Self::Inverse,
         Self::Logistic,
+        Self::Gompertz,
         Self::Lorentzian,
         Self::NaturalLog,
         Self::FourPl,
@@ -291,6 +298,7 @@ impl CurveFamily {
             Self::Arrhenius => "Arrhenius",
             Self::Inverse => "Inverse",
             Self::Logistic => "Logistic",
+            Self::Gompertz => "Gompertz",
             Self::Lorentzian => "Lorentzian",
             Self::NaturalLog => "Natural Log",
             Self::FourPl => "4PL",
@@ -323,6 +331,7 @@ impl CurveFamily {
             Self::Arrhenius => &["A", "B"],
             Self::Inverse => &["A", "B"],
             Self::Logistic => &["A", "B", "C"],
+            Self::Gompertz => &["A", "B", "C"],
             Self::Lorentzian => &["A", "x0", "gamma", "C"],
             Self::NaturalLog => &["A", "B"],
             Self::FourPl => &["a", "b", "c", "d"],
@@ -340,6 +349,22 @@ impl CurveFamily {
         }
     }
 
+    /// Возвращает `true`, если семейство является полиномом степени `1..=9`.
+    pub fn is_polynomial(self) -> bool {
+        matches!(
+            self,
+            Self::Linear
+                | Self::Quadratic
+                | Self::Cubic
+                | Self::Quartic
+                | Self::Quintic
+                | Self::Sextic
+                | Self::Septic
+                | Self::Octic
+                | Self::Nonic
+        )
+    }
+
     /// Количество параметров модели.
     pub fn parameter_count(self) -> usize {
         self.parameter_names().len()
@@ -354,7 +379,8 @@ impl CurveFamily {
             | Self::ExponentialHalfLife
             | Self::FallingExponential
             | Self::Gaussian
-            | Self::Logistic => 3,
+            | Self::Logistic
+            | Self::Gompertz => 3,
             Self::FourPl
             | Self::Cubic
             | Self::ExponentialLinear
@@ -494,6 +520,11 @@ impl CurveFamily {
                 b: 1.0,
                 c: 0.0,
             },
+            Self::Gompertz => CurveParams::Gompertz {
+                a: 1.0,
+                b: 1.0,
+                c: 0.0,
+            },
             Self::Lorentzian => CurveParams::Lorentzian {
                 a: 1.0,
                 x0: 0.0,
@@ -577,6 +608,7 @@ impl CurveFamily {
             Self::Arrhenius => eval_arrhenius(params[0], params[1], x),
             Self::Inverse => eval_inverse(params[0], params[1], x),
             Self::Logistic => eval_logistic(params[0], params[1], params[2], x),
+            Self::Gompertz => eval_gompertz(params[0], params[1], params[2], x),
             Self::Lorentzian => eval_lorentzian(params[0], params[1], params[2], params[3], x),
             Self::NaturalLog => eval_natural_log(params[0], params[1], x),
             Self::FourPl => eval_four_pl(params[0], params[1], params[2], params[3], x),
@@ -699,6 +731,11 @@ pub enum CurveParams {
         b: f64,
         c: f64,
     },
+    Gompertz {
+        a: f64,
+        b: f64,
+        c: f64,
+    },
     Lorentzian {
         a: f64,
         x0: f64,
@@ -792,6 +829,7 @@ impl CurveParams {
             Self::Arrhenius { .. } => CurveFamily::Arrhenius,
             Self::Inverse { .. } => CurveFamily::Inverse,
             Self::Logistic { .. } => CurveFamily::Logistic,
+            Self::Gompertz { .. } => CurveFamily::Gompertz,
             Self::Lorentzian { .. } => CurveFamily::Lorentzian,
             Self::NaturalLog { .. } => CurveFamily::NaturalLog,
             Self::FourPl { .. } => CurveFamily::FourPl,
@@ -862,6 +900,7 @@ impl CurveParams {
             Self::Arrhenius { a, b } => vec![*a, *b],
             Self::Inverse { a, b } => vec![*a, *b],
             Self::Logistic { a, b, c } => vec![*a, *b, *c],
+            Self::Gompertz { a, b, c } => vec![*a, *b, *c],
             Self::Lorentzian { a, x0, gamma, c } => vec![*a, *x0, *gamma, *c],
             Self::NaturalLog { a, b } => vec![*a, *b],
             Self::FourPl { a, b, c, d } => vec![*a, *b, *c, *d],
@@ -932,6 +971,7 @@ impl CurveParams {
             Self::Arrhenius { a, b } => eval_arrhenius(*a, *b, x),
             Self::Inverse { a, b } => eval_inverse(*a, *b, x),
             Self::Logistic { a, b, c } => eval_logistic(*a, *b, *c, x),
+            Self::Gompertz { a, b, c } => eval_gompertz(*a, *b, *c, x),
             Self::Lorentzian { a, x0, gamma, c } => eval_lorentzian(*a, *x0, *gamma, *c, x),
             Self::NaturalLog { a, b } => eval_natural_log(*a, *b, x),
             Self::FourPl { a, b, c, d } => eval_four_pl(*a, *b, *c, *d, x),
@@ -1057,6 +1097,11 @@ impl CurveParams {
                 b: values[1],
             },
             CurveFamily::Logistic => Self::Logistic {
+                a: values[0],
+                b: values[1],
+                c: values[2],
+            },
+            CurveFamily::Gompertz => Self::Gompertz {
                 a: values[0],
                 b: values[1],
                 c: values[2],
