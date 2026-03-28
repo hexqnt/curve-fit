@@ -123,6 +123,21 @@ impl ParametricNormalization {
                         values[2] *= x_scale;
                     }
                 }
+                CurveFamily::BiExponential => {
+                    if to_normalized {
+                        values[0] /= y_scale;
+                        values[1] *= x_scale;
+                        values[2] /= y_scale;
+                        values[3] *= x_scale;
+                        values[4] /= y_scale;
+                    } else {
+                        values[0] *= y_scale;
+                        values[1] /= x_scale;
+                        values[2] *= y_scale;
+                        values[3] /= x_scale;
+                        values[4] *= y_scale;
+                    }
+                }
                 CurveFamily::Lorentzian => {
                     if to_normalized {
                         values[0] /= y_scale;

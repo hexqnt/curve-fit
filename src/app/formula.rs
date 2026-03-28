@@ -11,6 +11,9 @@ fn model_formula_full(model: ModelChoice, polynomial_degree: usize) -> String {
         ModelChoice::Inverse => r"y = A + \frac{B}{x}".to_string(),
         ModelChoice::Logistic => r"y = \frac{A}{1 + exp(-B·(x - C))}".to_string(),
         ModelChoice::Gompertz => r"y = A·exp(-exp(-B·(x - C)))".to_string(),
+        ModelChoice::BiExponential => {
+            r"y = a_{1}·exp(-k_{1}·x) + a_{2}·exp(-k_{2}·x) + c".to_string()
+        }
         ModelChoice::Lorentzian => r"y = C + \frac{A}{1 + (\frac{x - x_0}{gamma})^{2}}".to_string(),
         ModelChoice::NaturalLog => r"y = A·ln(\frac{x}{B})".to_string(),
         ModelChoice::FourPl => r"y = d + \frac{a - d}{1 + (\frac{x}{c})^{b}}".to_string(),
@@ -110,6 +113,9 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         (UiLanguage::English, ModelChoice::Gompertz) => {
             "Asymmetric sigmoid growth model with a long lower tail."
         }
+        (UiLanguage::English, ModelChoice::BiExponential) => {
+            "Two-timescale exponential model with strong parameter coupling."
+        }
         (UiLanguage::English, ModelChoice::Lorentzian) => "Peak-shaped model with heavy tails.",
         (UiLanguage::English, ModelChoice::NaturalLog) => {
             "Log transform response, useful for diminishing returns."
@@ -153,6 +159,9 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         }
         (UiLanguage::Russian, ModelChoice::Gompertz) => {
             "Асимметричная сигмоида с длинным нижним хвостом."
+        }
+        (UiLanguage::Russian, ModelChoice::BiExponential) => {
+            "Двухэкспоненциальная модель с сильной связью параметров."
         }
         (UiLanguage::Russian, ModelChoice::Lorentzian) => {
             "Пиковая модель с более тяжёлыми хвостами."

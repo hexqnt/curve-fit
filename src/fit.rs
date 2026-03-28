@@ -1771,6 +1771,21 @@ impl Gradient for CurveProblem {
                     gradient[2] += residual * (-param[0] * exp_outer * exp_inner * param[1]);
                 }
             }
+            CurveFamily::BiExponential => {
+                for point in points {
+                    let x = point.x();
+                    let exp1 = (-param[1] * x).exp();
+                    let exp2 = (-param[3] * x).exp();
+                    let model = param[0] * exp1 + param[2] * exp2 + param[4];
+                    let residual = self.loss_metric.residual_derivative(model - point.y());
+
+                    gradient[0] += residual * exp1;
+                    gradient[1] += residual * (-param[0] * x * exp1);
+                    gradient[2] += residual * exp2;
+                    gradient[3] += residual * (-param[2] * x * exp2);
+                    gradient[4] += residual;
+                }
+            }
             CurveFamily::Lorentzian => {
                 for point in points {
                     let a = param[0];

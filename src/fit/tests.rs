@@ -511,6 +511,29 @@ fn lbfgs_fits_gompertz_data() {
 }
 
 #[test]
+fn lbfgs_fits_bi_exponential_data() {
+    let points = build_points(&[0.0, 0.3, 0.6, 1.0, 1.5, 2.0, 2.8, 3.6, 4.5], |x| {
+        1.8 * (-2.4 * x).exp() + 0.7 * (-0.35 * x).exp() + 0.2
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::BiExponential,
+        CurveParams::BiExponential {
+            a1: 1.0,
+            k1: 1.0,
+            a2: 0.4,
+            k2: 0.1,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("bi-exponential fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
 fn lbfgs_fits_lorentzian_data() {
     let points = build_points(&[-2.0, -1.0, -0.4, 0.0, 0.4, 1.0, 2.0], |x| {
         0.4 + 2.5 / (1.0 + ((x - 0.3) / 0.8).powi(2))
