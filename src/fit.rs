@@ -23,8 +23,10 @@ mod curve;
 mod simd;
 mod spline;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use curve::fit_curve_with_progress_and_optimizer_config_and_loss_metric;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use curve::fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization;
 pub use curve::{
     fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,
     fit_curve_with_progress_and_optimizer_config,
@@ -334,6 +336,82 @@ impl OptimizationLossMetric {
     }
 }
 
+/// Значение по умолчанию для числа знаков после запятой в режиме квантизации метрик.
+pub(crate) const DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES: u8 = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Число знаков после запятой для квантизации метрик.
+pub(crate) struct MetricQuantizationDecimalPlaces(u8);
+
+impl MetricQuantizationDecimalPlaces {
+    pub(crate) const MIN: u8 = 0;
+    pub(crate) const MAX: u8 = 15;
+
+    pub(crate) fn try_new(value: u8) -> Result<Self, String> {
+        if !(Self::MIN..=Self::MAX).contains(&value) {
+            return Err(format!(
+                "Metric quantization decimal places must be in range {}..={}, got {value}",
+                Self::MIN,
+                Self::MAX
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn get(self) -> u8 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Конфигурация квантизации для расчета objective и метрик.
+pub(crate) enum MetricQuantization {
+    #[default]
+    Disabled,
+    Enabled(MetricQuantizationDecimalPlaces),
+}
+
+impl MetricQuantization {
+    pub(crate) fn from_ui_state(enabled: bool, decimal_places: u8) -> Result<Self, String> {
+        if !enabled {
+            return Ok(Self::Disabled);
+        }
+        Ok(Self::Enabled(MetricQuantizationDecimalPlaces::try_new(
+            decimal_places,
+        )?))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ResidualQuantizer {
+    Disabled,
+    Enabled { scale: f64 },
+}
+
+impl ResidualQuantizer {
+    fn new(metric_quantization: MetricQuantization) -> Self {
+        match metric_quantization {
+            MetricQuantization::Disabled => Self::Disabled,
+            MetricQuantization::Enabled(decimal_places) => Self::Enabled {
+                scale: 10_f64.powi(decimal_places.get() as i32),
+            },
+        }
+    }
+
+    #[inline]
+    fn quantize_value(self, value: f64) -> f64 {
+        match self {
+            Self::Disabled => value,
+            Self::Enabled { scale } => (value * scale).round() / scale,
+        }
+    }
+
+    #[inline]
+    fn residual(self, predicted: f64, observed: f64) -> f64 {
+        self.quantize_value(predicted) - self.quantize_value(observed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Снимок метрик на одной итерации оптимизации.
 pub struct IterationMetricSnapshot {
@@ -352,10 +430,27 @@ struct CurveProblem {
     point_x: Box<[f64]>,
     point_y: Box<[f64]>,
     loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
+    residual_quantizer: ResidualQuantizer,
 }
 
 impl CurveProblem {
+    #[cfg(test)]
     fn new(family: CurveFamily, points: &Points, loss_metric: OptimizationLossMetric) -> Self {
+        Self::new_with_metric_quantization(
+            family,
+            points,
+            loss_metric,
+            MetricQuantization::Disabled,
+        )
+    }
+
+    fn new_with_metric_quantization(
+        family: CurveFamily,
+        points: &Points,
+        loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
+    ) -> Self {
         let mut point_x = Vec::with_capacity(points.len());
         let mut point_y = Vec::with_capacity(points.len());
         for point in points.as_slice() {
@@ -368,7 +463,32 @@ impl CurveProblem {
             point_x: point_x.into_boxed_slice(),
             point_y: point_y.into_boxed_slice(),
             loss_metric,
+            metric_quantization,
+            residual_quantizer: ResidualQuantizer::new(metric_quantization),
         }
+    }
+
+    #[inline]
+    fn residual(&self, predicted: f64, observed: f64) -> f64 {
+        self.residual_quantizer.residual(predicted, observed)
+    }
+
+    #[inline]
+    fn loss_value_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
+        self.loss_metric
+            .value_from_residual(self.residual(predicted, observed))
+    }
+
+    #[inline]
+    fn loss_derivative_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
+        self.loss_metric
+            .residual_derivative(self.residual(predicted, observed))
+    }
+
+    #[inline]
+    fn loss_second_derivative_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
+        self.loss_metric
+            .residual_second_derivative(self.residual(predicted, observed))
     }
 
     fn analytic_hessian_for_supported_families(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
@@ -404,12 +524,12 @@ impl CurveProblem {
                 .iter()
                 .copied()
                 .fold(0.0, |acc, coefficient| acc * x + coefficient);
-            let residual = model - y;
+            let residual = self.residual(model, y);
             if !residual.is_finite() {
                 return None;
             }
 
-            let weight = self.loss_metric.residual_second_derivative(residual);
+            let weight = self.loss_second_derivative_from_prediction(model, y);
             if !is_finite_non_negative(weight) {
                 return None;
             }
@@ -456,12 +576,12 @@ impl CurveProblem {
             let y = self.point_y[index];
             let inv_x = 1.0 / x;
             let model = param[0] + param[1] * inv_x;
-            let residual = model - y;
+            let residual = self.residual(model, y);
             if !residual.is_finite() {
                 return None;
             }
 
-            let weight = self.loss_metric.residual_second_derivative(residual);
+            let weight = self.loss_second_derivative_from_prediction(model, y);
             if !is_finite_non_negative(weight) {
                 return None;
             }
@@ -492,13 +612,13 @@ impl CurveProblem {
             let y = self.point_y[index];
             let exp_part = (-param[2] * x).exp();
             let model = param[0] + param[1] * exp_part;
-            let residual = model - y;
+            let residual = self.residual(model, y);
             if !residual.is_finite() {
                 return None;
             }
 
-            let loss_first = self.loss_metric.residual_derivative(residual);
-            let loss_second = self.loss_metric.residual_second_derivative(residual);
+            let loss_first = self.loss_derivative_from_prediction(model, y);
+            let loss_second = self.loss_second_derivative_from_prediction(model, y);
             if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
                 return None;
             }
@@ -539,13 +659,13 @@ impl CurveProblem {
             let y = self.point_y[index];
             let exp_part = (param[1] * x).exp();
             let model = param[0] * exp_part + param[2] * x + param[3];
-            let residual = model - y;
+            let residual = self.residual(model, y);
             if !residual.is_finite() {
                 return None;
             }
 
-            let loss_first = self.loss_metric.residual_derivative(residual);
-            let loss_second = self.loss_metric.residual_second_derivative(residual);
+            let loss_first = self.loss_derivative_from_prediction(model, y);
+            let loss_second = self.loss_second_derivative_from_prediction(model, y);
             if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
                 return None;
             }
@@ -591,41 +711,6 @@ pub struct SplineResult {
     pub max_abs_error: f64,
     pub residuals: Vec<[f64; 2]>,
     pub iterations: u64,
-}
-
-impl SplineResult {
-    /// Формирует снимок метрик итерации на основе итогового результата сплайна.
-    /// Поле `loss` выбирается согласно активной целевой функции оптимизации.
-    pub(crate) fn iteration_metrics_snapshot(
-        &self,
-        loss_metric: OptimizationLossMetric,
-    ) -> IterationMetricSnapshot {
-        let soft_l1 = soft_l1_from_residuals(self.residuals.as_slice());
-        IterationMetricSnapshot {
-            loss: match loss_metric {
-                OptimizationLossMetric::Mse => self.mse,
-                OptimizationLossMetric::Mae => self.mae,
-                OptimizationLossMetric::SoftL1 => soft_l1,
-            },
-            mse: self.mse,
-            rmse: self.rmse,
-            mae: self.mae,
-            soft_l1,
-            r2: self.r2,
-            max_abs_error: self.max_abs_error,
-        }
-    }
-}
-
-fn soft_l1_from_residuals(residuals: &[[f64; 2]]) -> f64 {
-    if residuals.is_empty() {
-        return 0.0;
-    }
-    residuals
-        .iter()
-        .map(|residual| OptimizationLossMetric::SoftL1.value_from_residual(residual[1]))
-        .sum::<f64>()
-        / residuals.len() as f64
 }
 
 /// Число узлов сплайна по умолчанию.
@@ -764,6 +849,7 @@ pub struct IncrementalFitRunner {
     family: CurveFamily,
     points: Points,
     loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
     problem: Problem<CurveProblem>,
     solver: OptimizerSolver,
     state: Option<OptimizerState>,
@@ -779,7 +865,10 @@ pub(crate) enum IncrementalSplineFitStep {
         knot_y: Vec<f64>,
         curve: Vec<[f64; 2]>,
     },
-    Finished(SplineResult),
+    Finished {
+        result: SplineResult,
+        metrics: IterationMetricSnapshot,
+    },
     Cancelled,
 }
 
@@ -789,6 +878,7 @@ pub(crate) struct IncrementalSplineFitRunner {
     config: SplineConfig,
     knot_x: Box<[f64]>,
     loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
     problem: Problem<SplineProblem>,
     solver: OptimizerSolver,
     state: Option<OptimizerState>,
@@ -1089,6 +1179,24 @@ impl IncrementalFitRunner {
         optimizer_config: &OptimizerConfig,
         loss_metric: OptimizationLossMetric,
     ) -> Result<Self, FitError> {
+        Self::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
+            points,
+            family,
+            initial_params,
+            optimizer_config,
+            loss_metric,
+            MetricQuantization::Disabled,
+        )
+    }
+
+    pub(crate) fn new_with_optimizer_config_and_loss_metric_and_metric_quantization(
+        points: &Points,
+        family: CurveFamily,
+        initial_params: CurveParams,
+        optimizer_config: &OptimizerConfig,
+        loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
+    ) -> Result<Self, FitError> {
         if initial_params.family() != family {
             return Err(FitError::InvalidInput(InputError::FamilyMismatch {
                 expected: family,
@@ -1099,7 +1207,12 @@ impl IncrementalFitRunner {
 
         let initial_values = initial_params.values();
         let max_iters = optimizer_config.max_iters();
-        let problem = CurveProblem::new(family, points, loss_metric);
+        let problem = CurveProblem::new_with_metric_quantization(
+            family,
+            points,
+            loss_metric,
+            metric_quantization,
+        );
         let mut problem = Problem::new(problem);
         let mut solver = build_optimizer_solver(&initial_values, optimizer_config)?;
         let state = match &mut solver {
@@ -1151,6 +1264,7 @@ impl IncrementalFitRunner {
             family,
             points: points.clone(),
             loss_metric,
+            metric_quantization,
             problem,
             solver,
             state: Some(state),
@@ -1299,7 +1413,12 @@ impl IncrementalFitRunner {
             if let Some(params) = optimizer_state_current_param(&state)
                 .and_then(|values| CurveParams::try_from_values(self.family, values).ok())
             {
-                let metrics = calculate_iteration_metrics(&self.points, &params, self.loss_metric);
+                let metrics = calculate_iteration_metrics_with_quantization(
+                    &self.points,
+                    &params,
+                    self.loss_metric,
+                    self.metric_quantization,
+                );
                 optimizer_state_increment_iter(&mut state);
                 self.state = Some(state);
                 return Ok(IncrementalFitStep::Iteration {
@@ -1320,7 +1439,11 @@ impl IncrementalFitRunner {
         let best_param_values =
             optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
         let best_params = CurveParams::try_from_values(self.family, best_param_values)?;
-        let (mse, rmse) = calculate_metrics(&self.points, &best_params);
+        let (mse, rmse) = calculate_metrics_with_quantization(
+            &self.points,
+            &best_params,
+            self.metric_quantization,
+        );
         let iterations = optimizer_state_iter(&state);
         self.state = Some(state);
 
@@ -1357,6 +1480,24 @@ impl IncrementalSplineFitRunner {
         optimizer_config: &OptimizerConfig,
         loss_metric: OptimizationLossMetric,
     ) -> Result<Self, FitError> {
+        Self::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
+            points,
+            family,
+            config,
+            optimizer_config,
+            loss_metric,
+            MetricQuantization::Disabled,
+        )
+    }
+
+    pub(crate) fn new_with_optimizer_config_and_loss_metric_and_metric_quantization(
+        points: &Points,
+        family: SplineFamilyKind,
+        config: SplineConfig,
+        optimizer_config: &OptimizerConfig,
+        loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
+    ) -> Result<Self, FitError> {
         Self::new_with_initial_knot_y_and_optimizer_config_and_loss_metric(
             points,
             family,
@@ -1364,6 +1505,7 @@ impl IncrementalSplineFitRunner {
             optimizer_config,
             None,
             loss_metric,
+            metric_quantization,
         )
     }
 
@@ -1381,6 +1523,7 @@ impl IncrementalSplineFitRunner {
             optimizer_config,
             initial_knot_y,
             OptimizationLossMetric::Mse,
+            MetricQuantization::Disabled,
         )
     }
 
@@ -1391,6 +1534,7 @@ impl IncrementalSplineFitRunner {
         optimizer_config: &OptimizerConfig,
         initial_knot_y: Option<&[f64]>,
         loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
     ) -> Result<Self, FitError> {
         let prepared = prepare_spline_inputs(points, config, family, initial_knot_y)?;
         let max_iters = optimizer_config.max_iters();
@@ -1402,6 +1546,7 @@ impl IncrementalSplineFitRunner {
             points,
             prepared.config.extrapolation,
             loss_metric,
+            metric_quantization,
         );
         let mut problem = Problem::new(problem);
         let mut solver = build_optimizer_solver(&prepared.initial_y, optimizer_config)?;
@@ -1460,6 +1605,7 @@ impl IncrementalSplineFitRunner {
             config: prepared.config,
             knot_x: prepared.knot_x,
             loss_metric,
+            metric_quantization,
             problem,
             solver,
             state: Some(state),
@@ -1608,6 +1754,7 @@ impl IncrementalSplineFitRunner {
                 let metrics = calculate_iteration_metrics_from_evaluator(
                     &self.points,
                     self.loss_metric,
+                    self.metric_quantization,
                     |x| evaluator.evaluate(x),
                 );
                 let curve =
@@ -1636,16 +1783,18 @@ impl IncrementalSplineFitRunner {
         let iterations = optimizer_state_iter(&state);
         self.state = Some(state);
 
-        let result = build_spline_result_from_knot_y(
-            &self.points,
-            self.family,
-            self.config,
-            self.knot_x.as_ref(),
-            &best_knot_y,
-            iterations,
-        )?;
+        let finalize_context = SplineFinalizeContext {
+            points: &self.points,
+            family: self.family,
+            config: self.config,
+            knot_x: self.knot_x.as_ref(),
+            loss_metric: self.loss_metric,
+            metric_quantization: self.metric_quantization,
+        };
+        let (result, metrics) =
+            build_spline_result_from_knot_y(&finalize_context, &best_knot_y, iterations)?;
 
-        Ok(IncrementalSplineFitStep::Finished(result))
+        Ok(IncrementalSplineFitStep::Finished { result, metrics })
     }
 }
 
@@ -1654,7 +1803,9 @@ impl CostFunction for CurveProblem {
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
-        if self.family.is_polynomial() {
+        if self.family.is_polynomial()
+            && matches!(self.metric_quantization, MetricQuantization::Disabled)
+        {
             return Ok(simd::polynomial_cost(
                 param,
                 self.point_x.as_ref(),
@@ -1663,7 +1814,9 @@ impl CostFunction for CurveProblem {
             ));
         }
 
-        if self.family == CurveFamily::Inverse {
+        if self.family == CurveFamily::Inverse
+            && matches!(self.metric_quantization, MetricQuantization::Disabled)
+        {
             return Ok(simd::inverse_cost(
                 param,
                 self.point_x.as_ref(),
@@ -1677,11 +1830,11 @@ impl CostFunction for CurveProblem {
 
         for point in self.points.as_slice() {
             let predicted = self.family.evaluate_raw(param, point.x());
-            let residual = predicted - point.y();
+            let residual = self.residual(predicted, point.y());
             if !residual.is_finite() {
                 return Ok(LARGE_COST);
             }
-            sum += self.loss_metric.value_from_residual(residual);
+            sum += self.loss_value_from_prediction(predicted, point.y());
             if !sum.is_finite() {
                 return Ok(LARGE_COST);
             }
@@ -1701,36 +1854,73 @@ impl Gradient for CurveProblem {
         let sample_scale = 1.0 / points.len() as f64;
 
         match self.family {
-            family if family.is_polynomial() => simd::accumulate_polynomial_gradient(
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                param,
-                self.loss_metric,
-                &mut gradient,
-            ),
+            family if family.is_polynomial() => {
+                if matches!(self.metric_quantization, MetricQuantization::Disabled) {
+                    simd::accumulate_polynomial_gradient(
+                        self.point_x.as_ref(),
+                        self.point_y.as_ref(),
+                        param,
+                        self.loss_metric,
+                        &mut gradient,
+                    );
+                } else {
+                    let mut index = 0;
+                    while index < self.point_x.len() {
+                        let x = self.point_x[index];
+                        let y = self.point_y[index];
+                        let model = param
+                            .iter()
+                            .copied()
+                            .fold(0.0, |acc, coefficient| acc * x + coefficient);
+                        let residual = self.loss_derivative_from_prediction(model, y);
+
+                        let mut basis = 1.0;
+                        for gradient_value in gradient.iter_mut().rev() {
+                            *gradient_value += residual * basis;
+                            basis *= x;
+                        }
+                        index += 1;
+                    }
+                }
+            }
             CurveFamily::Arrhenius => {
                 for point in points {
                     let x = positive_x(point.x());
                     let exp_term = (param[1] / x).exp();
                     let model = param[0] * exp_term;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     gradient[0] += residual * exp_term;
                     gradient[1] += residual * (param[0] * exp_term / x);
                 }
             }
-            CurveFamily::Inverse => simd::accumulate_inverse_gradient(
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                param,
-                self.loss_metric,
-                &mut gradient,
-            ),
+            CurveFamily::Inverse => {
+                if matches!(self.metric_quantization, MetricQuantization::Disabled) {
+                    simd::accumulate_inverse_gradient(
+                        self.point_x.as_ref(),
+                        self.point_y.as_ref(),
+                        param,
+                        self.loss_metric,
+                        &mut gradient,
+                    );
+                } else {
+                    let mut index = 0;
+                    while index < self.point_x.len() {
+                        let x = positive_x(self.point_x[index]);
+                        let y = self.point_y[index];
+                        let model = param[0] + param[1] / x;
+                        let residual = self.loss_derivative_from_prediction(model, y);
+                        gradient[0] += residual;
+                        gradient[1] += residual / x;
+                        index += 1;
+                    }
+                }
+            }
             CurveFamily::Logistic => {
                 for point in points {
                     let z = param[1] * (point.x() - param[2]);
                     let s = 1.0 / (1.0 + (-z).exp());
                     let model = param[0] * s;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let ds_dz = s * (1.0 - s);
 
                     gradient[0] += residual * s;
@@ -1744,7 +1934,7 @@ impl Gradient for CurveProblem {
                     let exp_inner = (-param[1] * x_centered).exp();
                     let exp_outer = (-exp_inner).exp();
                     let model = param[0] * exp_outer;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * exp_outer;
                     gradient[1] += residual * (param[0] * exp_outer * exp_inner * x_centered);
@@ -1757,7 +1947,7 @@ impl Gradient for CurveProblem {
                     let exp1 = (-param[1] * x).exp();
                     let exp2 = (-param[3] * x).exp();
                     let model = param[0] * exp1 + param[2] * exp2 + param[4];
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * exp1;
                     gradient[1] += residual * (-param[0] * x * exp1);
@@ -1774,7 +1964,7 @@ impl Gradient for CurveProblem {
                     let sin_part = angle.sin();
                     let cos_part = angle.cos();
                     let model = param[0] * exp_part * sin_part + param[4];
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * exp_part * sin_part;
                     gradient[1] += residual * (-param[0] * x * exp_part * sin_part);
@@ -1793,7 +1983,7 @@ impl Gradient for CurveProblem {
                     let den = 1.0 + u * u;
                     let inv_den = 1.0 / den;
                     let model = param[3] + a * inv_den;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let common = 2.0 * a / (den * den * gamma);
 
                     gradient[0] += residual * inv_den;
@@ -1808,7 +1998,7 @@ impl Gradient for CurveProblem {
                     let (b, d_b_raw) = positive_param_with_derivative(param[1]);
                     let ln_term = (x / b).ln();
                     let model = param[0] * ln_term;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * ln_term;
                     gradient[1] += residual * (-param[0] / b) * d_b_raw;
@@ -1826,7 +2016,7 @@ impl Gradient for CurveProblem {
                     let den = 1.0 + pow;
                     let inv_den = 1.0 / den;
                     let model = d + (a - d) * inv_den;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_pow_db = pow * ratio.ln();
                     let d_pow_dc = -pow * b / c;
                     let d_model_da = inv_den;
@@ -1853,7 +2043,7 @@ impl Gradient for CurveProblem {
                     let den = 1.0 + pow;
                     let inv = den.powf(-m);
                     let model = d + (a - d) * inv;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_pow_db = pow * ratio.ln();
                     let d_pow_dc = -pow * b / c;
                     let d_inv_db = -m * den.powf(-m - 1.0) * d_pow_db;
@@ -1873,7 +2063,7 @@ impl Gradient for CurveProblem {
                     let vmax = param[0];
                     let (denominator, d_den_d_km) = non_zero_param_with_derivative(x + param[1]);
                     let model = vmax * x / denominator;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_model_d_vmax = x / denominator;
                     let d_model_d_km = -vmax * x / (denominator * denominator) * d_den_d_km;
 
@@ -1885,9 +2075,8 @@ impl Gradient for CurveProblem {
                 for point in points {
                     let x = point.x();
                     let exp_part = (-param[2] * x).exp();
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] + param[1] * exp_part - point.y());
+                    let model = param[0] + param[1] * exp_part;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     gradient[0] += residual;
                     gradient[1] += residual * exp_part;
                     gradient[2] += residual * (-param[1] * x * exp_part);
@@ -1897,9 +2086,8 @@ impl Gradient for CurveProblem {
                 for point in points {
                     let x = point.x();
                     let exp_part = (param[1] * x).exp();
-                    let residual = self.loss_metric.residual_derivative(
-                        param[0] * exp_part + param[2] * x + param[3] - point.y(),
-                    );
+                    let model = param[0] * exp_part + param[2] * x + param[3];
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     gradient[0] += residual * exp_part;
                     gradient[1] += residual * (param[0] * exp_part * x);
                     gradient[2] += residual * x;
@@ -1912,9 +2100,8 @@ impl Gradient for CurveProblem {
                     let (c, d_c_raw) = positive_param_with_derivative(param[2]);
                     let exponent = -LN_2 * x / c;
                     let pow = exponent.exp();
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] + param[1] * pow - point.y());
+                    let model = param[0] + param[1] * pow;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_model_d_c = param[1] * pow * LN_2 * x / (c * c);
 
                     gradient[0] += residual;
@@ -1931,7 +2118,7 @@ impl Gradient for CurveProblem {
                     let exp_part = (-k * x).exp();
                     let one_minus_exp = -(-k * x).exp_m1();
                     let model = y0 - (v0 / k) * one_minus_exp;
-                    let residual = self.loss_metric.residual_derivative(model - point.y());
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_model_d_v0 = -one_minus_exp / k;
                     let d_model_d_k = v0 * (one_minus_exp - k * x * exp_part) / (k * k);
 
@@ -1946,9 +2133,8 @@ impl Gradient for CurveProblem {
                     let z = param[1] * (x - param[2]);
                     let tanh_z = z.tanh();
                     let sech2_z = 1.0 - tanh_z * tanh_z;
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] * tanh_z + param[3] - point.y());
+                    let model = param[0] * tanh_z + param[3];
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * tanh_z;
                     gradient[1] += residual * (param[0] * sech2_z * (x - param[2]));
@@ -1962,9 +2148,8 @@ impl Gradient for CurveProblem {
                     let z = param[1] * (x - param[2]);
                     let atan_z = z.atan();
                     let inv_den = 1.0 / (1.0 + z * z);
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] * atan_z + param[3] - point.y());
+                    let model = param[0] * atan_z + param[3];
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * atan_z;
                     gradient[1] += residual * (param[0] * (x - param[2]) * inv_den);
@@ -1978,9 +2163,8 @@ impl Gradient for CurveProblem {
                     let z = param[1] * (x - param[2]);
                     let softplus_z = softplus(z);
                     let sigma_z = sigmoid(z);
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] * softplus_z + param[3] - point.y());
+                    let model = param[0] * softplus_z + param[3];
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
 
                     gradient[0] += residual * softplus_z;
                     gradient[1] += residual * (param[0] * sigma_z * (x - param[2]));
@@ -1992,9 +2176,8 @@ impl Gradient for CurveProblem {
                 for point in points {
                     let x = positive_x(point.x());
                     let pow = x.powf(param[1]);
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(param[0] * pow - point.y());
+                    let model = param[0] * pow;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     gradient[0] += residual * pow;
                     gradient[1] += residual * param[0] * pow * x.ln();
                 }
@@ -2008,9 +2191,8 @@ impl Gradient for CurveProblem {
                     let c2 = c * c;
                     let delta = x - b;
                     let exp_part = (-(delta * delta) / (2.0 * c2)).exp();
-                    let residual = self
-                        .loss_metric
-                        .residual_derivative(a * exp_part - point.y());
+                    let model = a * exp_part;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
                     let d_model_d_a = exp_part;
                     let d_model_d_b = a * exp_part * delta / c2;
                     let d_model_d_c = a * exp_part * delta * delta / (c2 * c);
@@ -2048,35 +2230,55 @@ impl Hessian for CurveProblem {
 
 /// Вычисляет базовые метрики качества подгонки: `(MSE, RMSE)`.
 pub fn calculate_metrics(points: &Points, params: &CurveParams) -> (f64, f64) {
-    let mse = points
-        .as_slice()
-        .iter()
-        .map(|point| {
-            let residual = params.evaluate(point.x()) - point.y();
-            residual * residual
-        })
-        .sum::<f64>()
-        / points.len() as f64;
-    (mse, mse.sqrt())
+    calculate_metrics_with_quantization(points, params, MetricQuantization::Disabled)
 }
 
+pub(crate) fn calculate_metrics_with_quantization(
+    points: &Points,
+    params: &CurveParams,
+    metric_quantization: MetricQuantization,
+) -> (f64, f64) {
+    let scalar = calculate_scalar_metrics_from_evaluator(points, metric_quantization, |x| {
+        params.evaluate(x)
+    });
+    (scalar.mse, scalar.rmse)
+}
+
+#[cfg(test)]
 pub(crate) fn calculate_iteration_metrics(
     points: &Points,
     params: &CurveParams,
     loss_metric: OptimizationLossMetric,
 ) -> IterationMetricSnapshot {
-    calculate_iteration_metrics_from_evaluator(points, loss_metric, |x| params.evaluate(x))
+    calculate_iteration_metrics_with_quantization(
+        points,
+        params,
+        loss_metric,
+        MetricQuantization::Disabled,
+    )
+}
+
+pub(crate) fn calculate_iteration_metrics_with_quantization(
+    points: &Points,
+    params: &CurveParams,
+    loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
+) -> IterationMetricSnapshot {
+    calculate_iteration_metrics_from_evaluator(points, loss_metric, metric_quantization, |x| {
+        params.evaluate(x)
+    })
 }
 
 fn calculate_iteration_metrics_from_evaluator<F>(
     points: &Points,
     loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
     evaluate: F,
 ) -> IterationMetricSnapshot
 where
     F: FnMut(f64) -> f64,
 {
-    let scalar = calculate_scalar_metrics_from_evaluator(points, evaluate);
+    let scalar = calculate_scalar_metrics_from_evaluator(points, metric_quantization, evaluate);
     IterationMetricSnapshot {
         loss: scalar_loss_value(loss_metric, &scalar),
         mse: scalar.mse,
@@ -2303,6 +2505,7 @@ struct SplineProblem {
     points: Points,
     extrapolation: SplineExtrapolation,
     loss_metric: OptimizationLossMetric,
+    residual_quantizer: ResidualQuantizer,
 }
 
 impl SplineProblem {
@@ -2312,6 +2515,7 @@ impl SplineProblem {
         points: &Points,
         extrapolation: SplineExtrapolation,
         loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
     ) -> Self {
         let knot_x = initial_knots
             .iter()
@@ -2324,7 +2528,13 @@ impl SplineProblem {
             points: points.clone(),
             extrapolation,
             loss_metric,
+            residual_quantizer: ResidualQuantizer::new(metric_quantization),
         }
+    }
+
+    #[inline]
+    fn residual(&self, predicted: f64, observed: f64) -> f64 {
+        self.residual_quantizer.residual(predicted, observed)
     }
 
     fn evaluate_objective(&self, knot_y: &[f64]) -> f64 {
@@ -2340,7 +2550,7 @@ impl SplineProblem {
 
         let mut objective_sum = 0.0;
         for point in self.points.as_slice() {
-            let residual = evaluator.evaluate(point.x()) - point.y();
+            let residual = self.residual(evaluator.evaluate(point.x()), point.y());
             if !residual.is_finite() {
                 return LARGE_COST;
             }
@@ -2789,19 +2999,29 @@ fn scalar_loss_value(loss_metric: OptimizationLossMetric, metrics: &ScalarMetric
     }
 }
 
-fn calculate_scalar_metrics_from_evaluator<F>(points: &Points, mut evaluate: F) -> ScalarMetrics
+fn calculate_scalar_metrics_from_evaluator<F>(
+    points: &Points,
+    metric_quantization: MetricQuantization,
+    mut evaluate: F,
+) -> ScalarMetrics
 where
     F: FnMut(f64) -> f64,
 {
+    let quantizer = ResidualQuantizer::new(metric_quantization);
     let sample_count = points.len() as f64;
-    let y_mean = points.as_slice().iter().map(|point| point.y()).sum::<f64>() / sample_count;
+    let y_mean = points
+        .as_slice()
+        .iter()
+        .map(|point| quantizer.quantize_value(point.y()))
+        .sum::<f64>()
+        / sample_count;
 
     let mut sse = 0.0;
     let mut sae = 0.0;
     let mut soft_l1_sum = 0.0;
     let mut max_abs_error = 0.0_f64;
     for point in points.as_slice() {
-        let residual = evaluate(point.x()) - point.y();
+        let residual = quantizer.residual(evaluate(point.x()), point.y());
         let abs_residual = residual.abs();
         sse += residual * residual;
         sae += abs_residual;
@@ -2813,7 +3033,7 @@ where
         .as_slice()
         .iter()
         .map(|point| {
-            let centered = point.y() - y_mean;
+            let centered = quantizer.quantize_value(point.y()) - y_mean;
             centered * centered
         })
         .sum::<f64>();
@@ -2841,16 +3061,22 @@ struct EvaluatorMetrics {
     mse: f64,
     rmse: f64,
     mae: f64,
+    soft_l1: f64,
     r2: f64,
     max_abs_error: f64,
     residuals: Vec<[f64; 2]>,
 }
 
-fn calculate_metrics_from_evaluator<F>(points: &Points, mut evaluate: F) -> EvaluatorMetrics
+fn calculate_metrics_from_evaluator<F>(
+    points: &Points,
+    metric_quantization: MetricQuantization,
+    mut evaluate: F,
+) -> EvaluatorMetrics
 where
     F: FnMut(f64) -> f64,
 {
-    let scalar = calculate_scalar_metrics_from_evaluator(points, &mut evaluate);
+    let scalar =
+        calculate_scalar_metrics_from_evaluator(points, metric_quantization, &mut evaluate);
 
     let mut residuals = Vec::with_capacity(points.len());
     for point in points.as_slice() {
@@ -2862,6 +3088,7 @@ where
         mse: scalar.mse,
         rmse: scalar.rmse,
         mae: scalar.mae,
+        soft_l1: scalar.soft_l1,
         r2: scalar.r2,
         max_abs_error: scalar.max_abs_error,
         residuals,
@@ -2944,24 +3171,33 @@ fn prepare_spline_inputs(
     })
 }
 
-fn build_spline_result_from_knot_y(
-    points: &Points,
+struct SplineFinalizeContext<'a> {
+    points: &'a Points,
     family: SplineFamilyKind,
     config: SplineConfig,
-    knot_x: &[f64],
+    knot_x: &'a [f64],
+    loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
+}
+
+fn build_spline_result_from_knot_y(
+    context: &SplineFinalizeContext<'_>,
     knot_y: &[f64],
     iterations: u64,
-) -> Result<SplineResult, FitError> {
+) -> Result<(SplineResult, IterationMetricSnapshot), FitError> {
     let built = build_spline_curve_from_knot_y(
-        family,
-        config.extrapolation,
-        config.samples,
-        knot_x,
+        context.family,
+        context.config.extrapolation,
+        context.config.samples,
+        context.knot_x,
         knot_y,
     )?;
-    let metrics = calculate_metrics_from_evaluator(points, |x| built.evaluator.evaluate(x));
+    let metrics =
+        calculate_metrics_from_evaluator(context.points, context.metric_quantization, |x| {
+            built.evaluator.evaluate(x)
+        });
 
-    Ok(SplineResult {
+    let result = SplineResult {
         knots: built.knots,
         curve: built.curve,
         mse: metrics.mse,
@@ -2971,7 +3207,22 @@ fn build_spline_result_from_knot_y(
         max_abs_error: metrics.max_abs_error,
         residuals: metrics.residuals,
         iterations,
-    })
+    };
+    let iteration_metrics = IterationMetricSnapshot {
+        loss: match context.loss_metric {
+            OptimizationLossMetric::Mse => metrics.mse,
+            OptimizationLossMetric::Mae => metrics.mae,
+            OptimizationLossMetric::SoftL1 => metrics.soft_l1,
+        },
+        mse: metrics.mse,
+        rmse: metrics.rmse,
+        mae: metrics.mae,
+        soft_l1: metrics.soft_l1,
+        r2: metrics.r2,
+        max_abs_error: metrics.max_abs_error,
+    };
+
+    Ok((result, iteration_metrics))
 }
 
 /// Строит стартовую кривую сплайна из пользовательской инициализации.

@@ -84,6 +84,31 @@ pub(crate) fn fit_curve_with_progress_and_optimizer_config_and_loss_metric<F>(
 where
     F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
 {
+    fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization(
+        points,
+        family,
+        initial_params,
+        optimizer_config,
+        loss_metric,
+        MetricQuantization::Disabled,
+        on_iteration,
+    )
+}
+
+pub(crate) fn fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization<
+    F,
+>(
+    points: &Points,
+    family: CurveFamily,
+    initial_params: CurveParams,
+    optimizer_config: &OptimizerConfig,
+    loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
+    on_iteration: F,
+) -> Result<FitResult, FitError>
+where
+    F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
+{
     if initial_params.family() != family {
         return Err(FitError::InvalidInput(InputError::FamilyMismatch {
             expected: family,
@@ -92,13 +117,15 @@ where
     }
     family.validate_points(points)?;
     let mut on_iteration = on_iteration;
-    let mut runner = IncrementalFitRunner::new_with_optimizer_config_and_loss_metric(
-        points,
-        family,
-        initial_params,
-        optimizer_config,
-        loss_metric,
-    )?;
+    let mut runner =
+        IncrementalFitRunner::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
+            points,
+            family,
+            initial_params,
+            optimizer_config,
+            loss_metric,
+            metric_quantization,
+        )?;
     loop {
         match runner.step()? {
             IncrementalFitStep::Iteration {

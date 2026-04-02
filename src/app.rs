@@ -64,19 +64,23 @@ use crate::domain::{
 };
 use crate::fit::IterationMetricSnapshot;
 use crate::fit::OptimizationLossMetric;
+use crate::fit::{
+    DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, MetricQuantization,
+    MetricQuantizationDecimalPlaces, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
+    SplineFamilyKind, SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
+    calculate_iteration_metrics_with_quantization, calculate_metrics_with_quantization,
+    default_spline_initial_knot_y, sample_curve,
+};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::fit::{FitError, fit_curve_with_progress_and_optimizer_config_and_loss_metric};
+use crate::fit::{
+    FitError, fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization,
+};
 #[cfg(target_arch = "wasm32")]
 use crate::fit::{
     IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
-use crate::fit::{
-    SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation, SplineFamilyKind,
-    SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
-    calculate_iteration_metrics, calculate_metrics, default_spline_initial_knot_y, sample_curve,
-};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -644,7 +648,10 @@ enum FitWorkerMessage {
     },
     Stopped,
     Finished(FitResult),
-    SplineFinished(SplineResult),
+    SplineFinished {
+        result: SplineResult,
+        metrics: IterationMetricSnapshot,
+    },
     Failed(String),
 }
 
@@ -672,6 +679,8 @@ pub struct CurveFitApp {
     optimizer_method: OptimizerMethod,
     optimizer_mode: OptimizerUiMode,
     optimization_loss_metric: OptimizationLossMetric,
+    metric_quantization_enabled: bool,
+    metric_quantization_decimal_places: u8,
     normalize_parametric_data: bool,
     lbfgs_inputs: LbfgsInputState,
     lbfgs_preset: OptimizerPreset,
@@ -708,6 +717,7 @@ pub struct CurveFitApp {
     spline_initial_knot_y_inputs: Vec<String>,
     fit_in_progress: bool,
     fit_loss_metric: OptimizationLossMetric,
+    fit_metric_quantization: MetricQuantization,
     fit_preview_params: Option<CurveParams>,
     fit_preview_iteration: Option<u64>,
     fit_result: Option<FitResult>,
@@ -925,6 +935,13 @@ impl CurveFitApp {
 
     fn set_spline_initial_knot_y_inputs(&mut self, values: &[f64]) {
         self.spline_initial_knot_y_inputs = values.iter().map(|value| value.to_string()).collect();
+    }
+
+    fn selected_metric_quantization(&self) -> Result<MetricQuantization, String> {
+        MetricQuantization::from_ui_state(
+            self.metric_quantization_enabled,
+            self.metric_quantization_decimal_places,
+        )
     }
 
     fn clear_fit_outputs(&mut self) {
@@ -1245,6 +1262,8 @@ impl Default for CurveFitApp {
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,
             optimization_loss_metric: OptimizationLossMetric::default(),
+            metric_quantization_enabled: false,
+            metric_quantization_decimal_places: DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES,
             normalize_parametric_data: false,
             lbfgs_inputs: LbfgsInputState::from_config(&default_lbfgs),
             lbfgs_preset: infer_lbfgs_preset(&default_lbfgs),
@@ -1283,6 +1302,7 @@ impl Default for CurveFitApp {
             replay: ReplayState::default(),
             fit_in_progress: false,
             fit_loss_metric: OptimizationLossMetric::default(),
+            fit_metric_quantization: MetricQuantization::Disabled,
             fit_preview_params: None,
             fit_preview_iteration: None,
             fit_result: None,

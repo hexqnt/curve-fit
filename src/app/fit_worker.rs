@@ -9,6 +9,7 @@ struct ParametricFitWorkerInput {
     normalization: Option<ParametricNormalization>,
     optimizer_config: OptimizerConfig,
     loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
     cancel_flag: Arc<AtomicBool>,
 }
 
@@ -48,47 +49,27 @@ impl CurveFitApp {
         points: &Points,
         params: &CurveParams,
     ) {
-        let points_slice = points.as_slice();
-        let sample_count = points_slice.len() as f64;
-        let y_mean = points_slice.iter().map(|point| point.y()).sum::<f64>() / sample_count;
+        let metrics = calculate_iteration_metrics_with_quantization(
+            points,
+            params,
+            self.fit_loss_metric,
+            self.fit_metric_quantization,
+        );
+        self.result_metrics = Some(ExtendedMetrics {
+            mse: metrics.mse,
+            rmse: metrics.rmse,
+            mae: metrics.mae,
+            r2: metrics.r2,
+            max_abs_error: metrics.max_abs_error,
+        });
 
-        let mut sse = 0.0;
-        let mut sae = 0.0;
-        let mut max_abs_error = 0.0_f64;
         self.residual_plot_points.clear();
-        self.residual_plot_points.reserve(points_slice.len());
-        for point in points_slice {
+        self.residual_plot_points.reserve(points.len());
+        for point in points.as_slice() {
             let residual = params.evaluate(point.x()) - point.y();
-            let abs_residual = residual.abs();
-            sse += residual * residual;
-            sae += abs_residual;
-            max_abs_error = max_abs_error.max(abs_residual);
             self.residual_plot_points
                 .push(PlotPoint::new(point.x(), residual));
         }
-
-        let sst = points_slice
-            .iter()
-            .map(|point| {
-                let centered = point.y() - y_mean;
-                centered * centered
-            })
-            .sum::<f64>();
-        let mse = sse / sample_count;
-        let rmse = mse.sqrt();
-        let mae = sae / sample_count;
-        let r2 = if sst <= 1e-15 {
-            if sse <= 1e-15 { 1.0 } else { 0.0 }
-        } else {
-            1.0 - sse / sst
-        };
-        self.result_metrics = Some(ExtendedMetrics {
-            mse,
-            rmse,
-            mae,
-            r2,
-            max_abs_error,
-        });
     }
 
     pub(super) fn update_spline_result_metrics(&mut self, result: &SplineResult) {
@@ -171,10 +152,11 @@ impl CurveFitApp {
                     if !self.discard_fit_worker_updates {
                         if let Some(points) = fit_points.as_ref() {
                             self.update_parametric_result_metrics(points, &result.params);
-                            let metrics = calculate_iteration_metrics(
+                            let metrics = calculate_iteration_metrics_with_quantization(
                                 points,
                                 &result.params,
                                 self.fit_loss_metric,
+                                self.fit_metric_quantization,
                             );
                             self.iteration_diagnostics.append(
                                 result.iterations,
@@ -195,14 +177,13 @@ impl CurveFitApp {
                     keep_receiver = false;
                     break;
                 }
-                Ok(FitWorkerMessage::SplineFinished(result)) => {
+                Ok(FitWorkerMessage::SplineFinished { result, metrics }) => {
                     self.fit_in_progress = false;
                     if !self.discard_fit_worker_updates {
                         let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
                         let spline_plot_curve =
                             Self::plot_points_from_pairs(result.curve.iter().copied());
                         self.update_spline_result_metrics(&result);
-                        let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
                         self.iteration_diagnostics.append_spline(
                             result.iterations,
                             metrics,
@@ -343,7 +324,12 @@ impl CurveFitApp {
                         params
                     };
                     let metrics = if let Some(points) = self.active_fit_points.as_ref() {
-                        calculate_iteration_metrics(points, &params, self.fit_loss_metric)
+                        calculate_iteration_metrics_with_quantization(
+                            points,
+                            &params,
+                            self.fit_loss_metric,
+                            self.fit_metric_quantization,
+                        )
                     } else {
                         metrics
                     };
@@ -367,14 +353,19 @@ impl CurveFitApp {
                     }
                     let fit_points = self.active_fit_points.take();
                     if let Some(points) = fit_points.as_ref() {
-                        let (mse, rmse) = calculate_metrics(points, &result.params);
+                        let (mse, rmse) = calculate_metrics_with_quantization(
+                            points,
+                            &result.params,
+                            self.fit_metric_quantization,
+                        );
                         result.mse = mse;
                         result.rmse = rmse;
                         self.update_parametric_result_metrics(points, &result.params);
-                        let metrics = calculate_iteration_metrics(
+                        let metrics = calculate_iteration_metrics_with_quantization(
                             points,
                             &result.params,
                             self.fit_loss_metric,
+                            self.fit_metric_quantization,
                         );
                         self.iteration_diagnostics.append(
                             result.iterations,
@@ -421,13 +412,12 @@ impl CurveFitApp {
                     self.upsert_spline_replay_frame(iteration, Self::plot_points_from_pairs(curve));
                     self.status = Some(StatusMessage::FittingInProgress);
                 }
-                Ok(IncrementalSplineFitStep::Finished(result)) => {
+                Ok(IncrementalSplineFitStep::Finished { result, metrics }) => {
                     self.fit_in_progress = false;
                     let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
                     let spline_plot_curve =
                         Self::plot_points_from_pairs(result.curve.iter().copied());
                     self.update_spline_result_metrics(&result);
-                    let metrics = result.iteration_metrics_snapshot(self.fit_loss_metric);
                     self.iteration_diagnostics
                         .append_spline(result.iterations, metrics, &knot_y);
                     self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
@@ -464,6 +454,7 @@ impl CurveFitApp {
             normalization,
             optimizer_config,
             loss_metric,
+            metric_quantization,
             cancel_flag,
         } = input;
         let (tx, rx) = mpsc::channel();
@@ -477,12 +468,14 @@ impl CurveFitApp {
             let progress_cancel = cancel_flag.clone();
             let progress_points = Arc::new(display_points);
             let callback_points = Arc::clone(&progress_points);
-            let result = fit_curve_with_progress_and_optimizer_config_and_loss_metric(
+            let result =
+                fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization(
                 &optimization_points,
                 family,
                 optimization_initial_params,
                 &optimizer_config,
                 loss_metric,
+                metric_quantization,
                 move |iteration, params| {
                     if progress_cancel.load(Ordering::Relaxed) {
                         return false;
@@ -496,10 +489,11 @@ impl CurveFitApp {
                         } else {
                             params
                         };
-                        let metrics = calculate_iteration_metrics(
+                        let metrics = calculate_iteration_metrics_with_quantization(
                             callback_points.as_ref(),
                             &params,
                             loss_metric,
+                            metric_quantization,
                         );
                         let _ = iter_tx.send(FitWorkerMessage::Iteration {
                             iteration,
@@ -524,7 +518,11 @@ impl CurveFitApp {
                     } else {
                         result.params
                     };
-                    let (mse, rmse) = calculate_metrics(progress_points.as_ref(), &params);
+                    let (mse, rmse) = calculate_metrics_with_quantization(
+                        progress_points.as_ref(),
+                        &params,
+                        metric_quantization,
+                    );
                     let _ = tx.send(FitWorkerMessage::Finished(FitResult {
                         family: result.family,
                         params,
@@ -554,6 +552,7 @@ impl CurveFitApp {
         cancel_flag: Arc<AtomicBool>,
     ) {
         let loss_metric = self.fit_loss_metric;
+        let metric_quantization = self.fit_metric_quantization;
         let (tx, rx) = mpsc::channel();
         self.fit_worker_rx = Some(rx);
         self.fit_cancel_flag = Some(cancel_flag.clone());
@@ -569,6 +568,7 @@ impl CurveFitApp {
                     &optimizer_config,
                     Some(initial_knot_y.as_slice()),
                     loss_metric,
+                    metric_quantization,
                 ) {
                     Ok(runner) => runner,
                     Err(error) => {
@@ -597,8 +597,8 @@ impl CurveFitApp {
                             curve,
                         });
                     }
-                    Ok(IncrementalSplineFitStep::Finished(result)) => {
-                        let _ = tx.send(FitWorkerMessage::SplineFinished(result));
+                    Ok(IncrementalSplineFitStep::Finished { result, metrics }) => {
+                        let _ = tx.send(FitWorkerMessage::SplineFinished { result, metrics });
                         break;
                     }
                     Ok(IncrementalSplineFitStep::Cancelled) | Err(FitError::Cancelled) => {
@@ -635,6 +635,14 @@ impl CurveFitApp {
         };
         let loss_metric = self.optimization_loss_metric;
         self.fit_loss_metric = loss_metric;
+        let metric_quantization = match self.selected_metric_quantization() {
+            Ok(metric_quantization) => metric_quantization,
+            Err(error) => {
+                self.status = Some(StatusMessage::Error(error));
+                return;
+            }
+        };
+        self.fit_metric_quantization = metric_quantization;
 
         let selected_model = self.resolved_model();
         if let Some(spline_family) = selected_model.spline_family() {
@@ -687,6 +695,7 @@ impl CurveFitApp {
                     &optimizer_config,
                     Some(initial_knot_y.as_slice()),
                     loss_metric,
+                    metric_quantization,
                 ) {
                     Ok(runner) => {
                         self.wasm_fit_job =
@@ -753,8 +762,12 @@ impl CurveFitApp {
         // Очищаем предыдущий успешный результат только когда новый запуск уже валиден.
         self.clear_fit_outputs();
         self.active_fit_points = Some(points.clone());
-        self.iteration_diagnostics
-            .initialize(&points, &initial_params, loss_metric);
+        self.iteration_diagnostics.initialize(
+            &points,
+            &initial_params,
+            loss_metric,
+            metric_quantization,
+        );
         self.upsert_parametric_replay_frame(0, initial_params.clone());
         self.status = Some(StatusMessage::FittingInProgress);
 
@@ -769,18 +782,20 @@ impl CurveFitApp {
                 normalization,
                 optimizer_config,
                 loss_metric,
+                metric_quantization,
                 cancel_flag,
             });
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            match IncrementalFitRunner::new_with_optimizer_config_and_loss_metric(
+            match IncrementalFitRunner::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
                 &optimization_points,
                 family,
                 optimization_initial_params,
                 &optimizer_config,
                 loss_metric,
+                metric_quantization,
             ) {
                 Ok(runner) => {
                     self.wasm_fit_job = Some(WasmFitJob::Deferred(WasmFitRunner::Parametric {

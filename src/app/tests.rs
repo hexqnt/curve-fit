@@ -3,7 +3,7 @@ use super::{
     ParamInitMethod, ReplayFramePayload, StatusMessage, UiLanguage, data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
-use crate::fit::{IterationMetricSnapshot, OptimizationLossMetric};
+use crate::fit::{IterationMetricSnapshot, MetricQuantization, OptimizationLossMetric};
 use eframe::egui;
 use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,6 +36,11 @@ fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
         (actual - expected).abs() <= tolerance,
         "expected {expected}, got {actual}, tolerance {tolerance}"
     );
+}
+
+fn metric_quantization(decimal_places: u8) -> MetricQuantization {
+    MetricQuantization::from_ui_state(true, decimal_places)
+        .expect("test decimal places must be valid")
 }
 
 fn metrics_snapshot(
@@ -129,8 +134,42 @@ fn optimization_metric_defaults_to_mse() {
     let app = CurveFitApp::default();
     assert_eq!(app.optimization_loss_metric, OptimizationLossMetric::Mse);
     assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
+    assert!(!app.metric_quantization_enabled);
+    assert_eq!(
+        app.metric_quantization_decimal_places,
+        super::DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES
+    );
+    assert_eq!(app.fit_metric_quantization, MetricQuantization::Disabled);
     assert!(app.replay.autoplay_on_fit);
     assert!(app.panel.diagnostics_hide_non_loss_by_default_pending);
+}
+
+#[test]
+fn update_parametric_metrics_applies_quantization_and_keeps_raw_residual_plot() {
+    let points = points_from_pairs(&[(0.0, 1.225), (1.0, -1.225)]);
+    let params = CurveParams::Linear { a: 0.0, b: 0.0 };
+    let mut app = CurveFitApp {
+        fit_loss_metric: OptimizationLossMetric::Mse,
+        fit_metric_quantization: metric_quantization(2),
+        ..Default::default()
+    };
+
+    app.update_parametric_result_metrics(&points, &params);
+
+    let metrics = app
+        .result_metrics
+        .expect("result metrics must be computed for parametric fit");
+    assert_approx_eq(metrics.mse, 1.5129, 1e-12);
+    assert_approx_eq(metrics.rmse, 1.23, 1e-12);
+    assert_approx_eq(metrics.mae, 1.23, 1e-12);
+    assert_approx_eq(metrics.r2, 0.0, 1e-12);
+    assert_approx_eq(metrics.max_abs_error, 1.23, 1e-12);
+
+    assert_eq!(app.residual_plot_points.len(), 2);
+    assert_approx_eq(app.residual_plot_points[0].x, 0.0, 1e-12);
+    assert_approx_eq(app.residual_plot_points[0].y, -1.225, 1e-12);
+    assert_approx_eq(app.residual_plot_points[1].x, 1.0, 1e-12);
+    assert_approx_eq(app.residual_plot_points[1].y, 1.225, 1e-12);
 }
 
 #[test]
@@ -338,7 +377,12 @@ fn diagnostics_initialize_stores_iteration_zero_state() {
     let params = CurveParams::Linear { a: 2.0, b: 1.0 };
     let mut diagnostics = IterationDiagnostics::default();
 
-    diagnostics.initialize(&points, &params, OptimizationLossMetric::Mse);
+    diagnostics.initialize(
+        &points,
+        &params,
+        OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
+    );
 
     assert_eq!(
         diagnostics.parameter_names,
@@ -364,6 +408,7 @@ fn diagnostics_append_replaces_duplicate_iteration() {
         &points,
         &CurveParams::Linear { a: 2.0, b: 1.0 },
         OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
     );
 
     diagnostics.append(
@@ -399,6 +444,7 @@ fn diagnostics_append_resets_when_family_changes() {
         &points,
         &CurveParams::Linear { a: 2.0, b: 1.0 },
         OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
     );
     diagnostics.append(
         4,
@@ -753,6 +799,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
         &line_points(),
         &CurveParams::Linear { a: 2.0, b: 1.0 },
         OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
     );
 
     app.apply_param_init_method(ParamInitMethod::DataBased);
@@ -808,6 +855,7 @@ fn apply_fitted_param_init_updates_inputs_and_clears_fit_state() {
         &line_points(),
         &CurveParams::Linear { a: 2.0, b: 1.0 },
         OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
     );
 
     app.apply_fitted_param_init();
@@ -938,6 +986,28 @@ fn wait_fit_completion(app: &mut CurveFitApp) {
         std::thread::sleep(Duration::from_millis(1));
     }
     panic!("fit did not complete in time");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn run_fit_snapshots_metric_quantization_at_start() {
+    let mut app = make_linear_fit_app();
+    app.metric_quantization_enabled = true;
+    app.metric_quantization_decimal_places = 3;
+
+    app.run_fit();
+    assert!(app.fit_in_progress);
+    assert_eq!(app.fit_metric_quantization, metric_quantization(3));
+
+    app.metric_quantization_enabled = false;
+    app.metric_quantization_decimal_places = 0;
+    assert_eq!(
+        app.fit_metric_quantization,
+        metric_quantization(3),
+        "active fit must keep its startup snapshot"
+    );
+
+    wait_fit_completion(&mut app);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

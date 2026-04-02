@@ -41,7 +41,7 @@ pub(crate) fn fit_spline_family_with_optimizer_config_and_loss_metric(
     loop {
         match runner.step()? {
             IncrementalSplineFitStep::Iteration { .. } => {}
-            IncrementalSplineFitStep::Finished(result) => return Ok(result),
+            IncrementalSplineFitStep::Finished { result, .. } => return Ok(result),
             IncrementalSplineFitStep::Cancelled => return Err(FitError::Cancelled),
         }
     }

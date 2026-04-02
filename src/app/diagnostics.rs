@@ -30,10 +30,16 @@ impl IterationDiagnostics {
         points: &Points,
         params: &CurveParams,
         loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
     ) {
         let family = params.family();
         self.reset_for_family(family);
-        let metrics = calculate_iteration_metrics(points, params, loss_metric);
+        let metrics = calculate_iteration_metrics_with_quantization(
+            points,
+            params,
+            loss_metric,
+            metric_quantization,
+        );
         self.append(0, metrics, params);
     }
 
