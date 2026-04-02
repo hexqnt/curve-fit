@@ -2,38 +2,50 @@ use super::*;
 
 pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
-    egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
-        .selected_text(optimization_loss_metric_label(
-            language,
-            app.optimization_loss_metric,
-        ))
-        .show_ui(ui, |ui| {
-            for metric in OptimizationLossMetric::ALL {
-                ui.selectable_value(
-                    &mut app.optimization_loss_metric,
-                    metric,
-                    optimization_loss_metric_label(language, metric),
-                );
-            }
-        });
-    ui.label(
-        egui::RichText::new(tr(
-            language,
-            "The selected metric is minimized during fitting and shown as loss(metric) in diagnostics.",
-            "Выбранная метрика минимизируется при фитинге и отображается как loss(metric) в диагностике.",
-        ))
-        .small(),
-    );
+    ui.horizontal_wrapped(|ui| {
+        egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
+            .selected_text(optimization_loss_metric_label(
+                language,
+                app.optimization_loss_metric,
+            ))
+            .show_ui(ui, |ui| {
+                for metric in OptimizationLossMetric::ALL {
+                    ui.selectable_value(
+                        &mut app.optimization_loss_metric,
+                        metric,
+                        optimization_loss_metric_label(language, metric),
+                    );
+                }
+            });
+        CurveFitApp::info_tooltip(
+            ui,
+            tr(
+                language,
+                "Optimization metric\n- This metric is minimized during fitting\n- Diagnostics shows it as loss(metric)\n- MSE: smooth gradients, MAE: more robust to outliers, soft_l1: compromise",
+                "Метрика оптимизации\n- Эта метрика минимизируется во время фитинга\n- В диагностике она отображается как loss(metric)\n- MSE: более гладкие градиенты, MAE: устойчивее к выбросам, soft_l1: компромисс",
+            ),
+        );
+    });
     ui.add_space(2.0);
-    CurveFitApp::toggle_switch_labeled(
-        ui,
-        &mut app.metric_quantization_enabled,
-        tr(
-            language,
-            "Quantize objective/metrics before residual",
-            "Квантизовать objective/метрики перед residual",
-        ),
-    );
+    ui.horizontal_wrapped(|ui| {
+        CurveFitApp::toggle_switch_labeled(
+            ui,
+            &mut app.metric_quantization_enabled,
+            tr(
+                language,
+                "Quantize objective/metrics before residual",
+                "Квантизовать objective/метрики перед residual",
+            ),
+        );
+        CurveFitApp::info_tooltip(
+            ui,
+            tr(
+                language,
+                "Quantization before residual\n- Pipeline: Q(y_pred) - Q(y_true)\n- Affects optimization objective and all reported metrics\n- Useful when measurements are coarse/discrete\n- Too aggressive rounding can slow or destabilize convergence",
+                "Квантизация перед residual\n- Пайплайн: Q(y_pred) - Q(y_true)\n- Влияет на objective оптимизации и все отображаемые метрики\n- Полезна при грубых/дискретных измерениях\n- Слишком сильное округление может замедлить или ухудшить сходимость",
+            ),
+        );
+    });
     app.metric_quantization_decimal_places = app.metric_quantization_decimal_places.clamp(
         MetricQuantizationDecimalPlaces::MIN,
         MetricQuantizationDecimalPlaces::MAX,
@@ -47,14 +59,6 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .text(tr(language, "Decimal places", "Знаков после запятой")),
         );
     });
-    ui.label(
-        egui::RichText::new(tr(
-            language,
-            "Residual pipeline: Q(y_pred) - Q(y_true). Quantization affects optimization objective and reported metrics.",
-            "Пайплайн residual: Q(y_pred) - Q(y_true). Квантизация влияет на objective оптимизации и отображаемые метрики.",
-        ))
-        .small(),
-    );
 }
 
 pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {

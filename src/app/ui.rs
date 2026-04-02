@@ -166,6 +166,42 @@ impl CurveFitApp {
         .inner
     }
 
+    fn info_tooltip(ui: &mut egui::Ui, text: impl AsRef<str>) -> egui::Response {
+        let lines = text
+            .as_ref()
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        let response = ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new("ℹ")
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                )
+                .sense(egui::Sense::hover()),
+            )
+            .on_hover_cursor(egui::CursorIcon::Default);
+
+        response.on_hover_ui(|ui| {
+            ui.set_max_width(380.0);
+            ui.spacing_mut().item_spacing.y = 3.0;
+            match lines.as_slice() {
+                [] => {}
+                [single] => {
+                    ui.label(*single);
+                }
+                [title, details @ ..] => {
+                    ui.label(egui::RichText::new(*title).strong());
+                    for line in details {
+                        ui.label(egui::RichText::new(*line).small());
+                    }
+                }
+            }
+        })
+    }
+
     pub(super) fn next_unit_random(&mut self) -> f64 {
         self.spray_seed = self
             .spray_seed

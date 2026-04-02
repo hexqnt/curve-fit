@@ -61,6 +61,22 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let formula_info = model_formula_info(language, app.selected_model, app.polynomial_degree);
     let plain_formula = formula_plain_text(&formula_info.full_formula);
     let formula_preview = formula_preview_text(&plain_formula, 78);
+    let formula_help = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        tr(language, "Model formula", "Формула модели"),
+        tr(
+            language,
+            "- This card shows a shortened preview",
+            "- В этой карточке показывается сокращенное превью",
+        ),
+        tr(
+            language,
+            "- Use the fx button to open the full formula in a separate window",
+            "- Используйте кнопку fx, чтобы открыть полную формулу в отдельном окне",
+        ),
+        tr(language, "Model notes:", "Примечания по модели:",),
+        formula_info.notes
+    );
     ui.add_space(2.0);
     egui::Frame::new()
         .inner_margin(egui::Margin::symmetric(10, 8))
@@ -75,6 +91,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 ui.label(
                     egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong(),
                 );
+                CurveFitApp::info_tooltip(ui, formula_help.as_str());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(egui::Button::image(open_formula_icon_image(icon_tint)))
@@ -86,15 +103,6 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 });
             });
             ui.monospace(formula_preview.as_ref());
-            ui.label(
-                egui::RichText::new(tr(
-                    language,
-                    "Preview only. Open in a separate window to inspect long formulas.",
-                    "Показано превью. Откройте отдельное окно для длинных формул.",
-                ))
-                .small(),
-            );
-            ui.label(egui::RichText::new(formula_info.notes).small());
         });
 
     if let Some(family) = app.resolved_model().parametric_family() {
@@ -102,6 +110,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         let mut apply_fitted_init = false;
         ui.horizontal_wrapped(|ui| {
             ui.label(tr(language, "Initial parameters", "Начальные параметры"));
+            CurveFitApp::info_tooltip(ui, parametric_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -170,12 +179,6 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 }
             });
     } else {
-        ui.label(tr(
-            language,
-            "Spline models are non-parametric, but they optimize knot y-values as parameters.",
-            "Сплайны непараметрические, но оптимизируют knot y как параметры.",
-        ));
-        ui.add_space(4.0);
         let min_knots = app
             .resolved_model()
             .spline_min_knots()
@@ -186,6 +189,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 
         ui.horizontal_wrapped(|ui| {
             ui.label(tr(language, "Initial parameters", "Начальные параметры"));
+            CurveFitApp::info_tooltip(ui, spline_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -215,7 +219,8 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     "Knot count",
                     "Число узлов",
                 )),
-            );
+            )
+            .on_hover_text(knot_count_hint(language));
             egui::ComboBox::from_label(tr(language, "Knot reduction", "Редукция узлов"))
                 .selected_text(spline_knot_strategy_label(
                     language,
@@ -229,7 +234,9 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                             spline_knot_strategy_label(language, strategy),
                         );
                     }
-                });
+                })
+                .response
+                .on_hover_text(knot_reduction_hint(language));
             egui::ComboBox::from_label(tr(language, "Extrapolation", "Экстраполяция"))
                 .selected_text(spline_extrapolation_label(
                     language,
@@ -243,7 +250,9 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                             spline_extrapolation_label(language, extrapolation),
                         );
                     }
-                });
+                })
+                .response
+                .on_hover_text(extrapolation_hint(language));
             egui::ComboBox::from_label(tr(language, "Duplicate x", "Дубли x"))
                 .selected_text(spline_duplicate_policy_label(
                     language,
@@ -257,18 +266,23 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                             spline_duplicate_policy_label(language, policy),
                         );
                     }
-                });
+                })
+                .response
+                .on_hover_text(duplicate_x_hint(language));
         });
         app.sync_spline_initial_knot_y_inputs(app.spline_knots);
-        ui.label(format!(
-            "{}: {}",
-            tr(
-                language,
-                "Target spline parameter count",
-                "Целевое число параметров сплайна"
-            ),
-            app.spline_knots
-        ));
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "{}: {}",
+                tr(
+                    language,
+                    "Target spline parameter count",
+                    "Целевое число параметров сплайна"
+                ),
+                app.spline_knots
+            ));
+            CurveFitApp::info_tooltip(ui, spline_sampling_hint(language));
+        });
         ui.label(tr(
             language,
             "Initial knot y values",
@@ -295,23 +309,61 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                         }
                     });
             });
-        ui.label(egui::RichText::new(tr(
-                language,
-                "More knots means better fit, less smoothing; fewer knots means stronger smoothing.",
-                "Больше узлов — более точная подгонка, меньше сглаживания; меньше узлов — более сильное сглаживание.",
-            )).small());
-        ui.label(egui::RichText::new(tr(
-                language,
-                "When x-values contain duplicates you can merge them automatically instead of failing.",
-                "При повторяющихся x можно автоматически объединять точки вместо ошибки.",
-            )).small());
-        ui.label(
-            egui::RichText::new(tr(
-                language,
-                "Sample density is selected automatically from knot count and data size.",
-                "Плотность сэмплирования выбирается автоматически по числу узлов и размеру данных.",
-            ))
-            .small(),
-        );
     }
+}
+
+fn parametric_init_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Initial parameters (parametric models)\n- These values are the optimizer starting point\n- +Initialize can fill defaults/data-based/randomized values\n- \"From fitted model\" reuses parameters from the latest fit of the same family",
+        "Начальные параметры (параметрические модели)\n- Эти значения являются стартовой точкой оптимизатора\n- +Инициализация может подставить значения по умолчанию/по данным/случайно\n- \"Из обученной модели\" берёт параметры из последнего фитинга того же семейства",
+    )
+}
+
+fn spline_init_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Initial parameters (spline models)\n- Spline is non-parametric, but optimizer still tunes knot y-values\n- +Initialize sets starting knot_y values\n- Better initialization usually reduces iteration count",
+        "Начальные параметры (сплайны)\n- Сплайн непараметрический, но оптимизатор всё равно настраивает knot y\n- +Инициализация задаёт стартовые значения knot_y\n- Более удачная инициализация обычно снижает число итераций",
+    )
+}
+
+fn knot_count_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Knot count\n- More knots: more flexible fit, weaker smoothing\n- Fewer knots: stronger smoothing, simpler curve",
+        "Число узлов\n- Больше узлов: более гибкая подгонка, слабее сглаживание\n- Меньше узлов: сильнее сглаживание, проще кривая",
+    )
+}
+
+fn knot_reduction_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Knot reduction strategy\n- Bin mean: smoother on clean data, more sensitive to outliers\n- Bin median: more robust to spikes/noise",
+        "Стратегия редукции узлов\n- Среднее по окнам: обычно более гладко на чистых данных, но чувствительнее к выбросам\n- Медиана по окнам: устойчивее к пикам и шуму",
+    )
+}
+
+fn extrapolation_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Extrapolation outside knot range\n- Clamp to edge: keep boundary y-value\n- Linear: continue using boundary slope",
+        "Экстраполяция вне диапазона узлов\n- Фиксация на краю: удерживать граничное значение y\n- Линейная: продолжать по граничному наклону",
+    )
+}
+
+fn duplicate_x_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Duplicate x handling\n- Error: fail on repeated x\n- Merge by mean/median: aggregate duplicates before fitting\n- Keep first y: preserve earliest sample per x",
+        "Обработка дублей x\n- Error: завершить с ошибкой при повторяющихся x\n- Слияние по mean/median: агрегировать дубли до фитинга\n- Keep first y: оставить первый y для каждого x",
+    )
+}
+
+fn spline_sampling_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Spline sampling density\n- Selected automatically from knot count and data size\n- Increased as needed, but capped to keep UI responsive",
+        "Плотность сэмплирования сплайна\n- Выбирается автоматически по числу узлов и объёму данных\n- Увеличивается по необходимости, но ограничивается для отзывчивого UI",
+    )
 }

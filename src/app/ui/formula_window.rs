@@ -23,13 +23,13 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                 {
                     ui.ctx().copy_text(plain_formula.clone());
                 }
-                ui.label(
-                    egui::RichText::new(tr(
+                CurveFitApp::info_tooltip(
+                    ui,
+                    tr(
                         language,
-                        "Use horizontal scroll for very long formulas.",
-                        "Для очень длинных формул используйте горизонтальный скролл.",
-                    ))
-                    .small(),
+                        "Formula window\n- Use horizontal scroll for very long formulas\n- Copy formula exports plain-text representation",
+                        "Окно формулы\n- Для очень длинных формул используйте горизонтальный скролл\n- Копирование формулы экспортирует текстовое представление",
+                    ),
                 );
             });
             ui.add_space(4.0);

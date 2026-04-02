@@ -25,15 +25,10 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             OptimizerUiMode::Advanced,
             tr(language, "Advanced", "Продвинутый"),
         );
+        CurveFitApp::info_tooltip(ui, optimizer_mode_hint(language, app.optimizer_mode));
     });
 
     if app.optimizer_mode == OptimizerUiMode::Basic {
-        ui.label(tr(
-            language,
-            "Use presets to quickly control convergence speed and stability.",
-            "Используйте пресеты для быстрого выбора баланса скорости и устойчивости.",
-        ));
-
         let previous_preset = app.selected_optimizer_preset();
         let mut selected_preset = previous_preset;
         egui::ComboBox::from_label(tr(language, "Preset", "Пресет"))
@@ -145,11 +140,6 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 }
             });
     } else {
-        ui.label(tr(
-            language,
-            "Use sliders to tune optimizer parameters.",
-            "Используйте бегунки для настройки оптимизатора.",
-        ));
         match app.optimizer_method {
             OptimizerMethod::Lbfgs => {
                 let before = app.lbfgs_inputs.clone();
@@ -407,5 +397,20 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             "{}: {iteration}",
             tr(app.ui_language, "Iteration", "Итерация")
         ));
+    }
+}
+
+fn optimizer_mode_hint(language: UiLanguage, mode: OptimizerUiMode) -> &'static str {
+    match mode {
+        OptimizerUiMode::Basic => tr(
+            language,
+            "Basic mode\n- Choose a preset to balance speed vs stability\n- Good default for quick model comparison\n- Switch to Advanced for per-parameter tuning",
+            "Базовый режим\n- Выберите пресет для баланса скорости и устойчивости\n- Хороший режим по умолчанию для быстрого сравнения моделей\n- Для точной настройки параметров перейдите в Продвинутый",
+        ),
+        OptimizerUiMode::Advanced => tr(
+            language,
+            "Advanced mode\n- Tune solver parameters directly with sliders\n- Any manual change switches preset to Custom\n- Use this mode when convergence is slow or unstable",
+            "Продвинутый режим\n- Параметры решателя настраиваются напрямую бегунками\n- Любое ручное изменение переводит пресет в Custom\n- Используйте, если сходимость медленная или нестабильная",
+        ),
     }
 }

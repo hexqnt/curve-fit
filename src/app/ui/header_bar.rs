@@ -115,6 +115,7 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 {
                     app.toggle_replay_autoplay();
                 }
+                CurveFitApp::info_tooltip(ui, replay_controls_hint(language));
                 ui.separator();
                 ui.add(
                     egui::Slider::new(&mut app.replay.iteration_delay_seconds, 0.0..=3.0)
@@ -123,6 +124,14 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 );
             });
         });
+}
+
+fn replay_controls_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Replay controls\n- Displayed iteration selects the frame shown on plot/diagnostics\n- Auto-play starts replay automatically after fit\n- Play/Pause controls manual playback\n- Replay step sets delay between frames in seconds",
+        "Управление промоткой\n- Показываемая итерация выбирает кадр на графике и в диагностике\n- Автопромотка автоматически запускается после фитинга\n- Пуск/Пауза управляют ручным воспроизведением\n- Шаг промотки задаёт задержку между кадрами в секундах",
+    )
 }
 
 pub(super) fn ui_status_bar(app: &mut CurveFitApp, ui: &mut egui::Ui) {

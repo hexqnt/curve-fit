@@ -3,14 +3,6 @@ use super::*;
 pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let icon_tint = ui.visuals().text_color();
-    ui.label(
-        egui::RichText::new(tr(
-            language,
-            "Choose a tool and interact directly on the plot.",
-            "Выберите инструмент и работайте прямо на графике.",
-        ))
-        .small(),
-    );
 
     let tools = [
         PlotTool::None,
@@ -31,7 +23,10 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 )
                 .selected(selected)
                 .min_size(egui::vec2(tool_width, 0.0));
-                if ui.add(button).clicked() {
+                let response = ui
+                    .add(button)
+                    .on_hover_text(tool_usage_hint(language, tool));
+                if response.clicked() {
                     app.plot_tool = tool;
                 }
                 if index % 2 == 1 {
@@ -42,26 +37,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 
     ui.add_space(2.0);
     match app.plot_tool {
-        PlotTool::None => {
-            ui.label(
-                egui::RichText::new(tr(
-                    language,
-                    "Navigation mode: drag, zoom, and scroll the plot.",
-                    "Режим навигации: перемещение, зум и прокрутка графика.",
-                ))
-                .small(),
-            );
-        }
-        PlotTool::SinglePoint => {
-            ui.label(
-                egui::RichText::new(tr(
-                    language,
-                    "Click on plot to add a single sample.",
-                    "Клик по графику добавляет одну точку.",
-                ))
-                .small(),
-            );
-        }
+        PlotTool::None | PlotTool::SinglePoint => {}
         PlotTool::Spray => {
             ui.add(
                 egui::Slider::new(&mut app.spray_points_per_second, 10..=1_000)
@@ -75,6 +51,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             );
             ui.horizontal_wrapped(|ui| {
                 ui.label(tr(language, "Brush", "Кисть"));
+                CurveFitApp::info_tooltip(ui, spray_brush_hint(language));
                 ui.selectable_value(
                     &mut app.spray_brush,
                     SprayBrush::Uniform,
@@ -111,20 +88,18 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             parse_error_message,
         )
     };
-    ui.label(tr(
-        language,
-        "One point per line: x and y separated by space, tab, or ';'",
-        "Одна точка на строку: x и y через пробел, табуляцию или ';'",
-    ));
-    if let Some(count) = valid_points_count {
-        ui.label(
-            egui::RichText::new(format!(
-                "{}: {count}",
-                tr(language, "Valid points", "Валидных точек")
-            ))
-            .small(),
-        );
-    }
+    ui.horizontal_wrapped(|ui| {
+        CurveFitApp::info_tooltip(ui, points_input_hint(language));
+        if let Some(count) = valid_points_count {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{}: {count}",
+                    tr(language, "Valid points", "Валидных точек")
+                ))
+                .small(),
+            );
+        }
+    });
     if let Some(line) = parse_error_line {
         ui.colored_label(
             ui.visuals().error_fg_color,
@@ -135,7 +110,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         );
     }
     let can_fill_with_residuals = can_edit_points && !app.residual_plot_points.is_empty();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui
             .add_enabled(
                 can_edit_points && !app.points.undo_stack.is_empty(),
@@ -284,24 +259,19 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 
     ui.separator();
     ui.add_enabled_ui(can_edit_points, |ui| {
-        CurveFitApp::toggle_switch_labeled(
-            ui,
-            &mut app.normalize_parametric_data,
-            tr(
-                language,
-                "Normalize x/y before fit (parametric models)",
-                "Нормализовать x/y перед фитингом (параметрические модели)",
-            ),
-        );
+        ui.horizontal_wrapped(|ui| {
+            CurveFitApp::toggle_switch_labeled(
+                ui,
+                &mut app.normalize_parametric_data,
+                tr(
+                    language,
+                    "Normalize x/y before fit (parametric models)",
+                    "Нормализовать x/y перед фитингом (параметрические модели)",
+                ),
+            );
+            CurveFitApp::info_tooltip(ui, normalization_hint(language));
+        });
     });
-    ui.label(
-        egui::RichText::new(tr(
-            language,
-            "Optimization remains iterative; displayed parameters/metrics stay in original units.",
-            "Оптимизация остается итерационной; параметры и метрики в интерфейсе остаются в исходных единицах.",
-        ))
-        .small(),
-    );
 
     if app.fit_in_progress {
         ui.label(tr(
@@ -310,4 +280,53 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             "Редактирование точек отключено во время подгонки.",
         ));
     }
+}
+
+fn tool_usage_hint(language: UiLanguage, tool: PlotTool) -> &'static str {
+    match tool {
+        PlotTool::None => tr(
+            language,
+            "Navigation mode\n- Drag to pan the plot\n- Use wheel/trackpad to zoom\n- Double-click resets view bounds",
+            "Режим навигации\n- Перетаскивание двигает график\n- Колесо/трекпад меняют масштаб\n- Двойной клик сбрасывает вид в границы данных",
+        ),
+        PlotTool::SinglePoint => tr(
+            language,
+            "Single point tool\n- Left click on plot to add one sample\n- Best for precise manual placement",
+            "Инструмент одной точки\n- Левый клик по графику добавляет одну точку\n- Подходит для точного ручного ввода",
+        ),
+        PlotTool::Spray => tr(
+            language,
+            "Spray tool\n- Hold left mouse button to add a stream of points\n- Rate controls points per second\n- Radius controls spread around cursor",
+            "Инструмент распыления\n- Зажмите левую кнопку, чтобы добавлять поток точек\n- Скорость задаёт число точек в секунду\n- Радиус задаёт разброс вокруг курсора",
+        ),
+        PlotTool::Eraser => tr(
+            language,
+            "Eraser tool\n- Hold left mouse button to remove points\n- Radius controls erase area around cursor",
+            "Ластик\n- Зажмите левую кнопку, чтобы удалять точки\n- Радиус задаёт область стирания вокруг курсора",
+        ),
+    }
+}
+
+fn points_input_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Input format\n- One point per line: x y\n- Separators: space, tab, or ';'\n- Decimal comma is accepted (e.g. 1,25)\n- Empty lines are ignored",
+        "Формат ввода\n- Одна точка на строку: x y\n- Разделители: пробел, табуляция или ';'\n- Десятичная запятая поддерживается (например, 1,25)\n- Пустые строки игнорируются",
+    )
+}
+
+fn spray_brush_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Brush distribution\n- Uniform: equal probability inside circle\n- Gaussian: denser near center, softer edges",
+        "Распределение кисти\n- Равномерная: одинаковая плотность внутри круга\n- Гауссова: выше плотность в центре, мягче по краям",
+    )
+}
+
+fn normalization_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Parametric normalization\n- Fit runs on normalized x/y for better numerical conditioning\n- Displayed parameters and metrics remain in original units\n- Useful when x and y scales differ significantly",
+        "Нормализация параметрических данных\n- Фитинг выполняется на нормализованных x/y для лучшей численной устойчивости\n- Параметры и метрики в интерфейсе остаются в исходных единицах\n- Полезно при сильно разных масштабах x и y",
+    )
 }
