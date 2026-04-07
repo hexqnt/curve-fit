@@ -455,12 +455,20 @@ struct ExtendedMetrics {
     max_abs_error: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum DiagnosticsTab {
+    #[default]
+    Loss,
+    Residuals,
+}
+
 #[derive(Debug, Clone)]
 struct PanelState {
     show_left: bool,
     show_right: bool,
     show_formula_window: bool,
     show_diagnostics: bool,
+    diagnostics_tab: DiagnosticsTab,
     diagnostics_hide_non_loss_by_default_pending: bool,
     diagnostics_shared_axis_width: f32,
 }
@@ -472,6 +480,7 @@ impl Default for PanelState {
             show_right: true,
             show_formula_window: false,
             show_diagnostics: true,
+            diagnostics_tab: DiagnosticsTab::Loss,
             diagnostics_hide_non_loss_by_default_pending: true,
             diagnostics_shared_axis_width: 0.0,
         }
@@ -954,6 +963,7 @@ impl CurveFitApp {
         self.spline_plot_curve = None;
         self.sampled_curve_cache = None;
         self.iteration_diagnostics.clear();
+        self.panel.diagnostics_tab = DiagnosticsTab::Loss;
         self.panel.diagnostics_hide_non_loss_by_default_pending = true;
         self.clear_fit_preview();
         self.clear_replay_state();

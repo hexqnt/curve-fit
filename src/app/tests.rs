@@ -1,6 +1,7 @@
 use super::{
-    CurveFitApp, IterationDiagnostics, ModelChoice, OptimizerMethod, OptimizerPreset,
-    ParamInitMethod, ReplayFramePayload, StatusMessage, UiLanguage, data_based_params_for_family,
+    CurveFitApp, DiagnosticsTab, IterationDiagnostics, ModelChoice, OptimizerMethod,
+    OptimizerPreset, ParamInitMethod, ReplayFramePayload, StatusMessage, UiLanguage,
+    data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
 use crate::fit::{IterationMetricSnapshot, MetricQuantization, OptimizationLossMetric};
@@ -141,6 +142,7 @@ fn optimization_metric_defaults_to_mse() {
     );
     assert_eq!(app.fit_metric_quantization, MetricQuantization::Disabled);
     assert!(app.replay.autoplay_on_fit);
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
     assert!(app.panel.diagnostics_hide_non_loss_by_default_pending);
 }
 
@@ -801,6 +803,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
         OptimizationLossMetric::Mse,
         MetricQuantization::Disabled,
     );
+    app.panel.diagnostics_tab = DiagnosticsTab::Residuals;
 
     app.apply_param_init_method(ParamInitMethod::DataBased);
 
@@ -821,6 +824,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
     assert!(app.iteration_diagnostics.loss_points.is_empty());
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
 }
 
 #[test]
@@ -857,6 +861,7 @@ fn apply_fitted_param_init_updates_inputs_and_clears_fit_state() {
         OptimizationLossMetric::Mse,
         MetricQuantization::Disabled,
     );
+    app.panel.diagnostics_tab = DiagnosticsTab::Residuals;
 
     app.apply_fitted_param_init();
 
@@ -877,6 +882,7 @@ fn apply_fitted_param_init_updates_inputs_and_clears_fit_state() {
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
     assert!(app.iteration_diagnostics.loss_points.is_empty());
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
     assert!(matches!(app.status, Some(StatusMessage::Ready)));
 }
 
@@ -937,6 +943,7 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
         },
         ..Default::default()
     };
+    app.panel.diagnostics_tab = DiagnosticsTab::Residuals;
 
     app.clear_fit_outputs();
 
@@ -949,6 +956,7 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
     assert!(app.replay.frames.is_empty());
     assert!(app.replay.selected_index.is_none());
     assert!(!app.replay.autoplay);
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

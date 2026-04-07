@@ -2,6 +2,20 @@ use super::*;
 
 pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
+    let previous_tab = app.panel.diagnostics_tab;
+    ui.horizontal_wrapped(|ui| {
+        ui.selectable_value(&mut app.panel.diagnostics_tab, DiagnosticsTab::Loss, "Loss");
+        ui.selectable_value(
+            &mut app.panel.diagnostics_tab,
+            DiagnosticsTab::Residuals,
+            tr(language, "Residuals", "Остатки"),
+        );
+    });
+    if app.panel.diagnostics_tab != previous_tab {
+        app.panel.diagnostics_shared_axis_width = 0.0;
+    }
+    ui.add_space(2.0);
+
     let (loss_color, residual_color, zero_color) = if ui.visuals().dark_mode {
         (
             egui::Color32::from_rgb(245, 126, 95),
@@ -15,12 +29,21 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
             egui::Color32::from_rgb(139, 151, 160),
         )
     };
-    ui.heading(tr(
-        language,
-        "Iteration diagnostics",
-        "Диагностика итераций",
-    ));
 
+    match app.panel.diagnostics_tab {
+        DiagnosticsTab::Loss => ui_loss_diagnostics(app, ui, language, loss_color),
+        DiagnosticsTab::Residuals => {
+            ui_residuals_diagnostics(app, ui, language, residual_color, zero_color)
+        }
+    }
+}
+
+fn ui_loss_diagnostics(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    language: UiLanguage,
+    loss_color: egui::Color32,
+) {
     if app.iteration_diagnostics.loss_points.is_empty() {
         ui.label(tr(
             language,
@@ -31,14 +54,11 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
         return;
     }
 
-    let has_residual_plot = !app.residual_plot_points.is_empty();
     let available_height = ui.available_height().max(2.0);
     let spacing = ui.spacing().item_spacing.y;
-    let plot_count = if has_residual_plot { 3.0 } else { 2.0 };
+    let plot_count = 2.0;
     let total_spacing = spacing * (plot_count - 1.0);
     let plot_height = ((available_height - total_spacing).max(2.0)) / plot_count;
-    let shared_axis_width = app.panel.diagnostics_shared_axis_width;
-    let shared_axis_width = shared_axis_width.max(1.0);
     let mut iteration_x_min = f64::INFINITY;
     let mut iteration_x_max = f64::NEG_INFINITY;
     for [iteration, _] in &app.iteration_diagnostics.loss_points {
@@ -70,7 +90,7 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
         .replay_selected_iteration()
         .map(|iteration| iteration as f64);
     let selected_iteration_marker_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
-    let mut running_axis_width = shared_axis_width;
+    let mut running_axis_width = app.panel.diagnostics_shared_axis_width.max(1.0);
 
     {
         let loss_points = &app.iteration_diagnostics.loss_points;
@@ -230,57 +250,77 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
         );
     }
 
-    if has_residual_plot {
-        let residual_points = &app.residual_plot_points;
-        let x_min = residual_points
-            .iter()
-            .map(|point| point.x)
-            .fold(f64::INFINITY, f64::min);
-        let x_max = residual_points
-            .iter()
-            .map(|point| point.x)
-            .fold(f64::NEG_INFINITY, f64::max);
-        let zero_line = [[x_min, 0.0], [x_max, 0.0]];
+    app.panel.diagnostics_shared_axis_width = running_axis_width;
+}
 
-        ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), plot_height),
-            egui::Layout::left_to_right(egui::Align::Min),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                let plot_slot_left = ui.max_rect().left();
-                let plot_response = Plot::new("residuals_diagnostics_plot")
-                    .height(plot_height)
-                    .legend(Legend::default().background_alpha(0.55))
-                    .y_axis_min_width(running_axis_width)
-                    .show_grid([true, true])
-                    .allow_drag(false)
-                    .allow_zoom(false)
-                    .allow_scroll(false)
-                    .allow_double_click_reset(false)
-                    .allow_boxed_zoom(false)
-                    .show(ui, |plot_ui| {
-                        plot_ui.line(
-                            Line::new(
-                                tr(language, "Zero", "Ноль"),
-                                PlotPoints::from_iter(zero_line),
-                            )
-                            .width(1.2)
-                            .color(zero_color),
-                        );
-                        plot_ui.points(
-                            PlotPointsItem::new(
-                                tr(language, "Residuals", "Остатки"),
-                                residual_points.as_slice(),
-                            )
-                            .radius(2.3)
-                            .color(residual_color),
-                        );
-                    });
-                let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
-                running_axis_width = running_axis_width.max(axis_width);
-            },
-        );
+fn ui_residuals_diagnostics(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    language: UiLanguage,
+    residual_color: egui::Color32,
+    zero_color: egui::Color32,
+) {
+    if app.residual_plot_points.is_empty() {
+        ui.label(tr(
+            language,
+            "Residuals will be available after fit completes.",
+            "Остатки появятся после завершения фитинга.",
+        ));
+        app.panel.diagnostics_shared_axis_width = 0.0;
+        return;
     }
+
+    let residual_points = &app.residual_plot_points;
+    let x_min = residual_points
+        .iter()
+        .map(|point| point.x)
+        .fold(f64::INFINITY, f64::min);
+    let x_max = residual_points
+        .iter()
+        .map(|point| point.x)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let zero_line = [[x_min, 0.0], [x_max, 0.0]];
+    let available_height = ui.available_height().max(2.0);
+    let mut running_axis_width = app.panel.diagnostics_shared_axis_width.max(1.0);
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), available_height),
+        egui::Layout::left_to_right(egui::Align::Min),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let plot_slot_left = ui.max_rect().left();
+            let plot_response = Plot::new("residuals_diagnostics_plot")
+                .height(available_height)
+                .legend(Legend::default().background_alpha(0.55))
+                .y_axis_min_width(running_axis_width)
+                .show_grid([true, true])
+                .allow_drag(false)
+                .allow_zoom(false)
+                .allow_scroll(false)
+                .allow_double_click_reset(false)
+                .allow_boxed_zoom(false)
+                .show(ui, |plot_ui| {
+                    plot_ui.line(
+                        Line::new(
+                            tr(language, "Zero", "Ноль"),
+                            PlotPoints::from_iter(zero_line),
+                        )
+                        .width(1.2)
+                        .color(zero_color),
+                    );
+                    plot_ui.points(
+                        PlotPointsItem::new(
+                            tr(language, "Residuals", "Остатки"),
+                            residual_points.as_slice(),
+                        )
+                        .radius(2.3)
+                        .color(residual_color),
+                    );
+                });
+            let axis_width = diagnostics_plot_y_axis_width(&plot_response, plot_slot_left);
+            running_axis_width = running_axis_width.max(axis_width);
+        },
+    );
 
     app.panel.diagnostics_shared_axis_width = running_axis_width;
 }
