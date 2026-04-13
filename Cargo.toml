@@ -40,11 +40,11 @@ eframe = { version = "0.34.1", default-features = false, features = [
     "default_fonts",
     "glow",
 ] }
-getrandom = { version = "0.3", features = ["wasm_js"] }
-wasm-bindgen = "0.2.117"
-wasm-bindgen-futures = "0.4.67"
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
+wasm-bindgen = "0.2.118"
+wasm-bindgen-futures = "0.4.68"
 web-time = "1.1.0"
-web-sys = { version = "0.3.94", features = [
+web-sys = { version = "0.3.95", features = [
     "Document",
     "Element",
     "HtmlCanvasElement",

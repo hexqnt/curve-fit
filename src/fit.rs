@@ -735,13 +735,13 @@ impl SplineKnotStrategy {
 /// Политика экстраполяции сплайна вне диапазона узлов.
 pub enum SplineExtrapolation {
     #[default]
-    Clamp,
     Linear,
+    Clamp,
 }
 
 impl SplineExtrapolation {
     /// Полный список вариантов экстраполяции.
-    pub const ALL: [Self; 2] = [Self::Clamp, Self::Linear];
+    pub const ALL: [Self; 2] = [Self::Linear, Self::Clamp];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -877,6 +877,7 @@ pub(crate) struct IncrementalSplineFitRunner {
     points: Points,
     config: SplineConfig,
     knot_x: Box<[f64]>,
+    curve_x_bounds: [f64; 2],
     loss_metric: OptimizationLossMetric,
     metric_quantization: MetricQuantization,
     problem: Problem<SplineProblem>,
@@ -1604,6 +1605,7 @@ impl IncrementalSplineFitRunner {
             points: points.clone(),
             config: prepared.config,
             knot_x: prepared.knot_x,
+            curve_x_bounds: prepared.curve_x_bounds,
             loss_metric,
             metric_quantization,
             problem,
@@ -1748,17 +1750,21 @@ impl IncrementalSplineFitRunner {
 
             let iteration = optimizer_state_iter(&state);
             if let Some(knot_y) = optimizer_state_current_param(&state) {
-                let knots = materialize_spline_knots(self.knot_x.as_ref(), &knot_y);
-                let evaluator =
-                    build_spline_evaluator(self.family, knots.clone(), self.config.extrapolation)?;
+                let built = build_spline_curve_from_knot_y(
+                    self.family,
+                    self.config.extrapolation,
+                    self.config.samples,
+                    self.knot_x.as_ref(),
+                    &knot_y,
+                    self.curve_x_bounds,
+                )?;
                 let metrics = calculate_iteration_metrics_from_evaluator(
                     &self.points,
                     self.loss_metric,
                     self.metric_quantization,
-                    |x| evaluator.evaluate(x),
+                    |x| built.evaluator.evaluate(x),
                 );
-                let curve =
-                    sample_sorted_curve(&knots, self.config.samples, |x| evaluator.evaluate(x));
+                let curve = built.curve;
 
                 optimizer_state_increment_iter(&mut state);
                 self.state = Some(state);
@@ -1788,6 +1794,7 @@ impl IncrementalSplineFitRunner {
             family: self.family,
             config: self.config,
             knot_x: self.knot_x.as_ref(),
+            curve_x_bounds: self.curve_x_bounds,
             loss_metric: self.loss_metric,
             metric_quantization: self.metric_quantization,
         };
@@ -2380,6 +2387,9 @@ const MIN_NATURAL_SPLINE_KNOTS: usize = 3;
 const MIN_AKIMA_SPLINE_KNOTS: usize = 5;
 const SPLINE_FD_REL_STEP: f64 = 1e-6;
 const SPLINE_FD_MIN_STEP: f64 = 1e-7;
+const SPLINE_CURVE_DOMAIN_PADDING_RATIO: f64 = 0.1;
+const SPLINE_CURVE_DOMAIN_EPS: f64 = 1e-9;
+const SPLINE_CURVE_DOMAIN_FALLBACK_PADDING: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SplineFamilyKind {
@@ -2964,13 +2974,13 @@ fn evaluate_natural_cubic_spline(
             * (h * h / 6.0)
 }
 
-fn sample_sorted_curve<F>(sorted: &[[f64; 2]], samples: usize, mut evaluate: F) -> Vec<[f64; 2]>
+fn sample_sorted_curve<F>(samples: usize, x_bounds: [f64; 2], mut evaluate: F) -> Vec<[f64; 2]>
 where
     F: FnMut(f64) -> f64,
 {
     let sample_count = samples.max(2);
-    let x_min = sorted[0][0];
-    let x_max = sorted[sorted.len() - 1][0];
+    let x_min = x_bounds[0];
+    let x_max = x_bounds[1];
     let span = x_max - x_min;
 
     (0..sample_count)
@@ -2980,6 +2990,20 @@ where
             [x, evaluate(x)]
         })
         .collect()
+}
+
+fn expanded_spline_curve_x_bounds(x_min: f64, x_max: f64) -> [f64; 2] {
+    // Повторяем правило из UI-графика: небольшой запас по X,
+    // чтобы линия не "обрубалась" на крайних наблюдениях.
+    if (x_max - x_min).abs() < SPLINE_CURVE_DOMAIN_EPS {
+        [
+            x_min - SPLINE_CURVE_DOMAIN_FALLBACK_PADDING,
+            x_max + SPLINE_CURVE_DOMAIN_FALLBACK_PADDING,
+        ]
+    } else {
+        let padding = (x_max - x_min) * SPLINE_CURVE_DOMAIN_PADDING_RATIO;
+        [x_min - padding, x_max + padding]
+    }
 }
 
 struct ScalarMetrics {
@@ -3112,6 +3136,7 @@ struct PreparedSplineInputs {
     config: SplineConfig,
     knot_x: Box<[f64]>,
     initial_y: Vec<f64>,
+    curve_x_bounds: [f64; 2],
 }
 
 fn prepare_spline_inputs(
@@ -3134,6 +3159,7 @@ fn prepare_spline_inputs(
             family.min_knots()
         )));
     }
+    let curve_x_bounds = expanded_spline_curve_x_bounds(sorted[0][0], sorted[sorted.len() - 1][0]);
 
     let knot_x = initial_knots
         .iter()
@@ -3168,6 +3194,7 @@ fn prepare_spline_inputs(
         config,
         knot_x,
         initial_y,
+        curve_x_bounds,
     })
 }
 
@@ -3176,6 +3203,7 @@ struct SplineFinalizeContext<'a> {
     family: SplineFamilyKind,
     config: SplineConfig,
     knot_x: &'a [f64],
+    curve_x_bounds: [f64; 2],
     loss_metric: OptimizationLossMetric,
     metric_quantization: MetricQuantization,
 }
@@ -3191,6 +3219,7 @@ fn build_spline_result_from_knot_y(
         context.config.samples,
         context.knot_x,
         knot_y,
+        context.curve_x_bounds,
     )?;
     let metrics =
         calculate_metrics_from_evaluator(context.points, context.metric_quantization, |x| {
@@ -3241,6 +3270,7 @@ pub(crate) fn build_spline_initial_curve_from_knot_y(
         prepared.config.samples,
         prepared.knot_x.as_ref(),
         &prepared.initial_y,
+        prepared.curve_x_bounds,
     )?;
     Ok(built.curve)
 }
@@ -3257,10 +3287,11 @@ fn build_spline_curve_from_knot_y(
     samples: usize,
     knot_x: &[f64],
     knot_y: &[f64],
+    curve_x_bounds: [f64; 2],
 ) -> Result<BuiltSplineCurve, FitError> {
     let knots = materialize_spline_knots(knot_x, knot_y);
     let evaluator = build_spline_evaluator(family, knots.clone(), extrapolation)?;
-    let curve = sample_sorted_curve(&knots, samples, |x| evaluator.evaluate(x));
+    let curve = sample_sorted_curve(samples, curve_x_bounds, |x| evaluator.evaluate(x));
     Ok(BuiltSplineCurve {
         knots,
         evaluator,

@@ -5,13 +5,15 @@ use super::{
     IncrementalSplineFitRunner, IncrementalSplineFitStep, MetricQuantization,
     MetricQuantizationDecimalPlaces, OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy,
     SplineExtrapolation, SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy,
-    approximate_spline_knots, build_spline_result_from_knot_y, calculate_iteration_metrics,
+    approximate_spline_knots, build_spline_initial_curve_from_knot_y,
+    build_spline_result_from_knot_y, calculate_iteration_metrics,
     calculate_iteration_metrics_with_quantization, calculate_metrics, evaluate_linear_spline,
-    fit_akima_spline, fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
-    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config,
+    expanded_spline_curve_x_bounds, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
+    fit_curve_with_optimizer_config, fit_curve_with_progress,
+    fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
-    fit_monotone_cubic_spline, fit_natural_cubic_spline, numerical_hessian_from_gradient,
-    sorted_points_with_duplicate_policy,
+    fit_linear_spline_with_config, fit_monotone_cubic_spline, fit_natural_cubic_spline,
+    numerical_hessian_from_gradient, sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
@@ -150,6 +152,7 @@ fn spline_final_snapshot_uses_quantized_metrics_while_residuals_stay_raw() {
         family: SplineFamilyKind::Linear,
         config: SplineConfig::default(),
         knot_x: &knot_x,
+        curve_x_bounds: expanded_spline_curve_x_bounds(0.0, 1.0),
         loss_metric: OptimizationLossMetric::SoftL1,
         metric_quantization: quantization(2),
     };
@@ -862,6 +865,62 @@ fn linear_spline_builds_curve() {
     assert!(!result.knots.is_empty());
     assert_eq!(result.curve.len(), 50);
     assert!(result.mse < 1e-12);
+}
+
+#[test]
+fn linear_spline_curve_extends_beyond_sample_extremes() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let result = fit_linear_spline_with_config(
+        &points,
+        SplineConfig {
+            knots: 2,
+            samples: 40,
+            knot_strategy: SplineKnotStrategy::BinMean,
+            extrapolation: SplineExtrapolation::Linear,
+            duplicate_x_policy: SplineDuplicateXPolicy::Error,
+        },
+    )
+    .expect("linear spline with two knots must succeed");
+
+    let first_x = result.curve.first().expect("curve must be sampled")[0];
+    let last_x = result.curve.last().expect("curve must be sampled")[0];
+    assert!(
+        first_x < 0.0,
+        "left spline tail must extend beyond minimum sample x; got {first_x}"
+    );
+    assert!(
+        last_x > 3.0,
+        "right spline tail must extend beyond maximum sample x; got {last_x}"
+    );
+}
+
+#[test]
+fn spline_initial_curve_preview_extends_beyond_sample_extremes() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let curve = build_spline_initial_curve_from_knot_y(
+        &points,
+        SplineFamilyKind::Linear,
+        SplineConfig {
+            knots: 2,
+            samples: 40,
+            knot_strategy: SplineKnotStrategy::BinMean,
+            extrapolation: SplineExtrapolation::Linear,
+            duplicate_x_policy: SplineDuplicateXPolicy::Error,
+        },
+        &[2.0, 6.0],
+    )
+    .expect("initial spline preview must be built");
+
+    let first_x = curve.first().expect("curve must be sampled")[0];
+    let last_x = curve.last().expect("curve must be sampled")[0];
+    assert!(
+        first_x < 0.0,
+        "left spline preview tail must extend beyond minimum sample x; got {first_x}"
+    );
+    assert!(
+        last_x > 3.0,
+        "right spline preview tail must extend beyond maximum sample x; got {last_x}"
+    );
 }
 
 #[test]
