@@ -1,42 +1,20 @@
 use super::*;
 
+const COLLAPSED_MODEL_SELECTOR_WIDTH: f32 = 170.0;
+const COLLAPSED_MODEL_SELECTOR_MENU_MIN_WIDTH: f32 = 260.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelSelectorMode {
+    Full,
+    Compact,
+}
+
 pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let can_edit_params = !app.fit_in_progress;
     let icon_tint = ui.visuals().text_color();
 
-    let previous_model = app.selected_model;
-    ui.add_enabled_ui(can_edit_params, |ui| {
-        egui::ComboBox::from_label(tr(language, "Model type", "Тип модели"))
-            .selected_text(model_choice_label(language, app.selected_model))
-            .show_ui(ui, |ui| {
-                ui.set_min_width(280.0);
-                let mut is_first_group = true;
-                for group in ModelGroup::ALL {
-                    if !is_first_group {
-                        ui.separator();
-                    }
-                    is_first_group = false;
-                    ui.label(egui::RichText::new(model_group_label(language, group)).strong());
-                    for model in ModelChoice::ALL {
-                        if model_group(model) != group {
-                            continue;
-                        }
-                        let model_label = model_choice_label(language, model);
-                        let response =
-                            ui.selectable_label(app.selected_model == model, model_label);
-                        if response.clicked() {
-                            app.selected_model = model;
-                        }
-                    }
-                }
-            });
-    });
-
-    let mut params_need_sync = false;
-    if previous_model != app.selected_model {
-        params_need_sync = true;
-    }
+    let mut params_need_sync = ui_model_selector(app, ui, can_edit_params, ModelSelectorMode::Full);
 
     if app.selected_model.is_polynomial() {
         let previous_degree = app.polynomial_degree;
@@ -309,6 +287,68 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                         }
                     });
             });
+    }
+}
+
+pub(super) fn ui_model_selector_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
+    let can_edit_params = !app.fit_in_progress;
+    if ui_model_selector(app, ui, can_edit_params, ModelSelectorMode::Compact) {
+        app.sync_parameter_inputs();
+        app.clear_fit_outputs();
+    }
+}
+
+fn ui_model_selector(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    can_edit_params: bool,
+    mode: ModelSelectorMode,
+) -> bool {
+    let language = app.ui_language;
+    let previous_model = app.selected_model;
+    ui.add_enabled_ui(can_edit_params, |ui| {
+        let selected_text = model_choice_label(language, app.selected_model);
+        match mode {
+            ModelSelectorMode::Full => {
+                egui::ComboBox::from_label(tr(language, "Model type", "Тип модели"))
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(280.0);
+                        ui_model_selector_menu(app, ui, language);
+                    });
+            }
+            ModelSelectorMode::Compact => {
+                egui::ComboBox::from_id_salt("collapsed_header_model_selector")
+                    .selected_text(selected_text)
+                    .width(COLLAPSED_MODEL_SELECTOR_WIDTH)
+                    .show_ui(ui, |ui| {
+                        ui.set_min_width(COLLAPSED_MODEL_SELECTOR_MENU_MIN_WIDTH);
+                        ui_model_selector_menu(app, ui, language);
+                    });
+            }
+        }
+    });
+    app.selected_model != previous_model
+}
+
+fn ui_model_selector_menu(app: &mut CurveFitApp, ui: &mut egui::Ui, language: UiLanguage) {
+    let mut is_first_group = true;
+    for group in ModelGroup::ALL {
+        if !is_first_group {
+            ui.separator();
+        }
+        is_first_group = false;
+        ui.label(egui::RichText::new(model_group_label(language, group)).strong());
+        for model in ModelChoice::ALL {
+            if model_group(model) != group {
+                continue;
+            }
+            let model_label = model_choice_label(language, model);
+            let response = ui.selectable_label(app.selected_model == model, model_label);
+            if response.clicked() {
+                app.selected_model = model;
+            }
+        }
     }
 }
 

@@ -1,22 +1,11 @@
 use super::*;
 
+const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
+
 pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     ui.horizontal_wrapped(|ui| {
-        egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
-            .selected_text(optimization_loss_metric_label(
-                language,
-                app.optimization_loss_metric,
-            ))
-            .show_ui(ui, |ui| {
-                for metric in OptimizationLossMetric::ALL {
-                    ui.selectable_value(
-                        &mut app.optimization_loss_metric,
-                        metric,
-                        optimization_loss_metric_label(language, metric),
-                    );
-                }
-            });
+        ui_optimization_metric_selector(app, ui, false);
         CurveFitApp::info_tooltip(
             ui,
             tr(
@@ -59,6 +48,43 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .text(tr(language, "Decimal places", "Знаков после запятой")),
         );
     });
+}
+
+pub(super) fn ui_optimization_metric_selector_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
+    ui_optimization_metric_selector(app, ui, true);
+}
+
+fn ui_optimization_metric_selector(app: &mut CurveFitApp, ui: &mut egui::Ui, compact: bool) {
+    let language = app.ui_language;
+    let selected_text = optimization_loss_metric_label(language, app.optimization_loss_metric);
+    if compact {
+        egui::ComboBox::from_id_salt("collapsed_header_optimization_metric_selector")
+            .selected_text(selected_text)
+            .width(COLLAPSED_METRIC_SELECTOR_WIDTH)
+            .show_ui(ui, |ui| {
+                ui_optimization_metric_selector_menu(app, ui, language);
+            });
+    } else {
+        egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
+            .selected_text(selected_text)
+            .show_ui(ui, |ui| {
+                ui_optimization_metric_selector_menu(app, ui, language);
+            });
+    }
+}
+
+fn ui_optimization_metric_selector_menu(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    language: UiLanguage,
+) {
+    for metric in OptimizationLossMetric::ALL {
+        ui.selectable_value(
+            &mut app.optimization_loss_metric,
+            metric,
+            optimization_loss_metric_label(language, metric),
+        );
+    }
 }
 
 pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {

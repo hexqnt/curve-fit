@@ -1,5 +1,9 @@
 use super::*;
 
+const COMPACT_FIT_BUTTON_WIDTH: f32 = 118.0;
+const COMPACT_FIT_BUTTON_HEIGHT: f32 = 30.0;
+const FULL_FIT_BUTTON_HEIGHT: f32 = 34.0;
+
 pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let icon_tint = ui.visuals().text_color();
@@ -365,6 +369,22 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
+    ui_fit_action_button(app, ui, false);
+    if app.fit_in_progress
+        && let Some(iteration) = app.fit_preview_iteration
+    {
+        ui.label(format!(
+            "{}: {iteration}",
+            tr(app.ui_language, "Iteration", "Итерация")
+        ));
+    }
+}
+
+pub(super) fn ui_optimizer_action_button_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
+    ui_fit_action_button(app, ui, true);
+}
+
+fn ui_fit_action_button(app: &mut CurveFitApp, ui: &mut egui::Ui, compact: bool) {
     let (fill, stroke, text_color) = CurveFitApp::action_button_style(ui, app.fit_in_progress);
     let (icon, text) = if app.fit_in_progress {
         (
@@ -377,9 +397,15 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             tr(app.ui_language, "Fit", "Фитинг"),
         )
     };
+
+    let min_size = if compact {
+        egui::vec2(COMPACT_FIT_BUTTON_WIDTH, COMPACT_FIT_BUTTON_HEIGHT)
+    } else {
+        egui::vec2(ui.available_width(), FULL_FIT_BUTTON_HEIGHT)
+    };
     let action_button =
         egui::Button::image_and_text(icon, egui::RichText::new(text).strong().color(text_color))
-            .min_size(egui::vec2(ui.available_width(), 34.0))
+            .min_size(min_size)
             .fill(fill)
             .stroke(stroke)
             .corner_radius(egui::CornerRadius::same(UI_CORNER_RADIUS + 1));
@@ -389,14 +415,6 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         } else {
             app.run_fit();
         }
-    }
-    if app.fit_in_progress
-        && let Some(iteration) = app.fit_preview_iteration
-    {
-        ui.label(format!(
-            "{}: {iteration}",
-            tr(app.ui_language, "Iteration", "Итерация")
-        ));
     }
 }
 

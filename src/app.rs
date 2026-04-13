@@ -1418,29 +1418,29 @@ impl eframe::App for CurveFitApp {
                     let language = self.ui_language;
                     ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
                     ui.set_width(ui.available_width());
-                    Self::panel_card_collapsible(
+                    Self::panel_card_collapsible_with_collapsed_trailing(
+                        self,
                         ui,
                         "right_section_model",
                         tr(language, "Model", "Модель"),
-                        |ui| {
-                            self.ui_family_and_params(ui);
-                        },
+                        CurveFitApp::ui_family_and_params,
+                        CurveFitApp::ui_model_selector_compact,
                     );
-                    Self::panel_card_collapsible(
+                    Self::panel_card_collapsible_with_collapsed_trailing(
+                        self,
                         ui,
                         "right_section_metric",
                         tr(language, "Optimization metric", "Метрика оптимизации"),
-                        |ui| {
-                            self.ui_optimization_metric(ui);
-                        },
+                        CurveFitApp::ui_optimization_metric,
+                        CurveFitApp::ui_optimization_metric_selector_compact,
                     );
-                    Self::panel_card_collapsible(
+                    Self::panel_card_collapsible_with_collapsed_trailing(
+                        self,
                         ui,
                         "right_section_optimizer",
                         tr(language, "Optimizer", "Оптимизатор"),
-                        |ui| {
-                            self.ui_optimizer(ui);
-                        },
+                        CurveFitApp::ui_optimizer,
+                        CurveFitApp::ui_optimizer_action_button_compact,
                     );
                     Self::panel_card_collapsible(
                         ui,

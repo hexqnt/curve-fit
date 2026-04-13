@@ -53,31 +53,78 @@ impl CurveFitApp {
         title: impl Into<egui::WidgetText>,
         add_body: impl FnOnce(&mut egui::Ui),
     ) {
+        Self::panel_card_collapsible_with_collapsed_trailing(
+            &mut (),
+            ui,
+            id_salt,
+            title,
+            |_, ui| {
+                add_body(ui);
+            },
+            |_, _| {},
+        );
+    }
+
+    pub(super) fn panel_card_collapsible_with_collapsed_trailing<State>(
+        state: &mut State,
+        ui: &mut egui::Ui,
+        id_salt: impl std::hash::Hash,
+        title: impl Into<egui::WidgetText>,
+        add_body: impl FnOnce(&mut State, &mut egui::Ui),
+        add_collapsed_trailing: impl FnOnce(&mut State, &mut egui::Ui),
+    ) {
+        let title = title.into().heading();
         Self::panel_card_frame(ui).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             ui.scope(|ui| {
                 ui.spacing_mut().indent += COLLAPSING_HEADER_TEXT_OFFSET_X;
-                egui::CollapsingHeader::new(title.into().heading())
-                    .id_salt(id_salt)
-                    .default_open(true)
-                    .icon(|ui, openness, response| {
-                        let enlarged_rect = egui::Rect::from_center_size(
-                            response.rect.center(),
-                            response.rect.size() * COLLAPSING_ICON_SCALE,
-                        )
-                        .translate(egui::vec2(-0.5 * COLLAPSING_HEADER_TEXT_OFFSET_X, 0.0));
-                        let enlarged_response = response.clone().with_new_rect(enlarged_rect);
-                        egui::containers::collapsing_header::paint_default_icon(
-                            ui,
-                            openness,
-                            &enlarged_response,
-                        );
-                    })
-                    .show_unindented(ui, |ui| {
-                        add_body(ui);
-                    });
+
+                let collapsing_id = ui.make_persistent_id(id_salt);
+                let mut collapsing_state =
+                    egui::containers::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        collapsing_id,
+                        true,
+                    );
+                let is_collapsed = !collapsing_state.is_open();
+
+                ui.horizontal(|ui| {
+                    let previous_item_spacing = ui.spacing().item_spacing;
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    collapsing_state.show_toggle_button(ui, paint_enlarged_collapsing_icon);
+                    ui.spacing_mut().item_spacing = previous_item_spacing;
+
+                    let mut title_response =
+                        ui.add(egui::Label::new(title.clone()).sense(egui::Sense::click()));
+                    if title_response.clicked() {
+                        collapsing_state.toggle(ui);
+                        title_response.mark_changed();
+                    }
+
+                    if is_collapsed {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            add_collapsed_trailing(state, ui);
+                        });
+                    }
+                });
+
+                let _ = collapsing_state.show_body_unindented(ui, |ui| {
+                    add_body(state, ui);
+                });
             });
         });
+    }
+
+    pub(super) fn ui_model_selector_compact(&mut self, ui: &mut egui::Ui) {
+        family_params::ui_model_selector_compact(self, ui);
+    }
+
+    pub(super) fn ui_optimizer_action_button_compact(&mut self, ui: &mut egui::Ui) {
+        optimizer_panel::ui_optimizer_action_button_compact(self, ui);
+    }
+
+    pub(super) fn ui_optimization_metric_selector_compact(&mut self, ui: &mut egui::Ui) {
+        status_panel::ui_optimization_metric_selector_compact(self, ui);
     }
 
     pub(super) fn action_button_style(
@@ -300,6 +347,16 @@ impl CurveFitApp {
     pub(super) fn ui_result(&self, ui: &mut egui::Ui) {
         result_panel::ui_result(self, ui);
     }
+}
+
+fn paint_enlarged_collapsing_icon(ui: &mut egui::Ui, openness: f32, response: &egui::Response) {
+    let enlarged_rect = egui::Rect::from_center_size(
+        response.rect.center(),
+        response.rect.size() * COLLAPSING_ICON_SCALE,
+    )
+    .translate(egui::vec2(-0.5 * COLLAPSING_HEADER_TEXT_OFFSET_X, 0.0));
+    let enlarged_response = response.clone().with_new_rect(enlarged_rect);
+    egui::containers::collapsing_header::paint_default_icon(ui, openness, &enlarged_response);
 }
 
 fn formula_preview_text(formula: &str, max_chars: usize) -> Cow<'_, str> {
