@@ -1,5 +1,9 @@
 use super::*;
 
+const TOOLBAR_BUTTON_WIDTH: f32 = 32.0;
+const TOOLBAR_BUTTON_HEIGHT: f32 = 28.0;
+const TOOLBAR_BUTTON_SPACING_X: f32 = 6.0;
+
 pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let icon_tint = ui.visuals().text_color();
@@ -7,37 +11,30 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let tools = [
         PlotTool::None,
         PlotTool::SinglePoint,
+        PlotTool::Dotted,
         PlotTool::Spray,
         PlotTool::Eraser,
     ];
-    let tool_width = ((ui.available_width() - ui.spacing().item_spacing.x).max(120.0)) * 0.5;
-    egui::Grid::new("plot_tools_grid")
-        .num_columns(2)
-        .spacing(egui::vec2(ui.spacing().item_spacing.x, 6.0))
-        .show(ui, |ui| {
-            for (index, tool) in tools.into_iter().enumerate() {
+    with_toolbar_hover_style(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
+            for tool in tools {
                 let selected = app.plot_tool == tool;
-                let button = egui::Button::image_and_text(
-                    tool_icon_image(tool, icon_tint),
-                    tool_label(language, tool),
-                )
-                .selected(selected)
-                .min_size(egui::vec2(tool_width, 0.0));
-                let response = ui
-                    .add(button)
-                    .on_hover_text(tool_usage_hint(language, tool));
+                let button = toolbar_icon_button(tool_icon_image(tool, icon_tint))
+                    .selected(selected)
+                    .frame(true);
+                let response =
+                    toolbar_hover_tooltip(ui.add(button), tool_usage_hint(language, tool));
                 if response.clicked() {
                     app.plot_tool = tool;
                 }
-                if index % 2 == 1 {
-                    ui.end_row();
-                }
             }
         });
+    });
 
     ui.add_space(2.0);
     match app.plot_tool {
-        PlotTool::None | PlotTool::SinglePoint => {}
+        PlotTool::None | PlotTool::SinglePoint | PlotTool::Dotted => {}
         PlotTool::Spray => {
             ui.add(
                 egui::Slider::new(&mut app.spray_points_per_second, 10..=1_000)
@@ -51,16 +48,23 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             );
             ui.horizontal_wrapped(|ui| {
                 ui.label(tr(language, "Brush", "Кисть"));
-                CurveFitApp::info_tooltip(ui, spray_brush_hint(language));
-                ui.selectable_value(
+                let uniform_response = ui.selectable_value(
                     &mut app.spray_brush,
                     SprayBrush::Uniform,
                     spray_brush_label(language, SprayBrush::Uniform),
                 );
-                ui.selectable_value(
+                let _ = CurveFitApp::info_hover(
+                    uniform_response,
+                    spray_brush_mode_hint(language, SprayBrush::Uniform),
+                );
+                let gaussian_response = ui.selectable_value(
                     &mut app.spray_brush,
                     SprayBrush::Gaussian,
                     spray_brush_label(language, SprayBrush::Gaussian),
+                );
+                let _ = CurveFitApp::info_hover(
+                    gaussian_response,
+                    spray_brush_mode_hint(language, SprayBrush::Gaussian),
                 );
             });
         }
@@ -89,7 +93,6 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         )
     };
     ui.horizontal_wrapped(|ui| {
-        CurveFitApp::info_tooltip(ui, points_input_hint(language));
         if let Some(count) = valid_points_count {
             ui.label(
                 egui::RichText::new(format!(
@@ -110,61 +113,53 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         );
     }
     let can_fill_with_residuals = can_edit_points && !app.residual_plot_points.is_empty();
-    ui.horizontal_wrapped(|ui| {
-        if ui
-            .add_enabled(
+    with_toolbar_hover_style(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
+            let undo_response = ui.add_enabled(
                 can_edit_points && !app.points.undo_stack.is_empty(),
-                egui::Button::image_and_text(
-                    undo_icon_image(icon_tint),
-                    tr(language, "Undo", "Отменить"),
-                ),
-            )
-            .clicked()
-        {
-            app.undo_points_edit();
-        }
-        if ui
-            .add_enabled(
+                toolbar_icon_button(undo_icon_image(icon_tint)),
+            );
+            if toolbar_hover_tooltip(undo_response, undo_tooltip(language)).clicked() {
+                app.undo_points_edit();
+            }
+            let redo_response = ui.add_enabled(
                 can_edit_points && !app.points.redo_stack.is_empty(),
-                egui::Button::image_and_text(
-                    redo_icon_image(icon_tint),
-                    tr(language, "Redo", "Повторить"),
-                ),
-            )
-            .clicked()
-        {
-            app.redo_points_edit();
-        }
-        if ui
-            .add_enabled(
+                toolbar_icon_button(redo_icon_image(icon_tint)),
+            );
+            if toolbar_hover_tooltip(redo_response, redo_tooltip(language)).clicked() {
+                app.redo_points_edit();
+            }
+            let clear_response = ui.add_enabled(
                 can_edit_points,
-                egui::Button::image_and_text(
-                    clear_icon_image(icon_tint),
-                    tr(language, "Clear", "Очистить"),
-                ),
-            )
-            .clicked()
-        {
-            app.clear_points_text(true);
-            app.clear_fit_outputs();
-            app.status = Some(StatusMessage::Cleared);
-        }
-        ui.add_enabled_ui(can_edit_points, |ui| {
-            ui.menu_button(tr(language, "Actions", "Действия"), |ui| {
-                if ui
-                    .add_enabled(
-                        can_fill_with_residuals,
-                        egui::Button::new(tr(
-                            language,
-                            "Fill with residuals",
-                            "Заполнить остатками",
-                        )),
-                    )
-                    .clicked()
-                {
-                    app.fill_points_with_residuals();
-                    ui.close();
-                }
+                toolbar_icon_button(clear_icon_image(icon_tint)),
+            );
+            if toolbar_hover_tooltip(clear_response, clear_tooltip(language)).clicked() {
+                app.clear_points_text(true);
+                app.clear_fit_outputs();
+                app.status = Some(StatusMessage::Cleared);
+            }
+            ui.add_enabled_ui(can_edit_points, |ui| {
+                let (actions_response, _) = egui::containers::menu::MenuButton::from_button(
+                    toolbar_icon_button(actions_icon_image(icon_tint)),
+                )
+                .ui(ui, |ui| {
+                    if ui
+                        .add_enabled(
+                            can_fill_with_residuals,
+                            egui::Button::new(tr(
+                                language,
+                                "Fill with residuals",
+                                "Заполнить остатками",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        app.fill_points_with_residuals();
+                        ui.close();
+                    }
+                });
+                let _ = toolbar_hover_tooltip(actions_response, actions_tooltip(language));
             });
         });
     });
@@ -243,6 +238,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     .layouter(&mut layouter)
                     .interactive(can_edit_points),
             );
+            let response = CurveFitApp::info_hover(response, points_input_hint(language));
             if response.changed() {
                 app.push_points_undo_snapshot(before_edit);
                 app.points.redo_stack.clear();
@@ -260,16 +256,16 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     ui.separator();
     ui.add_enabled_ui(can_edit_points, |ui| {
         ui.horizontal_wrapped(|ui| {
-            CurveFitApp::toggle_switch_labeled(
+            let normalization_response = CurveFitApp::toggle_switch_labeled(
                 ui,
                 &mut app.normalize_parametric_data,
                 tr(
                     language,
-                    "Normalize x/y before fit (parametric models)",
-                    "Нормализовать x/y перед фитингом (параметрические модели)",
+                    "Normalize x/y before fit",
+                    "Нормализовать x/y перед фитингом",
                 ),
             );
-            CurveFitApp::info_tooltip(ui, normalization_hint(language));
+            let _ = CurveFitApp::info_hover(normalization_response, normalization_hint(language));
         });
     });
 
@@ -291,8 +287,13 @@ fn tool_usage_hint(language: UiLanguage, tool: PlotTool) -> &'static str {
         ),
         PlotTool::SinglePoint => tr(
             language,
-            "Single point tool\n- Left click on plot to add one sample\n- Best for precise manual placement",
-            "Инструмент одной точки\n- Левый клик по графику добавляет одну точку\n- Подходит для точного ручного ввода",
+            "Single point tool\n- Press left mouse button on plot to place one sample immediately\n- No extra points are added while button is held\n- Best for precise manual placement",
+            "Инструмент одной точки\n- Нажмите левую кнопку на графике, чтобы сразу поставить одну точку\n- Пока кнопка зажата, новые точки не добавляются\n- Подходит для точного ручного ввода",
+        ),
+        PlotTool::Dotted => tr(
+            language,
+            "Dotted tool\n- Left click on plot to add one sample\n- Hold left mouse button and move cursor to place points along the path",
+            "Инструмент пунктира\n- Левый клик по графику добавляет одну точку\n- Зажмите левую кнопку и ведите курсор, чтобы ставить точки по траектории",
         ),
         PlotTool::Spray => tr(
             language,
@@ -315,12 +316,19 @@ fn points_input_hint(language: UiLanguage) -> &'static str {
     )
 }
 
-fn spray_brush_hint(language: UiLanguage) -> &'static str {
-    tr(
-        language,
-        "Brush distribution\n- Uniform: equal probability inside circle\n- Gaussian: denser near center, softer edges",
-        "Распределение кисти\n- Равномерная: одинаковая плотность внутри круга\n- Гауссова: выше плотность в центре, мягче по краям",
-    )
+fn spray_brush_mode_hint(language: UiLanguage, brush: SprayBrush) -> &'static str {
+    match brush {
+        SprayBrush::Uniform => tr(
+            language,
+            "Uniform brush\n- Equal probability inside circle",
+            "Равномерная кисть\n- Одинаковая вероятность внутри круга",
+        ),
+        SprayBrush::Gaussian => tr(
+            language,
+            "Gaussian brush\n- Denser near center, softer edges",
+            "Гауссова кисть\n- Выше плотность в центре, мягче по краям",
+        ),
+    }
 }
 
 fn normalization_hint(language: UiLanguage) -> &'static str {
@@ -329,4 +337,72 @@ fn normalization_hint(language: UiLanguage) -> &'static str {
         "Parametric normalization\n- Fit runs on normalized x/y for better numerical conditioning\n- Displayed parameters and metrics remain in original units\n- Useful when x and y scales differ significantly",
         "Нормализация параметрических данных\n- Фитинг выполняется на нормализованных x/y для лучшей численной устойчивости\n- Параметры и метрики в интерфейсе остаются в исходных единицах\n- Полезно при сильно разных масштабах x и y",
     )
+}
+
+fn toolbar_icon_button(icon: egui::Image<'static>) -> egui::Button<'static> {
+    egui::Button::image(icon).min_size(egui::vec2(TOOLBAR_BUTTON_WIDTH, TOOLBAR_BUTTON_HEIGHT))
+}
+
+fn toolbar_hover_tooltip(response: egui::Response, text: &'static str) -> egui::Response {
+    response.on_hover_ui(|ui| {
+        ui.set_max_width(360.0);
+        ui.spacing_mut().item_spacing.y = 3.0;
+        let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
+        if let Some(title) = lines.next() {
+            ui.label(egui::RichText::new(title).strong());
+        }
+        for line in lines {
+            ui.label(egui::RichText::new(line).small());
+        }
+    })
+}
+
+fn undo_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Undo\n- Revert last points edit",
+        "Отменить\n- Вернуть последнее изменение точек",
+    )
+}
+
+fn redo_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Redo\n- Reapply reverted points edit",
+        "Повторить\n- Повторно применить отменённое изменение",
+    )
+}
+
+fn clear_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Clear points\n- Remove all points from input",
+        "Очистить точки\n- Удалить все точки из ввода",
+    )
+}
+
+fn actions_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Actions\n- Open extra operations for points",
+        "Действия\n- Открыть дополнительные операции с точками",
+    )
+}
+
+fn with_toolbar_hover_style(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        let dark_mode = ui.visuals().dark_mode;
+        let widgets = &mut ui.style_mut().visuals.widgets;
+        widgets.hovered.expansion = 1.5;
+        if dark_mode {
+            widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(44, 64, 79);
+            widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 148, 177));
+        } else {
+            widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(196, 220, 232);
+            widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(105, 160, 186));
+        }
+        add_contents(ui);
+    });
 }

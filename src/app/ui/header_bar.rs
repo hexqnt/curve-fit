@@ -80,20 +80,25 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 let mut selected_iteration =
                     app.replay_selected_iteration().unwrap_or(min_iteration);
                 let replay_slider_enabled = !app.fit_in_progress && !app.replay.frames.is_empty();
-                let response = ui.add_enabled(
-                    replay_slider_enabled,
-                    egui::Slider::new(&mut selected_iteration, min_iteration..=max_iteration)
-                        .text(tr(language, "Displayed iteration", "Показываемая итерация")),
+                let replay_hint = replay_controls_hint(language);
+                let response = CurveFitApp::info_hover(
+                    ui.add_enabled(
+                        replay_slider_enabled,
+                        egui::Slider::new(&mut selected_iteration, min_iteration..=max_iteration)
+                            .text(tr(language, "Displayed iteration", "Показываемая итерация")),
+                    ),
+                    replay_hint,
                 );
                 if replay_slider_enabled && response.changed() {
                     app.pause_replay();
                     app.select_nearest_replay_iteration(selected_iteration);
                 }
-                CurveFitApp::toggle_switch_labeled(
+                let autoplay_response = CurveFitApp::toggle_switch_labeled(
                     ui,
                     &mut app.replay.autoplay_on_fit,
                     tr(language, "Auto-play", "Автопромотка"),
                 );
+                let _ = CurveFitApp::info_hover(autoplay_response, replay_hint);
                 let (play_icon, play_label) = if app.replay.autoplay {
                     (
                         replay_pause_icon_image(icon_tint),
@@ -106,22 +111,23 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     )
                 };
                 let can_toggle_play = !app.fit_in_progress && app.replay.frames.len() > 1;
-                if ui
-                    .add_enabled(
+                let play_response = CurveFitApp::info_hover(
+                    ui.add_enabled(
                         can_toggle_play,
                         egui::Button::image_and_text(play_icon, play_label),
-                    )
-                    .clicked()
-                {
+                    ),
+                    replay_hint,
+                );
+                if play_response.clicked() {
                     app.toggle_replay_autoplay();
                 }
-                CurveFitApp::info_tooltip(ui, replay_controls_hint(language));
                 ui.separator();
-                ui.add(
+                let replay_step_response = ui.add(
                     egui::Slider::new(&mut app.replay.iteration_delay_seconds, 0.0..=3.0)
                         .step_by(0.01)
                         .text(tr(language, "Replay step, sec", "Шаг промотки, сек")),
                 );
+                let _ = CurveFitApp::info_hover(replay_step_response, replay_hint);
             });
         });
 }

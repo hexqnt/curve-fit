@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64) {
+pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64, record_undo: bool) {
     let mut points = match app.parse_points_for_edit() {
         Ok(points) => points,
         Err(error) => {
@@ -12,7 +12,7 @@ pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64) {
     match Point::try_new(x, y) {
         Ok(point) => {
             points.push(point);
-            app.write_points_text(&points, true);
+            app.write_points_text(&points, record_undo);
         }
         Err(error) => {
             app.status = Some(StatusMessage::Error(error.to_string()));
@@ -99,16 +99,22 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
     }
 
     let response = &plot_response.response;
-    let is_continuous_tool = matches!(app.plot_tool, PlotTool::Spray | PlotTool::Eraser);
+    let is_continuous_tool = matches!(
+        app.plot_tool,
+        PlotTool::Dotted | PlotTool::Spray | PlotTool::Eraser
+    );
     let primary_down_on_plot = response.is_pointer_button_down_on();
+    // Для "Точки" нужен одноразовый триггер на момент нажатия ЛКМ.
+    let primary_pressed_this_frame_on_plot = primary_down_on_plot
+        && response
+            .ctx
+            .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
     if is_continuous_tool && primary_down_on_plot {
         if app.active_tool_bounds.is_none() {
             app.push_points_undo_snapshot(app.points.text.clone());
         }
         app.active_tool_bounds
             .get_or_insert(*plot_response.transform.bounds());
-    } else {
-        app.active_tool_bounds = None;
     }
 
     let spray_active = app.plot_tool == PlotTool::Spray && primary_down_on_plot;
@@ -126,11 +132,25 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
     match app.plot_tool {
         PlotTool::None => {}
         PlotTool::SinglePoint => {
-            if response.clicked_by(egui::PointerButton::Primary)
+            if primary_pressed_this_frame_on_plot
                 && let Some(screen_pos) = response.interact_pointer_pos()
                 && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
             {
-                add_point_from_plot(app, plot_pos.x, plot_pos.y);
+                add_point_from_plot(app, plot_pos.x, plot_pos.y, true);
+            }
+        }
+        PlotTool::Dotted => {
+            let clicked_primary = response.clicked_by(egui::PointerButton::Primary);
+            let dragged_primary_with_motion = response.dragged_by(egui::PointerButton::Primary)
+                && response.drag_delta() != egui::Vec2::ZERO;
+            if (clicked_primary || dragged_primary_with_motion)
+                && let Some(screen_pos) = response.interact_pointer_pos()
+                && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
+            {
+                // Быстрый клик может завершиться в одном кадре без фазы `pointer_down`,
+                // тогда undo-снимок не успевает сохраниться в блоке непрерывного ввода.
+                let record_undo = clicked_primary && app.active_tool_bounds.is_none();
+                add_point_from_plot(app, plot_pos.x, plot_pos.y, record_undo);
             }
         }
         PlotTool::Spray => {
@@ -161,6 +181,10 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
                 erase_points_from_plot(app, plot_pos.x, plot_pos.y, radius_x, radius_y);
             }
         }
+    }
+
+    if !(is_continuous_tool && primary_down_on_plot) {
+        app.active_tool_bounds = None;
     }
 }
 

@@ -5,9 +5,9 @@ const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
 pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     ui.horizontal_wrapped(|ui| {
-        ui_optimization_metric_selector(app, ui, false);
-        CurveFitApp::info_tooltip(
-            ui,
+        let metric_response = ui_optimization_metric_selector(app, ui, false);
+        let _ = CurveFitApp::info_hover(
+            metric_response,
             tr(
                 language,
                 "Optimization metric\n- This metric is minimized during fitting\n- Diagnostics shows it as loss(metric)\n- MSE: smooth gradients, MAE: more robust to outliers, soft_l1: compromise",
@@ -17,7 +17,7 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     });
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
-        CurveFitApp::toggle_switch_labeled(
+        let quantization_response = CurveFitApp::toggle_switch_labeled(
             ui,
             &mut app.metric_quantization_enabled,
             tr(
@@ -26,8 +26,8 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 "Квантизовать objective/метрики перед residual",
             ),
         );
-        CurveFitApp::info_tooltip(
-            ui,
+        let _ = CurveFitApp::info_hover(
+            quantization_response,
             tr(
                 language,
                 "Quantization before residual\n- Pipeline: Q(y_pred) - Q(y_true)\n- Affects optimization objective and all reported metrics\n- Useful when measurements are coarse/discrete\n- Too aggressive rounding can slow or destabilize convergence",
@@ -54,7 +54,11 @@ pub(super) fn ui_optimization_metric_selector_compact(app: &mut CurveFitApp, ui:
     ui_optimization_metric_selector(app, ui, true);
 }
 
-fn ui_optimization_metric_selector(app: &mut CurveFitApp, ui: &mut egui::Ui, compact: bool) {
+fn ui_optimization_metric_selector(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    compact: bool,
+) -> egui::Response {
     let language = app.ui_language;
     let selected_text = optimization_loss_metric_label(language, app.optimization_loss_metric);
     if compact {
@@ -63,13 +67,15 @@ fn ui_optimization_metric_selector(app: &mut CurveFitApp, ui: &mut egui::Ui, com
             .width(COLLAPSED_METRIC_SELECTOR_WIDTH)
             .show_ui(ui, |ui| {
                 ui_optimization_metric_selector_menu(app, ui, language);
-            });
+            })
+            .response
     } else {
         egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
             .selected_text(selected_text)
             .show_ui(ui, |ui| {
                 ui_optimization_metric_selector_menu(app, ui, language);
-            });
+            })
+            .response
     }
 }
 

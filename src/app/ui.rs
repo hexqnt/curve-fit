@@ -203,34 +203,19 @@ impl CurveFitApp {
     ) -> egui::Response {
         ui.horizontal(|ui| {
             let switch_response = Self::toggle_switch(ui, on);
-            let mut label_response = ui.add(egui::Label::new(label).sense(egui::Sense::click()));
-            if label_response.clicked() {
-                *on = !*on;
-                label_response.mark_changed();
-            }
-            switch_response | label_response
+            ui.label(label);
+            switch_response
         })
         .inner
     }
 
-    fn info_tooltip(ui: &mut egui::Ui, text: impl AsRef<str>) -> egui::Response {
+    fn info_hover(response: egui::Response, text: impl AsRef<str>) -> egui::Response {
         let lines = text
             .as_ref()
             .lines()
             .map(str::trim)
             .filter(|line| !line.is_empty())
             .collect::<Vec<_>>();
-        let response = ui
-            .add(
-                egui::Label::new(
-                    egui::RichText::new("ℹ")
-                        .small()
-                        .color(ui.visuals().weak_text_color()),
-                )
-                .sense(egui::Sense::hover()),
-            )
-            .on_hover_cursor(egui::CursorIcon::Default);
-
         response.on_hover_ui(|ui| {
             ui.set_max_width(380.0);
             ui.spacing_mut().item_spacing.y = 3.0;

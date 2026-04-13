@@ -16,21 +16,19 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
         .min_height(140.0)
         .resizable(true)
         .show(ctx, |ui| {
+            let formula_window_hint = tr(
+                language,
+                "Formula window\n- Use horizontal scroll for very long formulas\n- Copy formula exports plain-text representation",
+                "Окно формулы\n- Для очень длинных формул используйте горизонтальный скролл\n- Копирование формулы экспортирует текстовое представление",
+            );
             ui.horizontal_wrapped(|ui| {
-                if ui
-                    .button(tr(language, "Copy formula", "Скопировать формулу"))
-                    .clicked()
-                {
+                let copy_response = CurveFitApp::info_hover(
+                    ui.button(tr(language, "Copy formula", "Скопировать формулу")),
+                    formula_window_hint,
+                );
+                if copy_response.clicked() {
                     ui.ctx().copy_text(plain_formula.clone());
                 }
-                CurveFitApp::info_tooltip(
-                    ui,
-                    tr(
-                        language,
-                        "Formula window\n- Use horizontal scroll for very long formulas\n- Copy formula exports plain-text representation",
-                        "Окно формулы\n- Для очень длинных формул используйте горизонтальный скролл\n- Копирование формулы экспортирует текстовое представление",
-                    ),
-                );
             });
             ui.add_space(4.0);
             #[cfg(not(target_arch = "wasm32"))]

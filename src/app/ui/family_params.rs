@@ -66,10 +66,10 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
+                let formula_label_response = ui.label(
                     egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong(),
                 );
-                CurveFitApp::info_tooltip(ui, formula_help.as_str());
+                let _ = CurveFitApp::info_hover(formula_label_response, formula_help.as_str());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add(egui::Button::image(open_formula_icon_image(icon_tint)))
@@ -87,8 +87,9 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         let mut method_to_apply = None;
         let mut apply_fitted_init = false;
         ui.horizontal_wrapped(|ui| {
-            ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            CurveFitApp::info_tooltip(ui, parametric_init_hint(language));
+            let init_label_response =
+                ui.label(tr(language, "Initial parameters", "Начальные параметры"));
+            let _ = CurveFitApp::info_hover(init_label_response, parametric_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -123,11 +124,16 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                                     ui.close();
                                 }
                             } else {
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(param_init_method_disabled_label(
-                                        language, method,
-                                    )),
+                                let unavailable_label = format!(
+                                    "{} ({})",
+                                    param_init_method_label(language, method),
+                                    tr(language, "not available", "недоступно")
+                                );
+                                let unavailable_response =
+                                    ui.add_enabled(false, egui::Button::new(unavailable_label));
+                                let _ = CurveFitApp::info_hover(
+                                    unavailable_response,
+                                    param_init_method_disabled_label(language, method),
                                 );
                             }
                         }
@@ -166,8 +172,9 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         let mut spline_method_to_apply = None;
 
         ui.horizontal_wrapped(|ui| {
-            ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            CurveFitApp::info_tooltip(ui, spline_init_hint(language));
+            let init_label_response =
+                ui.label(tr(language, "Initial parameters", "Начальные параметры"));
+            let _ = CurveFitApp::info_hover(init_label_response, spline_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -250,7 +257,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         });
         app.sync_spline_initial_knot_y_inputs(app.spline_knots);
         ui.horizontal_wrapped(|ui| {
-            ui.label(format!(
+            let spline_sampling_response = ui.label(format!(
                 "{}: {}",
                 tr(
                     language,
@@ -259,7 +266,8 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 ),
                 app.spline_knots
             ));
-            CurveFitApp::info_tooltip(ui, spline_sampling_hint(language));
+            let _ =
+                CurveFitApp::info_hover(spline_sampling_response, spline_sampling_hint(language));
         });
         ui.label(tr(
             language,

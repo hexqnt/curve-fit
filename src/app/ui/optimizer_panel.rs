@@ -19,17 +19,24 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             }
         });
     ui.horizontal_wrapped(|ui| {
-        ui.selectable_value(
+        let basic_response = ui.selectable_value(
             &mut app.optimizer_mode,
             OptimizerUiMode::Basic,
             tr(language, "Basic", "Базовый"),
         );
-        ui.selectable_value(
+        let _ = CurveFitApp::info_hover(
+            basic_response,
+            optimizer_mode_hint(language, OptimizerUiMode::Basic),
+        );
+        let advanced_response = ui.selectable_value(
             &mut app.optimizer_mode,
             OptimizerUiMode::Advanced,
             tr(language, "Advanced", "Продвинутый"),
         );
-        CurveFitApp::info_tooltip(ui, optimizer_mode_hint(language, app.optimizer_mode));
+        let _ = CurveFitApp::info_hover(
+            advanced_response,
+            optimizer_mode_hint(language, OptimizerUiMode::Advanced),
+        );
     });
 
     if app.optimizer_mode == OptimizerUiMode::Basic {

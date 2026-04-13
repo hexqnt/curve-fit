@@ -76,6 +76,10 @@ pub(super) fn clear_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/clear-all.svg", tint)
 }
 
+pub(super) fn actions_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/dots.svg", tint)
+}
+
 pub(super) fn reset_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/restore.svg", tint)
 }
@@ -100,21 +104,9 @@ pub(super) fn tool_icon_image(tool: PlotTool, tint: egui::Color32) -> egui::Imag
     match tool {
         PlotTool::None => tabler_icon!("../../assets/icons/tabler/pointer.svg", tint),
         PlotTool::SinglePoint => tabler_icon!("../../assets/icons/tabler/point.svg", tint),
+        PlotTool::Dotted => tabler_icon!("../../assets/icons/tabler/line-dotted.svg", tint),
         PlotTool::Spray => tabler_icon!("../../assets/icons/tabler/spray.svg", tint),
         PlotTool::Eraser => tabler_icon!("../../assets/icons/tabler/eraser.svg", tint),
-    }
-}
-
-pub(super) fn tool_label(language: UiLanguage, tool: PlotTool) -> &'static str {
-    match (language, tool) {
-        (UiLanguage::English, PlotTool::None) => "None",
-        (UiLanguage::English, PlotTool::SinglePoint) => "Point",
-        (UiLanguage::English, PlotTool::Spray) => "Spray",
-        (UiLanguage::English, PlotTool::Eraser) => "Eraser",
-        (UiLanguage::Russian, PlotTool::None) => "Навигация",
-        (UiLanguage::Russian, PlotTool::SinglePoint) => "Точка",
-        (UiLanguage::Russian, PlotTool::Spray) => "Спрей",
-        (UiLanguage::Russian, PlotTool::Eraser) => "Ластик",
     }
 }
 

@@ -32,13 +32,13 @@ use self::formula::model_formula_info;
 #[cfg(not(target_arch = "wasm32"))]
 use self::formula::{formula_svg_bytes, formula_svg_uri};
 use self::i18n::{
-    center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
+    actions_icon_image, center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
     fit_to_content_icon_image, github_mark_image, language_flag_image, model_choice_label,
     open_formula_icon_image, optimization_loss_metric_label, origin_bottom_left_icon_image,
     panels_icon_image, param_init_method_disabled_label, param_init_method_label,
     param_init_method_name_en, redo_icon_image, replay_pause_icon_image, replay_play_icon_image,
     reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
-    stop_icon_image, tool_icon_image, tool_label, tr, undo_icon_image, view_icon_image,
+    stop_icon_image, tool_icon_image, tr, undo_icon_image, view_icon_image,
 };
 use self::normalization::ParametricNormalization;
 use self::optimizer::{
@@ -178,6 +178,7 @@ enum PlotTool {
     None,
     #[default]
     SinglePoint,
+    Dotted,
     Spray,
     Eraser,
 }
