@@ -12,12 +12,14 @@ use argmin::solver::linesearch::MoreThuenteLineSearch;
 use argmin::solver::neldermead::NelderMead;
 use argmin::solver::newton::NewtonCG;
 use argmin::solver::quasinewton::LBFGS;
+use ndarray::{Array1, Array2};
 use stochastic_optimizers::{Adam, Optimizer as StochasticOptimizer, SGD};
 
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
     NewtonCgConfig, OptimizerConfig, Points, SgdConfig, SteepestDescentConfig,
 };
+use crate::models::{self, GradientComputation};
 
 mod curve;
 mod simd;
@@ -128,110 +130,83 @@ pub mod simd_bench {
     }
 }
 
-const PARAM_EPS: f64 = 1e-9;
+const PARAM_EPS: f64 = models::PARAM_EPS;
 const LARGE_COST: f64 = 1e24;
-const LN_2: f64 = std::f64::consts::LN_2;
 const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
 const HESSIAN_FD_REL_STEP: f64 = 1e-4;
 const HESSIAN_FD_MIN_STEP: f64 = 1e-6;
-const HESSIAN_DIAGONAL_JITTER: f64 = 1e-9;
+pub(crate) const HESSIAN_DIAGONAL_JITTER: f64 = models::HESSIAN_DIAGONAL_JITTER;
 const GRADIENT_FD_REL_STEP: f64 = 1e-5;
 const GRADIENT_FD_MIN_STEP: f64 = 1e-7;
 
 fn positive_x(value: f64) -> f64 {
-    value.max(PARAM_EPS)
+    models::positive_x(value)
 }
 
-fn positive_param_with_derivative(value: f64) -> (f64, f64) {
-    if value.abs() >= PARAM_EPS {
-        (value.abs(), value.signum())
-    } else {
-        (PARAM_EPS, 0.0)
-    }
-}
-
-fn non_zero_param_with_derivative(value: f64) -> (f64, f64) {
-    if value.abs() >= PARAM_EPS {
-        (value, 1.0)
-    } else if value.is_sign_negative() {
-        (-PARAM_EPS, 0.0)
-    } else {
-        (PARAM_EPS, 0.0)
-    }
-}
-
-fn sigmoid(value: f64) -> f64 {
-    if value >= 0.0 {
-        1.0 / (1.0 + (-value).exp())
-    } else {
-        let exp_value = value.exp();
-        exp_value / (1.0 + exp_value)
-    }
-}
-
+#[cfg(test)]
 fn softplus(value: f64) -> f64 {
-    if value > 0.0 {
-        value + (-value).exp().ln_1p()
-    } else {
-        value.exp().ln_1p()
-    }
+    models::softplus(value)
 }
 
 fn gradient_l2_norm(values: &[f64]) -> f64 {
     values.iter().map(|value| value * value).sum::<f64>().sqrt()
 }
 
-fn is_finite_non_negative(value: f64) -> bool {
-    value.is_finite() && value >= 0.0
+fn vec_to_array1(values: &[f64]) -> Array1<f64> {
+    Array1::from_vec(values.to_vec())
 }
 
-fn stabilize_hessian(hessian: &mut [Vec<f64>]) {
-    let dimension = hessian.len();
+fn array1_to_vec(values: &Array1<f64>) -> Vec<f64> {
+    values.to_vec()
+}
+
+fn array1_as_slice(values: &Array1<f64>) -> &[f64] {
+    values
+        .as_slice()
+        .expect("Array1 parameters must have contiguous memory layout")
+}
+
+fn array1_as_slice_mut(values: &mut Array1<f64>) -> &mut [f64] {
+    values
+        .as_slice_mut()
+        .expect("Array1 parameters must have contiguous memory layout")
+}
+
+fn stabilize_hessian(hessian: &mut Array2<f64>) {
+    let dimension = hessian.nrows();
+    debug_assert_eq!(dimension, hessian.ncols());
     let mut row = 0;
     while row < dimension {
         let mut column = row + 1;
         while column < dimension {
-            let value = 0.5 * (hessian[row][column] + hessian[column][row]);
-            hessian[row][column] = value;
-            hessian[column][row] = value;
+            let value = 0.5 * (hessian[[row, column]] + hessian[[column, row]]);
+            hessian[[row, column]] = value;
+            hessian[[column, row]] = value;
             column += 1;
         }
-        if !hessian[row][row].is_finite() {
-            hessian[row][row] = 0.0;
+        if !hessian[[row, row]].is_finite() {
+            hessian[[row, row]] = 0.0;
         }
-        hessian[row][row] += HESSIAN_DIAGONAL_JITTER;
-        row += 1;
-    }
-}
-
-fn scale_and_mirror_upper_hessian(hessian: &mut [Vec<f64>], scale: f64) {
-    let dimension = hessian.len();
-    let mut row = 0;
-    while row < dimension {
-        let mut column = row;
-        while column < dimension {
-            let value = hessian[row][column] * scale;
-            hessian[row][column] = value;
-            hessian[column][row] = value;
-            column += 1;
-        }
+        hessian[[row, row]] += HESSIAN_DIAGONAL_JITTER;
         row += 1;
     }
 }
 
 fn numerical_hessian_from_gradient<O>(
     problem: &O,
-    param: &[f64],
-) -> Result<Vec<Vec<f64>>, argmin::core::Error>
+    param: &Array1<f64>,
+) -> Result<Array2<f64>, argmin::core::Error>
 where
-    O: Gradient<Param = Vec<f64>, Gradient = Vec<f64>>,
+    O: Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
 {
-    let dimension = param.len();
-    let mut hessian = vec![vec![0.0; dimension]; dimension];
-    let mut probe = param.to_vec();
+    let param_slice = array1_as_slice(param);
+    let dimension = param_slice.len();
+    let mut hessian = Array2::zeros((dimension, dimension));
+    let mut probe = param.clone();
 
     for column in 0..dimension {
-        let step = ((param[column].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
+        let step =
+            ((param_slice[column].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
         probe[column] = param[column] + step;
         let grad_plus = problem.gradient(&probe)?;
         probe[column] = param[column] - step;
@@ -241,7 +216,7 @@ where
         let denom = 2.0 * step;
         for row in 0..dimension {
             let value = (grad_plus[row] - grad_minus[row]) / denom;
-            hessian[row][column] = if value.is_finite() { value } else { 0.0 };
+            hessian[[row, column]] = if value.is_finite() { value } else { 0.0 };
         }
     }
 
@@ -428,7 +403,6 @@ pub struct IterationMetricSnapshot {
 
 struct CurveProblem {
     family: CurveFamily,
-    points: Points,
     point_x: Box<[f64]>,
     point_y: Box<[f64]>,
     loss_metric: OptimizationLossMetric,
@@ -437,16 +411,6 @@ struct CurveProblem {
 }
 
 impl CurveProblem {
-    #[cfg(test)]
-    fn new(family: CurveFamily, points: &Points, loss_metric: OptimizationLossMetric) -> Self {
-        Self::new_with_metric_quantization(
-            family,
-            points,
-            loss_metric,
-            MetricQuantization::Disabled,
-        )
-    }
-
     fn new_with_metric_quantization(
         family: CurveFamily,
         points: &Points,
@@ -461,7 +425,6 @@ impl CurveProblem {
         }
         Self {
             family,
-            points: points.clone(),
             point_x: point_x.into_boxed_slice(),
             point_y: point_y.into_boxed_slice(),
             loss_metric,
@@ -493,211 +456,20 @@ impl CurveProblem {
             .residual_second_derivative(self.residual(predicted, observed))
     }
 
-    fn analytic_hessian_for_supported_families(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
+    fn analytic_hessian_for_supported_families(&self, param: &Array1<f64>) -> Option<Array2<f64>> {
         if matches!(self.loss_metric, OptimizationLossMetric::Mae) {
             return None;
         }
 
-        match self.family {
-            family if family.is_polynomial() => self.analytic_polynomial_hessian(param),
-            CurveFamily::Inverse => self.analytic_inverse_hessian(param),
-            CurveFamily::ExponentialBasic => self.analytic_exponential_basic_hessian(param),
-            CurveFamily::ExponentialLinear => self.analytic_exponential_linear_hessian(param),
-            _ => None,
-        }
-    }
-
-    fn analytic_polynomial_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
-        let dimension = param.len();
-        if dimension == 0 {
-            return None;
-        }
-
-        let sample_count = self.point_x.len();
-        let sample_scale = 1.0 / sample_count as f64;
-        let mut hessian = vec![vec![0.0; dimension]; dimension];
-        let mut basis = vec![0.0; dimension];
-
-        let mut index = 0;
-        while index < sample_count {
-            let x = self.point_x[index];
-            let y = self.point_y[index];
-            let model = param
-                .iter()
-                .copied()
-                .fold(0.0, |acc, coefficient| acc * x + coefficient);
-            let residual = self.residual(model, y);
-            if !residual.is_finite() {
-                return None;
-            }
-
-            let weight = self.loss_second_derivative_from_prediction(model, y);
-            if !is_finite_non_negative(weight) {
-                return None;
-            }
-
-            let mut basis_index = dimension;
-            let mut power = 1.0;
-            while basis_index > 0 {
-                basis_index -= 1;
-                basis[basis_index] = power;
-                power *= x;
-            }
-
-            let mut row = 0;
-            while row < dimension {
-                let basis_row = basis[row];
-                let mut column = row;
-                while column < dimension {
-                    hessian[row][column] += weight * basis_row * basis[column];
-                    column += 1;
-                }
-                row += 1;
-            }
-
-            index += 1;
-        }
-
-        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-        stabilize_hessian(&mut hessian);
-        Some(hessian)
-    }
-
-    fn analytic_inverse_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
-        if param.len() != 2 {
-            return None;
-        }
-
-        let sample_count = self.point_x.len();
-        let sample_scale = 1.0 / sample_count as f64;
-        let mut hessian = vec![vec![0.0; 2]; 2];
-
-        let mut index = 0;
-        while index < sample_count {
-            let x = positive_x(self.point_x[index]);
-            let y = self.point_y[index];
-            let inv_x = 1.0 / x;
-            let model = param[0] + param[1] * inv_x;
-            let residual = self.residual(model, y);
-            if !residual.is_finite() {
-                return None;
-            }
-
-            let weight = self.loss_second_derivative_from_prediction(model, y);
-            if !is_finite_non_negative(weight) {
-                return None;
-            }
-
-            hessian[0][0] += weight;
-            hessian[0][1] += weight * inv_x;
-            hessian[1][1] += weight * inv_x * inv_x;
-            index += 1;
-        }
-
-        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-        stabilize_hessian(&mut hessian);
-        Some(hessian)
-    }
-
-    fn analytic_exponential_basic_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
-        if param.len() != 3 {
-            return None;
-        }
-
-        let sample_count = self.point_x.len();
-        let sample_scale = 1.0 / sample_count as f64;
-        let mut hessian = vec![vec![0.0; 3]; 3];
-
-        let mut index = 0;
-        while index < sample_count {
-            let x = self.point_x[index];
-            let y = self.point_y[index];
-            let exp_part = (-param[2] * x).exp();
-            let model = param[0] + param[1] * exp_part;
-            let residual = self.residual(model, y);
-            if !residual.is_finite() {
-                return None;
-            }
-
-            let loss_first = self.loss_derivative_from_prediction(model, y);
-            let loss_second = self.loss_second_derivative_from_prediction(model, y);
-            if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
-                return None;
-            }
-
-            let jac_a = 1.0;
-            let jac_b = exp_part;
-            let jac_c = -param[1] * x * exp_part;
-            let d2_model_dbdc = -x * exp_part;
-            let d2_model_dcdc = param[1] * x * x * exp_part;
-
-            hessian[0][0] += loss_second * jac_a * jac_a;
-            hessian[0][1] += loss_second * jac_a * jac_b;
-            hessian[0][2] += loss_second * jac_a * jac_c;
-            hessian[1][1] += loss_second * jac_b * jac_b;
-            hessian[1][2] += loss_second * jac_b * jac_c + loss_first * d2_model_dbdc;
-            hessian[2][2] += loss_second * jac_c * jac_c + loss_first * d2_model_dcdc;
-
-            index += 1;
-        }
-
-        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-        stabilize_hessian(&mut hessian);
-        Some(hessian)
-    }
-
-    fn analytic_exponential_linear_hessian(&self, param: &[f64]) -> Option<Vec<Vec<f64>>> {
-        if param.len() != 4 {
-            return None;
-        }
-
-        let sample_count = self.point_x.len();
-        let sample_scale = 1.0 / sample_count as f64;
-        let mut hessian = vec![vec![0.0; 4]; 4];
-
-        let mut index = 0;
-        while index < sample_count {
-            let x = self.point_x[index];
-            let y = self.point_y[index];
-            let exp_part = (param[1] * x).exp();
-            let model = param[0] * exp_part + param[2] * x + param[3];
-            let residual = self.residual(model, y);
-            if !residual.is_finite() {
-                return None;
-            }
-
-            let loss_first = self.loss_derivative_from_prediction(model, y);
-            let loss_second = self.loss_second_derivative_from_prediction(model, y);
-            if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
-                return None;
-            }
-
-            let jac_a = exp_part;
-            let jac_b = param[0] * x * exp_part;
-            let jac_c = x;
-            let jac_d = 1.0;
-            let d2_model_dadb = x * exp_part;
-            let d2_model_dbdb = param[0] * x * x * exp_part;
-
-            hessian[0][0] += loss_second * jac_a * jac_a;
-            hessian[0][1] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;
-            hessian[0][2] += loss_second * jac_a * jac_c;
-            hessian[0][3] += loss_second * jac_a * jac_d;
-
-            hessian[1][1] += loss_second * jac_b * jac_b + loss_first * d2_model_dbdb;
-            hessian[1][2] += loss_second * jac_b * jac_c;
-            hessian[1][3] += loss_second * jac_b * jac_d;
-
-            hessian[2][2] += loss_second * jac_c * jac_c;
-            hessian[2][3] += loss_second * jac_c * jac_d;
-
-            hessian[3][3] += loss_second * jac_d * jac_d;
-            index += 1;
-        }
-
-        scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-        stabilize_hessian(&mut hessian);
-        Some(hessian)
+        let param = array1_as_slice(param);
+        models::analytic_hessian(
+            self.family,
+            self.point_x.as_ref(),
+            self.point_y.as_ref(),
+            param,
+            |predicted, observed| self.loss_derivative_from_prediction(predicted, observed),
+            |predicted, observed| self.loss_second_derivative_from_prediction(predicted, observed),
+        )
     }
 
     fn numerical_gradient_from_cost(
@@ -705,7 +477,7 @@ impl CurveProblem {
         param: &[f64],
         gradient: &mut [f64],
     ) -> Result<(), argmin::core::Error> {
-        let mut probe = param.to_vec();
+        let mut probe = vec_to_array1(param);
         for index in 0..gradient.len() {
             let step =
                 ((param[index].abs() + 1.0) * GRADIENT_FD_REL_STEP).max(GRADIENT_FD_MIN_STEP);
@@ -815,13 +587,14 @@ impl SplineConfig {
     }
 }
 
-type GradientState = IterState<Vec<f64>, Vec<f64>, (), (), (), f64>;
-type NelderMeadState = IterState<Vec<f64>, (), (), (), (), f64>;
-type NewtonCgState = IterState<Vec<f64>, Vec<f64>, (), Vec<Vec<f64>>, (), f64>;
-type LbfgsSolver = LBFGS<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, Vec<f64>, Vec<f64>, f64>;
-type SteepestDescentSolver = SteepestDescent<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>>;
-type NelderMeadSolver = NelderMead<Vec<f64>, f64>;
-type NewtonCgSolver = NewtonCG<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, f64>;
+type GradientState = IterState<Array1<f64>, Array1<f64>, (), (), (), f64>;
+type NelderMeadState = IterState<Array1<f64>, (), (), (), (), f64>;
+type NewtonCgState = IterState<Array1<f64>, Array1<f64>, (), Array2<f64>, (), f64>;
+type LbfgsSolver =
+    LBFGS<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>, Array1<f64>, Array1<f64>, f64>;
+type SteepestDescentSolver = SteepestDescent<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>>;
+type NelderMeadSolver = NelderMead<Array1<f64>, f64>;
+type NewtonCgSolver = NewtonCG<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>, f64>;
 type SgdSolver = SGD<Vec<f64>>;
 type AdamSolver = Adam<Vec<f64>>;
 
@@ -847,7 +620,7 @@ enum OptimizerState {
     Lbfgs(GradientState),
     NelderMead(NelderMeadState),
     SteepestDescent(GradientState),
-    NewtonCg(NewtonCgState),
+    NewtonCg(Box<NewtonCgState>),
     Sgd(StochasticState),
     Adam(StochasticState),
 }
@@ -913,7 +686,7 @@ fn build_line_search(
     step_min: f64,
     step_max: f64,
     width_tolerance: f64,
-) -> Result<MoreThuenteLineSearch<Vec<f64>, Vec<f64>, f64>, FitError> {
+) -> Result<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>, FitError> {
     MoreThuenteLineSearch::new()
         .with_c(c1, c2)
         .map_err(optimizer_error)?
@@ -968,7 +741,7 @@ fn build_newton_cg_solver(config: &NewtonCgConfig) -> Result<NewtonCgSolver, Fit
 fn nelder_mead_simplex(
     initial_param: &[f64],
     simplex_scale: f64,
-) -> Result<Vec<Vec<f64>>, FitError> {
+) -> Result<Vec<Array1<f64>>, FitError> {
     if initial_param.is_empty() {
         return Err(optimizer_error(
             "Nelder-Mead requires at least one optimization parameter",
@@ -976,12 +749,12 @@ fn nelder_mead_simplex(
     }
 
     let mut simplex = Vec::with_capacity(initial_param.len() + 1);
-    simplex.push(initial_param.to_vec());
+    simplex.push(vec_to_array1(initial_param));
 
     for (index, value) in initial_param.iter().copied().enumerate() {
         let mut vertex = initial_param.to_vec();
         vertex[index] += simplex_scale * (value.abs() + 1.0);
-        simplex.push(vertex);
+        simplex.push(Array1::from_vec(vertex));
     }
 
     Ok(simplex)
@@ -1046,9 +819,11 @@ fn build_stochastic_state<O>(
     max_iters: u64,
 ) -> Result<StochasticState, FitError>
 where
-    O: CostFunction<Param = Vec<f64>, Output = f64>,
+    O: CostFunction<Param = Array1<f64>, Output = f64>,
 {
-    let cost = problem.cost(&initial_param).map_err(optimizer_error)?;
+    let cost = problem
+        .cost(&vec_to_array1(&initial_param))
+        .map_err(optimizer_error)?;
     Ok(StochasticState {
         current_param: initial_param.clone(),
         best_param: initial_param,
@@ -1068,16 +843,21 @@ fn stochastic_step<O>(
     state: &mut StochasticState,
 ) -> Result<(), FitError>
 where
-    O: CostFunction<Param = Vec<f64>, Output = f64>
-        + Gradient<Param = Vec<f64>, Gradient = Vec<f64>>,
+    O: CostFunction<Param = Array1<f64>, Output = f64>
+        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
 {
+    let current_param_array = vec_to_array1(&state.current_param);
     let gradient = problem
-        .gradient(&state.current_param)
+        .gradient(&current_param_array)
         .map_err(optimizer_error)?;
-    solver.step(&gradient);
+    solver.step(&array1_to_vec(&gradient));
 
     let current_param = solver.parameters().clone();
-    let current_cost = finite_cost_or_large(problem.cost(&current_param).map_err(optimizer_error)?);
+    let current_cost = finite_cost_or_large(
+        problem
+            .cost(&vec_to_array1(&current_param))
+            .map_err(optimizer_error)?,
+    );
 
     if current_cost < state.best_cost {
         state.best_cost = current_cost;
@@ -1088,7 +868,7 @@ where
     Ok(())
 }
 
-fn optimizer_state_best_param(state: &OptimizerState) -> Option<Vec<f64>> {
+fn optimizer_state_best_param(state: &OptimizerState) -> Option<Array1<f64>> {
     match state {
         OptimizerState::Lbfgs(state) => state
             .get_best_param()
@@ -1106,19 +886,19 @@ fn optimizer_state_best_param(state: &OptimizerState) -> Option<Vec<f64>> {
             .get_best_param()
             .or_else(|| state.get_param())
             .cloned(),
-        OptimizerState::Sgd(state) => Some(state.best_param.clone()),
-        OptimizerState::Adam(state) => Some(state.best_param.clone()),
+        OptimizerState::Sgd(state) => Some(vec_to_array1(&state.best_param)),
+        OptimizerState::Adam(state) => Some(vec_to_array1(&state.best_param)),
     }
 }
 
-fn optimizer_state_current_param(state: &OptimizerState) -> Option<Vec<f64>> {
+fn optimizer_state_current_param(state: &OptimizerState) -> Option<Array1<f64>> {
     match state {
         OptimizerState::Lbfgs(state) => state.get_param().cloned(),
         OptimizerState::NelderMead(state) => state.get_param().cloned(),
         OptimizerState::SteepestDescent(state) => state.get_param().cloned(),
         OptimizerState::NewtonCg(state) => state.get_param().cloned(),
-        OptimizerState::Sgd(state) => Some(state.current_param.clone()),
-        OptimizerState::Adam(state) => Some(state.current_param.clone()),
+        OptimizerState::Sgd(state) => Some(vec_to_array1(&state.current_param)),
+        OptimizerState::Adam(state) => Some(vec_to_array1(&state.current_param)),
     }
 }
 
@@ -1149,7 +929,7 @@ fn terminate_steepest_descent_on_small_gradient<O>(
     mut state: GradientState,
 ) -> Result<GradientState, FitError>
 where
-    O: Gradient<Param = Vec<f64>, Gradient = Vec<f64>>,
+    O: Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
 {
     if state.terminated() {
         return Ok(state);
@@ -1159,7 +939,7 @@ where
     };
     let gradient = problem.gradient(&param).map_err(optimizer_error)?;
     state = state.gradient(gradient.clone());
-    if gradient_l2_norm(&gradient) <= STEEPEST_DESCENT_GRAD_TOL {
+    if gradient_l2_norm(array1_as_slice(&gradient)) <= STEEPEST_DESCENT_GRAD_TOL {
         state = state.terminate_with(TerminationReason::SolverConverged);
     }
     Ok(state)
@@ -1228,6 +1008,7 @@ impl IncrementalFitRunner {
         family.validate_points(points)?;
 
         let initial_values = initial_params.values();
+        let initial_array = vec_to_array1(&initial_values);
         let max_iters = optimizer_config.max_iters();
         let problem = CurveProblem::new_with_metric_quantization(
             family,
@@ -1240,7 +1021,7 @@ impl IncrementalFitRunner {
         let state = match &mut solver {
             OptimizerSolver::Lbfgs(solver) => {
                 let state = IterState::new()
-                    .param(initial_values.clone())
+                    .param(initial_array.clone())
                     .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
@@ -1249,7 +1030,7 @@ impl IncrementalFitRunner {
             }
             OptimizerSolver::NelderMead(solver) => {
                 let state = IterState::new()
-                    .param(initial_values.clone())
+                    .param(initial_array.clone())
                     .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
@@ -1257,18 +1038,20 @@ impl IncrementalFitRunner {
                 OptimizerState::NelderMead(state)
             }
             OptimizerSolver::SteepestDescent(solver) => {
-                let state = IterState::new().param(initial_values).max_iters(max_iters);
+                let state = IterState::new()
+                    .param(initial_array.clone())
+                    .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
                 OptimizerState::SteepestDescent(state)
             }
             OptimizerSolver::NewtonCg(solver) => {
-                let state = IterState::new().param(initial_values).max_iters(max_iters);
+                let state = IterState::new().param(initial_array).max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
-                OptimizerState::NewtonCg(state)
+                OptimizerState::NewtonCg(Box::new(state))
             }
             OptimizerSolver::Sgd(solver) => {
                 let state =
@@ -1385,7 +1168,8 @@ impl IncrementalFitRunner {
                     state.update();
                     OptimizerState::SteepestDescent(state)
                 }
-                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(mut state)) => {
+                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(state)) => {
+                    let mut state = *state;
                     if !state.terminated() {
                         let termination = <NewtonCgSolver as Solver<
                             CurveProblem,
@@ -1398,7 +1182,8 @@ impl IncrementalFitRunner {
                         }
                     }
                     if state.terminated() {
-                        let final_step = self.finalize(OptimizerState::NewtonCg(state))?;
+                        let final_step =
+                            self.finalize(OptimizerState::NewtonCg(Box::new(state)))?;
                         return Ok(final_step);
                     }
                     let (mut state, _) = solver
@@ -1406,7 +1191,7 @@ impl IncrementalFitRunner {
                         .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
-                    OptimizerState::NewtonCg(state)
+                    OptimizerState::NewtonCg(Box::new(state))
                 }
                 (OptimizerSolver::Sgd(solver), OptimizerState::Sgd(mut state)) => {
                     if stochastic_state_is_terminated(&state) {
@@ -1432,9 +1217,9 @@ impl IncrementalFitRunner {
             };
 
             let iteration = optimizer_state_iter(&state);
-            if let Some(params) = optimizer_state_current_param(&state)
-                .and_then(|values| CurveParams::try_from_values(self.family, values).ok())
-            {
+            if let Some(params) = optimizer_state_current_param(&state).and_then(|values| {
+                CurveParams::try_from_values(self.family, array1_to_vec(&values)).ok()
+            }) {
                 let metrics = calculate_iteration_metrics_with_quantization(
                     &self.points,
                     &params,
@@ -1460,7 +1245,8 @@ impl IncrementalFitRunner {
     fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalFitStep, FitError> {
         let best_param_values =
             optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
-        let best_params = CurveParams::try_from_values(self.family, best_param_values)?;
+        let best_params =
+            CurveParams::try_from_values(self.family, array1_to_vec(&best_param_values))?;
         let (mse, rmse) = calculate_metrics_with_quantization(
             &self.points,
             &best_params,
@@ -1571,11 +1357,12 @@ impl IncrementalSplineFitRunner {
             metric_quantization,
         );
         let mut problem = Problem::new(problem);
+        let initial_knot_y = vec_to_array1(&prepared.initial_y);
         let mut solver = build_optimizer_solver(&prepared.initial_y, optimizer_config)?;
         let state = match &mut solver {
             OptimizerSolver::Lbfgs(solver) => {
                 let state = IterState::new()
-                    .param(prepared.initial_y.clone())
+                    .param(initial_knot_y.clone())
                     .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
@@ -1584,7 +1371,7 @@ impl IncrementalSplineFitRunner {
             }
             OptimizerSolver::NelderMead(solver) => {
                 let state = IterState::new()
-                    .param(prepared.initial_y.clone())
+                    .param(initial_knot_y.clone())
                     .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
@@ -1593,7 +1380,7 @@ impl IncrementalSplineFitRunner {
             }
             OptimizerSolver::SteepestDescent(solver) => {
                 let state = IterState::new()
-                    .param(prepared.initial_y.clone())
+                    .param(initial_knot_y.clone())
                     .max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
@@ -1601,13 +1388,11 @@ impl IncrementalSplineFitRunner {
                 OptimizerState::SteepestDescent(state)
             }
             OptimizerSolver::NewtonCg(solver) => {
-                let state = IterState::new()
-                    .param(prepared.initial_y.clone())
-                    .max_iters(max_iters);
+                let state = IterState::new().param(initial_knot_y).max_iters(max_iters);
                 let (mut state, _) = solver.init(&mut problem, state).map_err(optimizer_error)?;
                 state.update();
                 state.func_counts(&problem);
-                OptimizerState::NewtonCg(state)
+                OptimizerState::NewtonCg(Box::new(state))
             }
             OptimizerSolver::Sgd(solver) => {
                 let state =
@@ -1723,7 +1508,8 @@ impl IncrementalSplineFitRunner {
                     state.update();
                     OptimizerState::SteepestDescent(state)
                 }
-                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(mut state)) => {
+                (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(state)) => {
+                    let mut state = *state;
                     if !state.terminated() {
                         let termination = <NewtonCgSolver as Solver<
                             SplineProblem,
@@ -1736,7 +1522,8 @@ impl IncrementalSplineFitRunner {
                         }
                     }
                     if state.terminated() {
-                        let final_step = self.finalize(OptimizerState::NewtonCg(state))?;
+                        let final_step =
+                            self.finalize(OptimizerState::NewtonCg(Box::new(state)))?;
                         return Ok(final_step);
                     }
                     let (mut state, _) = solver
@@ -1744,7 +1531,7 @@ impl IncrementalSplineFitRunner {
                         .map_err(optimizer_error)?;
                     state.func_counts(&self.problem);
                     state.update();
-                    OptimizerState::NewtonCg(state)
+                    OptimizerState::NewtonCg(Box::new(state))
                 }
                 (OptimizerSolver::Sgd(solver), OptimizerState::Sgd(mut state)) => {
                     if stochastic_state_is_terminated(&state) {
@@ -1776,7 +1563,7 @@ impl IncrementalSplineFitRunner {
                     self.config.extrapolation,
                     self.config.samples,
                     self.knot_x.as_ref(),
-                    &knot_y,
+                    array1_as_slice(&knot_y),
                     self.curve_x_bounds,
                 )?;
                 let metrics = calculate_iteration_metrics_from_evaluator(
@@ -1793,7 +1580,7 @@ impl IncrementalSplineFitRunner {
                     iteration,
                     mse: metrics.mse,
                     metrics,
-                    knot_y,
+                    knot_y: array1_to_vec(&knot_y),
                     curve,
                 });
             }
@@ -1819,18 +1606,22 @@ impl IncrementalSplineFitRunner {
             loss_metric: self.loss_metric,
             metric_quantization: self.metric_quantization,
         };
-        let (result, metrics) =
-            build_spline_result_from_knot_y(&finalize_context, &best_knot_y, iterations)?;
+        let (result, metrics) = build_spline_result_from_knot_y(
+            &finalize_context,
+            array1_as_slice(&best_knot_y),
+            iterations,
+        )?;
 
         Ok(IncrementalSplineFitStep::Finished { result, metrics })
     }
 }
 
 impl CostFunction for CurveProblem {
-    type Param = Vec<f64>;
+    type Param = Array1<f64>;
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
+        let param = array1_as_slice(param);
         if self.family.is_polynomial()
             && matches!(self.metric_quantization, MetricQuantization::Disabled)
         {
@@ -1853,19 +1644,23 @@ impl CostFunction for CurveProblem {
             ));
         }
 
-        let sample_count = self.points.len() as f64;
+        let sample_count = self.point_x.len() as f64;
         let mut sum = 0.0;
 
-        for point in self.points.as_slice() {
-            let predicted = self.family.evaluate_raw(param, point.x());
-            let residual = self.residual(predicted, point.y());
+        let mut index = 0;
+        while index < self.point_x.len() {
+            let x = self.point_x[index];
+            let y = self.point_y[index];
+            let predicted = self.family.evaluate_raw(param, x);
+            let residual = self.residual(predicted, y);
             if !residual.is_finite() {
                 return Ok(LARGE_COST);
             }
-            sum += self.loss_value_from_prediction(predicted, point.y());
+            sum += self.loss_value_from_prediction(predicted, y);
             if !sum.is_finite() {
                 return Ok(LARGE_COST);
             }
+            index += 1;
         }
 
         Ok(sum / sample_count)
@@ -1873,446 +1668,55 @@ impl CostFunction for CurveProblem {
 }
 
 impl Gradient for CurveProblem {
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
-        let mut gradient = vec![0.0; self.family.parameter_count()];
-        let points = self.points.as_slice();
-        let sample_scale = 1.0 / points.len() as f64;
+        let param = array1_as_slice(param);
+        let mut gradient = Array1::zeros(self.family.parameter_count());
+        let sample_scale = 1.0 / self.point_x.len() as f64;
+        let gradient_slice = array1_as_slice_mut(&mut gradient);
 
-        match self.family {
-            family if family.is_polynomial() => {
-                if matches!(self.metric_quantization, MetricQuantization::Disabled) {
-                    simd::accumulate_polynomial_gradient(
-                        self.point_x.as_ref(),
-                        self.point_y.as_ref(),
-                        param,
-                        self.loss_metric,
-                        &mut gradient,
-                    );
-                } else {
-                    let mut index = 0;
-                    while index < self.point_x.len() {
-                        let x = self.point_x[index];
-                        let y = self.point_y[index];
-                        let model = param
-                            .iter()
-                            .copied()
-                            .fold(0.0, |acc, coefficient| acc * x + coefficient);
-                        let residual = self.loss_derivative_from_prediction(model, y);
-
-                        let mut basis = 1.0;
-                        for gradient_value in gradient.iter_mut().rev() {
-                            *gradient_value += residual * basis;
-                            basis *= x;
-                        }
-                        index += 1;
-                    }
-                }
-            }
-            CurveFamily::Arrhenius => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let exp_term = (param[1] / x).exp();
-                    let model = param[0] * exp_term;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    gradient[0] += residual * exp_term;
-                    gradient[1] += residual * (param[0] * exp_term / x);
-                }
-            }
-            CurveFamily::Inverse => {
-                if matches!(self.metric_quantization, MetricQuantization::Disabled) {
-                    simd::accumulate_inverse_gradient(
-                        self.point_x.as_ref(),
-                        self.point_y.as_ref(),
-                        param,
-                        self.loss_metric,
-                        &mut gradient,
-                    );
-                } else {
-                    let mut index = 0;
-                    while index < self.point_x.len() {
-                        let x = positive_x(self.point_x[index]);
-                        let y = self.point_y[index];
-                        let model = param[0] + param[1] / x;
-                        let residual = self.loss_derivative_from_prediction(model, y);
-                        gradient[0] += residual;
-                        gradient[1] += residual / x;
-                        index += 1;
-                    }
-                }
-            }
-            CurveFamily::Logistic => {
-                for point in points {
-                    let z = param[1] * (point.x() - param[2]);
-                    let s = 1.0 / (1.0 + (-z).exp());
-                    let model = param[0] * s;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let ds_dz = s * (1.0 - s);
-
-                    gradient[0] += residual * s;
-                    gradient[1] += residual * (param[0] * ds_dz * (point.x() - param[2]));
-                    gradient[2] += residual * (param[0] * ds_dz * (-param[1]));
-                }
-            }
-            CurveFamily::Gompertz => {
-                for point in points {
-                    let x_centered = point.x() - param[2];
-                    let exp_inner = (-param[1] * x_centered).exp();
-                    let exp_outer = (-exp_inner).exp();
-                    let model = param[0] * exp_outer;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * exp_outer;
-                    gradient[1] += residual * (param[0] * exp_outer * exp_inner * x_centered);
-                    gradient[2] += residual * (-param[0] * exp_outer * exp_inner * param[1]);
-                }
-            }
-            CurveFamily::BiExponential => {
-                for point in points {
-                    let x = point.x();
-                    let exp1 = (-param[1] * x).exp();
-                    let exp2 = (-param[3] * x).exp();
-                    let model = param[0] * exp1 + param[2] * exp2 + param[4];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * exp1;
-                    gradient[1] += residual * (-param[0] * x * exp1);
-                    gradient[2] += residual * exp2;
-                    gradient[3] += residual * (-param[2] * x * exp2);
-                    gradient[4] += residual;
-                }
-            }
-            CurveFamily::DampedSinusoid => {
-                for point in points {
-                    let x = point.x();
-                    let exp_part = (-param[1] * x).exp();
-                    let angle = param[2] * x + param[3];
-                    let sin_part = angle.sin();
-                    let cos_part = angle.cos();
-                    let model = param[0] * exp_part * sin_part + param[4];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * exp_part * sin_part;
-                    gradient[1] += residual * (-param[0] * x * exp_part * sin_part);
-                    gradient[2] += residual * (param[0] * exp_part * cos_part * x);
-                    gradient[3] += residual * (param[0] * exp_part * cos_part);
-                    gradient[4] += residual;
-                }
-            }
-            CurveFamily::Lorentzian => {
-                for point in points {
-                    let a = param[0];
-                    let x0 = param[1];
-                    let (gamma, d_gamma_raw) = positive_param_with_derivative(param[2]);
-                    let x = point.x();
-                    let u = (x - x0) / gamma;
-                    let den = 1.0 + u * u;
-                    let inv_den = 1.0 / den;
-                    let model = param[3] + a * inv_den;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let common = 2.0 * a / (den * den * gamma);
-
-                    gradient[0] += residual * inv_den;
-                    gradient[1] += residual * (common * u);
-                    gradient[2] += residual * (common * u * u) * d_gamma_raw;
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::NaturalLog => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let (b, d_b_raw) = positive_param_with_derivative(param[1]);
-                    let ln_term = (x / b).ln();
-                    let model = param[0] * ln_term;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * ln_term;
-                    gradient[1] += residual * (-param[0] / b) * d_b_raw;
-                }
-            }
-            CurveFamily::FourPl => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let a = param[0];
-                    let b = param[1];
-                    let (c, d_c_raw) = positive_param_with_derivative(param[2]);
-                    let d = param[3];
-                    let ratio = x / c;
-                    let pow = ratio.powf(b);
-                    let den = 1.0 + pow;
-                    let inv_den = 1.0 / den;
-                    let model = d + (a - d) * inv_den;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_pow_db = pow * ratio.ln();
-                    let d_pow_dc = -pow * b / c;
-                    let d_model_da = inv_den;
-                    let d_model_dd = 1.0 - inv_den;
-                    let d_model_db = -(a - d) * d_pow_db / (den * den);
-                    let d_model_dc = -(a - d) * d_pow_dc / (den * den);
-
-                    gradient[0] += residual * d_model_da;
-                    gradient[1] += residual * d_model_db;
-                    gradient[2] += residual * d_model_dc * d_c_raw;
-                    gradient[3] += residual * d_model_dd;
-                }
-            }
-            CurveFamily::FivePl => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let a = param[0];
-                    let b = param[1];
-                    let (c, d_c_raw) = positive_param_with_derivative(param[2]);
-                    let d = param[3];
-                    let (m, d_m_raw) = positive_param_with_derivative(param[4]);
-                    let ratio = x / c;
-                    let pow = ratio.powf(b);
-                    let den = 1.0 + pow;
-                    let inv = den.powf(-m);
-                    let model = d + (a - d) * inv;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_pow_db = pow * ratio.ln();
-                    let d_pow_dc = -pow * b / c;
-                    let d_inv_db = -m * den.powf(-m - 1.0) * d_pow_db;
-                    let d_inv_dc = -m * den.powf(-m - 1.0) * d_pow_dc;
-                    let d_inv_dm = -inv * den.ln();
-
-                    gradient[0] += residual * inv;
-                    gradient[1] += residual * (a - d) * d_inv_db;
-                    gradient[2] += residual * (a - d) * d_inv_dc * d_c_raw;
-                    gradient[3] += residual * (1.0 - inv);
-                    gradient[4] += residual * (a - d) * d_inv_dm * d_m_raw;
-                }
-            }
-            CurveFamily::MichaelisMenten => {
-                for point in points {
-                    let x = point.x();
-                    let vmax = param[0];
-                    let (denominator, d_den_d_km) = non_zero_param_with_derivative(x + param[1]);
-                    let model = vmax * x / denominator;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_model_d_vmax = x / denominator;
-                    let d_model_d_km = -vmax * x / (denominator * denominator) * d_den_d_km;
-
-                    gradient[0] += residual * d_model_d_vmax;
-                    gradient[1] += residual * d_model_d_km;
-                }
-            }
-            CurveFamily::ExponentialBasic => {
-                for point in points {
-                    let x = point.x();
-                    let exp_part = (-param[2] * x).exp();
-                    let model = param[0] + param[1] * exp_part;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    gradient[0] += residual;
-                    gradient[1] += residual * exp_part;
-                    gradient[2] += residual * (-param[1] * x * exp_part);
-                }
-            }
-            CurveFamily::ExponentialLinear => {
-                for point in points {
-                    let x = point.x();
-                    let exp_part = (param[1] * x).exp();
-                    let model = param[0] * exp_part + param[2] * x + param[3];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    gradient[0] += residual * exp_part;
-                    gradient[1] += residual * (param[0] * exp_part * x);
-                    gradient[2] += residual * x;
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::ExponentialHalfLife => {
-                for point in points {
-                    let x = point.x();
-                    let (c, d_c_raw) = positive_param_with_derivative(param[2]);
-                    let exponent = -LN_2 * x / c;
-                    let pow = exponent.exp();
-                    let model = param[0] + param[1] * pow;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_model_d_c = param[1] * pow * LN_2 * x / (c * c);
-
-                    gradient[0] += residual;
-                    gradient[1] += residual * pow;
-                    gradient[2] += residual * d_model_d_c * d_c_raw;
-                }
-            }
-            CurveFamily::FallingExponential => {
-                for point in points {
-                    let x = point.x();
-                    let y0 = param[0];
-                    let v0 = param[1];
-                    let (k, d_k_raw) = non_zero_param_with_derivative(param[2]);
-                    let exp_part = (-k * x).exp();
-                    let one_minus_exp = -(-k * x).exp_m1();
-                    let model = y0 - (v0 / k) * one_minus_exp;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_model_d_v0 = -one_minus_exp / k;
-                    let d_model_d_k = v0 * (one_minus_exp - k * x * exp_part) / (k * k);
-
-                    gradient[0] += residual;
-                    gradient[1] += residual * d_model_d_v0;
-                    gradient[2] += residual * d_model_d_k * d_k_raw;
-                }
-            }
-            CurveFamily::HyperbolicTangent => {
-                for point in points {
-                    let x = point.x();
-                    let z = param[1] * (x - param[2]);
-                    let tanh_z = z.tanh();
-                    let sech2_z = 1.0 - tanh_z * tanh_z;
-                    let model = param[0] * tanh_z + param[3];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * tanh_z;
-                    gradient[1] += residual * (param[0] * sech2_z * (x - param[2]));
-                    gradient[2] += residual * (-param[0] * sech2_z * param[1]);
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::ArctangentStep => {
-                for point in points {
-                    let x = point.x();
-                    let z = param[1] * (x - param[2]);
-                    let atan_z = z.atan();
-                    let inv_den = 1.0 / (1.0 + z * z);
-                    let model = param[0] * atan_z + param[3];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * atan_z;
-                    gradient[1] += residual * (param[0] * (x - param[2]) * inv_den);
-                    gradient[2] += residual * (-param[0] * param[1] * inv_den);
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::Softplus => {
-                for point in points {
-                    let x = point.x();
-                    let z = param[1] * (x - param[2]);
-                    let softplus_z = softplus(z);
-                    let sigma_z = sigmoid(z);
-                    let model = param[0] * softplus_z + param[3];
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * softplus_z;
-                    gradient[1] += residual * (param[0] * sigma_z * (x - param[2]));
-                    gradient[2] += residual * (-param[0] * sigma_z * param[1]);
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::Power => {
-                for point in points {
-                    let x = positive_x(point.x());
-                    let pow = x.powf(param[1]);
-                    let model = param[0] * pow;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    gradient[0] += residual * pow;
-                    gradient[1] += residual * param[0] * pow * x.ln();
-                }
-            }
-            CurveFamily::Gaussian => {
-                for point in points {
-                    let x = point.x();
-                    let a = param[0];
-                    let b = param[1];
-                    let (c, d_c_raw) = positive_param_with_derivative(param[2]);
-                    let c2 = c * c;
-                    let delta = x - b;
-                    let exp_part = (-(delta * delta) / (2.0 * c2)).exp();
-                    let model = a * exp_part;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-                    let d_model_d_a = exp_part;
-                    let d_model_d_b = a * exp_part * delta / c2;
-                    let d_model_d_c = a * exp_part * delta * delta / (c2 * c);
-
-                    gradient[0] += residual * d_model_d_a;
-                    gradient[1] += residual * d_model_d_b;
-                    gradient[2] += residual * d_model_d_c * d_c_raw;
-                }
-            }
-            CurveFamily::Rational11 => {
-                for point in points {
-                    let x = point.x();
-                    let numerator = param[0] * x + param[1];
-                    let denominator_raw = 1.0 + param[2] * x;
-                    let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
-                    let model = param[3] + numerator / denominator;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * (x / denominator);
-                    gradient[1] += residual * (1.0 / denominator);
-                    gradient[2] +=
-                        residual * (-numerator * x / (denominator * denominator)) * d_den_raw;
-                    gradient[3] += residual;
-                }
-            }
-            CurveFamily::Rational22 => {
-                for point in points {
-                    let x = point.x();
-                    let x2 = x * x;
-                    let numerator = param[0] * x2 + param[1] * x + param[2];
-                    let denominator_raw = 1.0 + param[3] * x + param[4] * x2;
-                    let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
-                    let model = numerator / denominator;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * (x2 / denominator);
-                    gradient[1] += residual * (x / denominator);
-                    gradient[2] += residual * (1.0 / denominator);
-                    gradient[3] +=
-                        residual * (-numerator * x / (denominator * denominator)) * d_den_raw;
-                    gradient[4] +=
-                        residual * (-numerator * x2 / (denominator * denominator)) * d_den_raw;
-                }
-            }
-            CurveFamily::Emg => {
-                self.numerical_gradient_from_cost(param, &mut gradient)?;
-                // Далее применяется общий sample_scale, поэтому возвращаем сумму градиентов.
-                let sample_count = points.len() as f64;
-                for value in &mut gradient {
+        if self.family.is_polynomial()
+            && matches!(self.metric_quantization, MetricQuantization::Disabled)
+        {
+            simd::accumulate_polynomial_gradient(
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                param,
+                self.loss_metric,
+                gradient_slice,
+            );
+        } else if self.family == CurveFamily::Inverse
+            && matches!(self.metric_quantization, MetricQuantization::Disabled)
+        {
+            simd::accumulate_inverse_gradient(
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                param,
+                self.loss_metric,
+                gradient_slice,
+            );
+        } else {
+            let mode = models::accumulate_gradient(
+                self.family,
+                self.point_x.as_ref(),
+                self.point_y.as_ref(),
+                param,
+                |predicted, observed| self.loss_derivative_from_prediction(predicted, observed),
+                gradient_slice,
+            );
+            if matches!(mode, GradientComputation::NeedsNumerical) {
+                self.numerical_gradient_from_cost(param, gradient_slice)?;
+                // Далее применяется общий sample_scale, поэтому здесь возвращается сумма.
+                let sample_count = self.point_x.len() as f64;
+                for value in gradient_slice.iter_mut() {
                     *value *= sample_count;
                 }
             }
-            CurveFamily::PseudoVoigt => {
-                for point in points {
-                    let x = point.x();
-                    let a = param[0];
-                    let x0 = param[1];
-                    let (sigma, d_sigma_raw) = positive_param_with_derivative(param[2]);
-                    let (gamma, d_gamma_raw) = positive_param_with_derivative(param[3]);
-                    let eta = sigmoid(param[4]);
-                    let eta_prime = eta * (1.0 - eta);
-                    let delta = x - x0;
-
-                    let sigma2 = sigma * sigma;
-                    let gaussian = (-(delta * delta) / (2.0 * sigma2)).exp();
-                    let d_gaussian_dx0 = gaussian * delta / sigma2;
-                    let d_gaussian_d_sigma = gaussian * delta * delta / (sigma2 * sigma);
-
-                    let u = delta / gamma;
-                    let den = 1.0 + u * u;
-                    let lorentzian = 1.0 / den;
-                    let den2 = den * den;
-                    let d_lorentzian_dx0 = 2.0 * u / (den2 * gamma);
-                    let d_lorentzian_d_gamma = 2.0 * u * u / (den2 * gamma);
-
-                    let mix = eta * gaussian + (1.0 - eta) * lorentzian;
-                    let model = param[5] + a * mix;
-                    let residual = self.loss_derivative_from_prediction(model, point.y());
-
-                    gradient[0] += residual * mix;
-                    gradient[1] +=
-                        residual * a * (eta * d_gaussian_dx0 + (1.0 - eta) * d_lorentzian_dx0);
-                    gradient[2] += residual * a * eta * d_gaussian_d_sigma * d_sigma_raw;
-                    gradient[3] += residual * a * (1.0 - eta) * d_lorentzian_d_gamma * d_gamma_raw;
-                    gradient[4] += residual * a * (gaussian - lorentzian) * eta_prime;
-                    gradient[5] += residual;
-                }
-            }
-            _ => unreachable!("polynomial families are handled by the guarded branch above"),
         }
 
-        for value in &mut gradient {
+        for value in gradient_slice.iter_mut() {
             *value *= sample_scale;
             if !value.is_finite() {
                 *value = LARGE_COST;
@@ -2324,8 +1728,8 @@ impl Gradient for CurveProblem {
 }
 
 impl Hessian for CurveProblem {
-    type Param = Vec<f64>;
-    type Hessian = Vec<Vec<f64>>;
+    type Param = Array1<f64>;
+    type Hessian = Array2<f64>;
 
     fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
         if let Some(hessian) = self.analytic_hessian_for_supported_families(param) {
@@ -2674,29 +2078,31 @@ impl SplineProblem {
 }
 
 impl CostFunction for SplineProblem {
-    type Param = Vec<f64>;
+    type Param = Array1<f64>;
     type Output = f64;
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
-        Ok(self.evaluate_objective(param))
+        Ok(self.evaluate_objective(array1_as_slice(param)))
     }
 }
 
 impl Gradient for SplineProblem {
-    type Param = Vec<f64>;
-    type Gradient = Vec<f64>;
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        let param_slice = array1_as_slice(param);
         let mut probe = param.clone();
-        let mut gradient = vec![0.0; param.len()];
+        let mut gradient = Array1::zeros(param_slice.len());
         for (index, gradient_value) in gradient.iter_mut().enumerate() {
             // Численный градиент по центральной схеме конечной разности.
-            let step = ((param[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
-            probe[index] = param[index] + step;
-            let cost_plus = self.evaluate_objective(&probe);
-            probe[index] = param[index] - step;
-            let cost_minus = self.evaluate_objective(&probe);
-            probe[index] = param[index];
+            let step =
+                ((param_slice[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
+            probe[index] = param_slice[index] + step;
+            let cost_plus = self.evaluate_objective(array1_as_slice(&probe));
+            probe[index] = param_slice[index] - step;
+            let cost_minus = self.evaluate_objective(array1_as_slice(&probe));
+            probe[index] = param_slice[index];
             let derivative = (cost_plus - cost_minus) / (2.0 * step);
             *gradient_value = if derivative.is_finite() {
                 derivative
@@ -2709,8 +2115,8 @@ impl Gradient for SplineProblem {
 }
 
 impl Hessian for SplineProblem {
-    type Param = Vec<f64>;
-    type Hessian = Vec<Vec<f64>>;
+    type Param = Array1<f64>;
+    type Hessian = Array2<f64>;
 
     fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
         numerical_hessian_from_gradient(self, param)

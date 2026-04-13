@@ -5,6 +5,7 @@
 pub mod app;
 pub mod domain;
 pub mod fit;
+pub(crate) mod models;
 
 pub use app::CurveFitApp;
 pub use domain::{

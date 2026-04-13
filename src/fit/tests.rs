@@ -1,19 +1,18 @@
 #[cfg(feature = "portable-simd")]
 use super::simd;
 use super::{
-    CurveProblem, DEFAULT_SPLINE_KNOTS, FitError, HESSIAN_DIAGONAL_JITTER,
-    IncrementalSplineFitRunner, IncrementalSplineFitStep, MetricQuantization,
-    MetricQuantizationDecimalPlaces, OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy,
-    SplineExtrapolation, SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy,
-    approximate_spline_knots, build_spline_initial_curve_from_knot_y,
-    build_spline_result_from_knot_y, calculate_iteration_metrics,
-    calculate_iteration_metrics_with_quantization, calculate_metrics, evaluate_linear_spline,
-    expanded_spline_curve_x_bounds, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
-    fit_curve_with_optimizer_config, fit_curve_with_progress,
-    fit_curve_with_progress_and_optimizer_config,
+    CurveProblem, DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner,
+    IncrementalSplineFitStep, MetricQuantization, MetricQuantizationDecimalPlaces,
+    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
+    SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy, approximate_spline_knots,
+    build_spline_initial_curve_from_knot_y, build_spline_result_from_knot_y,
+    calculate_iteration_metrics, calculate_iteration_metrics_with_quantization, calculate_metrics,
+    evaluate_linear_spline, expanded_spline_curve_x_bounds, fit_akima_spline,
+    fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
+    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
     fit_linear_spline_with_config, fit_monotone_cubic_spline, fit_natural_cubic_spline,
-    numerical_hessian_from_gradient, sorted_points_with_duplicate_policy,
+    sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
@@ -128,7 +127,7 @@ fn quantized_objective_differs_from_raw_objective() {
         OptimizationLossMetric::Mse,
         quantization(2),
     );
-    let params = vec![0.0, 0.0];
+    let params = ndarray::Array1::from_vec(vec![0.0, 0.0]);
 
     let raw_cost = CostFunction::cost(&raw_problem, &params).expect("raw cost must be computed");
     let quantized_cost =
@@ -189,113 +188,6 @@ fn spline_final_snapshot_uses_quantized_metrics_while_residuals_stay_raw() {
         (metrics.mse - raw_mse).abs() > 1e-5,
         "final metrics must not be reconstructed from raw residuals"
     );
-}
-
-#[test]
-fn analytic_hessian_matches_mse_polynomial_formula() {
-    use argmin::core::Hessian;
-
-    let points = build_points(&[-1.0, 0.0, 2.0], |x| 1.5 * x - 0.25);
-    let problem = CurveProblem::new(CurveFamily::Linear, &points, OptimizationLossMetric::Mse);
-    let hessian = Hessian::hessian(&problem, &vec![0.3, -0.7]).expect("hessian must be computed");
-
-    // Для линейной модели y = a*x + b и MSE:
-    // H = (2/n) * Σ [[x^2, x], [x, 1]] + диагональный jitter.
-    let n = 3.0;
-    let expected_00 = (2.0 / n) * (1.0 + 0.0 + 4.0) + HESSIAN_DIAGONAL_JITTER;
-    let expected_01 = (2.0 / n) * (-1.0 + 0.0 + 2.0);
-    let expected_11 = (2.0 / n) * 3.0 + HESSIAN_DIAGONAL_JITTER;
-
-    assert_near(hessian[0][0], expected_00, 1e-12);
-    assert_near(hessian[0][1], expected_01, 1e-12);
-    assert_near(hessian[1][0], expected_01, 1e-12);
-    assert_near(hessian[1][1], expected_11, 1e-12);
-}
-
-#[test]
-fn analytic_hessian_matches_soft_l1_inverse_formula() {
-    use argmin::core::Hessian;
-
-    let points = build_points(&[1.0, 2.0, 4.0], |x| 1.0 + 0.5 / x);
-    let params = vec![0.9, 0.3];
-    let problem = CurveProblem::new(
-        CurveFamily::Inverse,
-        &points,
-        OptimizationLossMetric::SoftL1,
-    );
-    let hessian = Hessian::hessian(&problem, &params).expect("hessian must be computed");
-
-    let mut expected_00 = 0.0;
-    let mut expected_01 = 0.0;
-    let mut expected_11 = 0.0;
-    for point in points.as_slice() {
-        let x = point.x().max(1e-9);
-        let inv_x = 1.0 / x;
-        let residual = params[0] + params[1] * inv_x - point.y();
-        let weight = 2.0 / (1.0 + residual * residual).powf(1.5);
-        expected_00 += weight;
-        expected_01 += weight * inv_x;
-        expected_11 += weight * inv_x * inv_x;
-    }
-    let sample_scale = 1.0 / points.len() as f64;
-    expected_00 = expected_00 * sample_scale + HESSIAN_DIAGONAL_JITTER;
-    expected_01 *= sample_scale;
-    expected_11 = expected_11 * sample_scale + HESSIAN_DIAGONAL_JITTER;
-
-    assert_near(hessian[0][0], expected_00, 1e-12);
-    assert_near(hessian[0][1], expected_01, 1e-12);
-    assert_near(hessian[1][0], expected_01, 1e-12);
-    assert_near(hessian[1][1], expected_11, 1e-12);
-}
-
-#[test]
-fn analytic_hessian_exponential_basic_matches_numerical_reference() {
-    use argmin::core::Hessian;
-
-    let points = build_points(&[-1.0, -0.2, 0.3, 1.1, 2.0], |x| {
-        0.8 + 1.4 * (-0.6 * x).exp()
-    });
-    let params = vec![0.5, 1.1, 0.3];
-    let problem = CurveProblem::new(
-        CurveFamily::ExponentialBasic,
-        &points,
-        OptimizationLossMetric::Mse,
-    );
-
-    let analytic = Hessian::hessian(&problem, &params).expect("analytic hessian must be computed");
-    let numerical =
-        numerical_hessian_from_gradient(&problem, &params).expect("numerical hessian must succeed");
-
-    for row in 0..3 {
-        for column in 0..3 {
-            assert_near(analytic[row][column], numerical[row][column], 5e-5);
-        }
-    }
-}
-
-#[test]
-fn analytic_hessian_exponential_linear_matches_numerical_reference() {
-    use argmin::core::Hessian;
-
-    let points = build_points(&[-1.2, -0.5, 0.0, 0.7, 1.4], |x| {
-        1.4 * (0.35 * x).exp() - 0.4 * x + 0.2
-    });
-    let params = vec![1.0, 0.2, -0.2, 0.0];
-    let problem = CurveProblem::new(
-        CurveFamily::ExponentialLinear,
-        &points,
-        OptimizationLossMetric::SoftL1,
-    );
-
-    let analytic = Hessian::hessian(&problem, &params).expect("analytic hessian must be computed");
-    let numerical =
-        numerical_hessian_from_gradient(&problem, &params).expect("numerical hessian must succeed");
-
-    for row in 0..4 {
-        for column in 0..4 {
-            assert_near(analytic[row][column], numerical[row][column], 8e-5);
-        }
-    }
 }
 
 #[test]
@@ -1666,7 +1558,8 @@ fn polynomial_cost_with_quantization_uses_quantized_scalar_pipeline() {
         quantization(2),
     );
 
-    let cost = CostFunction::cost(&problem, &vec![0.0, 0.0]).expect("cost must be computed");
+    let cost = CostFunction::cost(&problem, &ndarray::Array1::from_vec(vec![0.0, 0.0]))
+        .expect("cost must be computed");
     assert_near(cost, 1.5129, 1e-12);
 }
 

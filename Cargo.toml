@@ -19,11 +19,13 @@ portable-simd = []
 argmin = { version = "0.11.0", default-features = false }
 argmin-math = { version = "0.5.1", default-features = false, features = [
     "vec",
+    "ndarray_v0_16-nolinalg",
 ] }
 egui_extras = { version = "0.34.1", default-features = false, features = [
     "svg_text",
 ] }
 egui_plot = "0.35.0"
+ndarray = "0.16.1"
 stochastic_optimizers = "0.3.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
