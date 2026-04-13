@@ -27,6 +27,10 @@ pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
                 | CurveFamily::Gaussian
                 | CurveFamily::ExponentialBasic
                 | CurveFamily::Power
+                | CurveFamily::Rational11
+                | CurveFamily::Rational22
+                | CurveFamily::Emg
+                | CurveFamily::PseudoVoigt
         )
 }
 
@@ -49,6 +53,10 @@ pub(super) fn data_based_params_for_family(
         CurveFamily::Gaussian => data_based_gaussian_params(points),
         CurveFamily::ExponentialBasic => data_based_exponential_basic_params(points),
         CurveFamily::Power => data_based_power_params(points),
+        CurveFamily::Rational11 => data_based_rational_11_params(points),
+        CurveFamily::Rational22 => data_based_rational_22_params(points),
+        CurveFamily::Emg => data_based_emg_params(points),
+        CurveFamily::PseudoVoigt => data_based_pseudo_voigt_params(points),
         _ => Err(format!(
             "Data-based initialization is not supported for family {family}"
         )),
@@ -156,6 +164,45 @@ fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
         Ok((point.x().ln(), point.y().ln()))
     })?;
     build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope])
+}
+
+fn data_based_rational_11_params(points: &Points) -> Result<CurveParams, String> {
+    let (slope, intercept) = linear_regression(points)?;
+    build_curve_params(CurveFamily::Rational11, vec![slope, intercept, 0.0, 0.0])
+}
+
+fn data_based_rational_22_params(points: &Points) -> Result<CurveParams, String> {
+    let (slope, intercept) = linear_regression(points)?;
+    build_curve_params(
+        CurveFamily::Rational22,
+        vec![0.0, slope, intercept, 0.0, 0.0],
+    )
+}
+
+fn data_based_emg_params(points: &Points) -> Result<CurveParams, String> {
+    let (x_min, x_max, y_min, y_max, x_at_y_max) = point_extrema(points);
+    let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
+    let y_span = (y_max - y_min).abs().max(PARAM_INIT_SPAN_EPS);
+    let left_span = (x_at_y_max - x_min).abs();
+    let right_span = (x_max - x_at_y_max).abs();
+    let tau_sign = if right_span >= left_span { 1.0 } else { -1.0 };
+    let tau = tau_sign * (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
+    let a = y_span * tau.abs();
+    build_curve_params(
+        CurveFamily::Emg,
+        vec![a, x_at_y_max, x_span / 6.0, tau, y_min],
+    )
+}
+
+fn data_based_pseudo_voigt_params(points: &Points) -> Result<CurveParams, String> {
+    let (x_min, x_max, y_min, y_max, x_at_y_max) = point_extrema(points);
+    let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
+    let y_span = (y_max - y_min).abs().max(PARAM_INIT_SPAN_EPS);
+    let width = (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
+    build_curve_params(
+        CurveFamily::PseudoVoigt,
+        vec![y_span, x_at_y_max, width, width, 0.0, y_min],
+    )
 }
 
 fn data_based_sigmoid_abc(points: &Points) -> (f64, f64, f64) {

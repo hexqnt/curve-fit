@@ -681,6 +681,10 @@ fn param_init_method_support_matrix_is_correct() {
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::Power));
     assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::BiExponential));
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::DampedSinusoid));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational11));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational22));
+    assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::Emg));
+    assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::PseudoVoigt));
 
     assert!(!ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Arrhenius));
     assert!(!ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::FourPl));
@@ -751,6 +755,35 @@ fn data_based_damped_sinusoid_initialization_returns_finite_values() {
     assert!(values.iter().all(|value| value.is_finite()));
     assert!(values[1] > 0.0, "k must be positive");
     assert!(values[2] > 0.0, "omega must be positive");
+}
+
+#[test]
+fn data_based_rational_and_peak_initialization_returns_finite_values() {
+    let points = points_from_pairs(&[
+        (-2.0, 0.6),
+        (-1.0, 1.1),
+        (-0.2, 1.8),
+        (0.4, 2.3),
+        (1.0, 1.9),
+        (1.8, 1.3),
+        (2.6, 0.9),
+    ]);
+
+    for family in [
+        CurveFamily::Rational11,
+        CurveFamily::Rational22,
+        CurveFamily::Emg,
+        CurveFamily::PseudoVoigt,
+    ] {
+        let params = data_based_params_for_family(family, &points)
+            .expect("must initialize params for new family");
+        let values = params.values();
+        assert_eq!(values.len(), family.parameter_count());
+        assert!(
+            values.iter().all(|value| value.is_finite()),
+            "all initialized params must be finite for {family:?}"
+        );
+    }
 }
 
 #[test]

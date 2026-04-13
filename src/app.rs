@@ -231,6 +231,10 @@ enum ModelChoice {
     Softplus,
     Power,
     Gaussian,
+    Rational11,
+    Rational22,
+    Emg,
+    PseudoVoigt,
     LinearSpline,
     MonotoneCubicSpline,
     NaturalCubicSpline,
@@ -238,7 +242,7 @@ enum ModelChoice {
 }
 
 impl ModelChoice {
-    const ALL: [Self; 25] = [
+    const ALL: [Self; 29] = [
         Self::Polynomial,
         Self::Arrhenius,
         Self::Inverse,
@@ -260,6 +264,10 @@ impl ModelChoice {
         Self::Softplus,
         Self::Power,
         Self::Gaussian,
+        Self::Rational11,
+        Self::Rational22,
+        Self::Emg,
+        Self::PseudoVoigt,
         Self::LinearSpline,
         Self::MonotoneCubicSpline,
         Self::NaturalCubicSpline,
@@ -304,6 +312,10 @@ impl ResolvedModel {
             ModelChoice::Softplus => Self::Parametric(CurveFamily::Softplus),
             ModelChoice::Power => Self::Parametric(CurveFamily::Power),
             ModelChoice::Gaussian => Self::Parametric(CurveFamily::Gaussian),
+            ModelChoice::Rational11 => Self::Parametric(CurveFamily::Rational11),
+            ModelChoice::Rational22 => Self::Parametric(CurveFamily::Rational22),
+            ModelChoice::Emg => Self::Parametric(CurveFamily::Emg),
+            ModelChoice::PseudoVoigt => Self::Parametric(CurveFamily::PseudoVoigt),
             ModelChoice::LinearSpline => Self::LinearSpline,
             ModelChoice::MonotoneCubicSpline => Self::MonotoneCubicSpline,
             ModelChoice::NaturalCubicSpline => Self::NaturalCubicSpline,
@@ -370,7 +382,10 @@ fn model_group(model: ModelChoice) -> ModelGroup {
         | ModelChoice::HyperbolicTangent
         | ModelChoice::ArctangentStep
         | ModelChoice::Softplus => ModelGroup::ParametricSigmoid,
-        ModelChoice::Lorentzian | ModelChoice::Gaussian => ModelGroup::ParametricPeak,
+        ModelChoice::Lorentzian
+        | ModelChoice::Gaussian
+        | ModelChoice::Emg
+        | ModelChoice::PseudoVoigt => ModelGroup::ParametricPeak,
         ModelChoice::LinearSpline
         | ModelChoice::MonotoneCubicSpline
         | ModelChoice::NaturalCubicSpline
@@ -385,7 +400,9 @@ fn model_group(model: ModelChoice) -> ModelGroup {
         | ModelChoice::ExponentialLinear
         | ModelChoice::ExponentialHalfLife
         | ModelChoice::FallingExponential
-        | ModelChoice::Power => ModelGroup::ParametricGeneral,
+        | ModelChoice::Power
+        | ModelChoice::Rational11
+        | ModelChoice::Rational22 => ModelGroup::ParametricGeneral,
     }
 }
 

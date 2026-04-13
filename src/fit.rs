@@ -135,6 +135,8 @@ const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
 const HESSIAN_FD_REL_STEP: f64 = 1e-4;
 const HESSIAN_FD_MIN_STEP: f64 = 1e-6;
 const HESSIAN_DIAGONAL_JITTER: f64 = 1e-9;
+const GRADIENT_FD_REL_STEP: f64 = 1e-5;
+const GRADIENT_FD_MIN_STEP: f64 = 1e-7;
 
 fn positive_x(value: f64) -> f64 {
     value.max(PARAM_EPS)
@@ -696,6 +698,25 @@ impl CurveProblem {
         scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
         stabilize_hessian(&mut hessian);
         Some(hessian)
+    }
+
+    fn numerical_gradient_from_cost(
+        &self,
+        param: &[f64],
+        gradient: &mut [f64],
+    ) -> Result<(), argmin::core::Error> {
+        let mut probe = param.to_vec();
+        for index in 0..gradient.len() {
+            let step =
+                ((param[index].abs() + 1.0) * GRADIENT_FD_REL_STEP).max(GRADIENT_FD_MIN_STEP);
+            probe[index] = param[index] + step;
+            let cost_plus = CostFunction::cost(self, &probe)?;
+            probe[index] = param[index] - step;
+            let cost_minus = CostFunction::cost(self, &probe)?;
+            probe[index] = param[index];
+            gradient[index] = (cost_plus - cost_minus) / (2.0 * step);
+        }
+        Ok(())
     }
 }
 
@@ -2207,6 +2228,85 @@ impl Gradient for CurveProblem {
                     gradient[0] += residual * d_model_d_a;
                     gradient[1] += residual * d_model_d_b;
                     gradient[2] += residual * d_model_d_c * d_c_raw;
+                }
+            }
+            CurveFamily::Rational11 => {
+                for point in points {
+                    let x = point.x();
+                    let numerator = param[0] * x + param[1];
+                    let denominator_raw = 1.0 + param[2] * x;
+                    let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
+                    let model = param[3] + numerator / denominator;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
+
+                    gradient[0] += residual * (x / denominator);
+                    gradient[1] += residual * (1.0 / denominator);
+                    gradient[2] +=
+                        residual * (-numerator * x / (denominator * denominator)) * d_den_raw;
+                    gradient[3] += residual;
+                }
+            }
+            CurveFamily::Rational22 => {
+                for point in points {
+                    let x = point.x();
+                    let x2 = x * x;
+                    let numerator = param[0] * x2 + param[1] * x + param[2];
+                    let denominator_raw = 1.0 + param[3] * x + param[4] * x2;
+                    let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
+                    let model = numerator / denominator;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
+
+                    gradient[0] += residual * (x2 / denominator);
+                    gradient[1] += residual * (x / denominator);
+                    gradient[2] += residual * (1.0 / denominator);
+                    gradient[3] +=
+                        residual * (-numerator * x / (denominator * denominator)) * d_den_raw;
+                    gradient[4] +=
+                        residual * (-numerator * x2 / (denominator * denominator)) * d_den_raw;
+                }
+            }
+            CurveFamily::Emg => {
+                self.numerical_gradient_from_cost(param, &mut gradient)?;
+                // Далее применяется общий sample_scale, поэтому возвращаем сумму градиентов.
+                let sample_count = points.len() as f64;
+                for value in &mut gradient {
+                    *value *= sample_count;
+                }
+            }
+            CurveFamily::PseudoVoigt => {
+                for point in points {
+                    let x = point.x();
+                    let a = param[0];
+                    let x0 = param[1];
+                    let (sigma, d_sigma_raw) = positive_param_with_derivative(param[2]);
+                    let (gamma, d_gamma_raw) = positive_param_with_derivative(param[3]);
+                    let eta = sigmoid(param[4]);
+                    let eta_prime = eta * (1.0 - eta);
+                    let delta = x - x0;
+
+                    let sigma2 = sigma * sigma;
+                    let gaussian = (-(delta * delta) / (2.0 * sigma2)).exp();
+                    let d_gaussian_dx0 = gaussian * delta / sigma2;
+                    let d_gaussian_d_sigma = gaussian * delta * delta / (sigma2 * sigma);
+
+                    let u = delta / gamma;
+                    let den = 1.0 + u * u;
+                    let lorentzian = 1.0 / den;
+                    let den2 = den * den;
+                    let d_lorentzian_dx0 = 2.0 * u / (den2 * gamma);
+                    let d_lorentzian_d_gamma = 2.0 * u * u / (den2 * gamma);
+
+                    let mix = eta * gaussian + (1.0 - eta) * lorentzian;
+                    let model = param[5] + a * mix;
+                    let residual = self.loss_derivative_from_prediction(model, point.y());
+
+                    gradient[0] += residual * mix;
+                    gradient[1] +=
+                        residual * a * (eta * d_gaussian_dx0 + (1.0 - eta) * d_lorentzian_dx0);
+                    gradient[2] += residual * a * eta * d_gaussian_d_sigma * d_sigma_raw;
+                    gradient[3] += residual * a * (1.0 - eta) * d_lorentzian_d_gamma * d_gamma_raw;
+                    gradient[4] += residual * a * (gaussian - lorentzian) * eta_prime;
+                    gradient[5] += residual;
                 }
             }
             _ => unreachable!("polynomial families are handled by the guarded branch above"),

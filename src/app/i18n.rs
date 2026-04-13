@@ -190,17 +190,17 @@ pub(super) fn param_init_method_disabled_label(
 ) -> &'static str {
     match (language, method) {
         (UiLanguage::English, ParamInitMethod::DataBased) => {
-            "Data-based (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power only)"
+            "Data-based (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power/Rational/EMG/Pseudo-Voigt only)"
         }
         (UiLanguage::English, ParamInitMethod::Randomized) => {
-            "Randomized (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power only)"
+            "Randomized (Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power/Rational/EMG/Pseudo-Voigt only)"
         }
         (UiLanguage::English, ParamInitMethod::Default) => "Default",
         (UiLanguage::Russian, ParamInitMethod::DataBased) => {
-            "По данным (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power)"
+            "По данным (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power/Rational/EMG/Pseudo-Voigt)"
         }
         (UiLanguage::Russian, ParamInitMethod::Randomized) => {
-            "Случайно (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power)"
+            "Случайно (только Polynomial/Logistic/Gompertz/Bi-Exponential/Damped Sinusoid/Gaussian/Exponential (Basic)/Power/Rational/EMG/Pseudo-Voigt)"
         }
         (UiLanguage::Russian, ParamInitMethod::Default) => "По умолчанию",
     }
@@ -229,6 +229,10 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::English, ModelChoice::Softplus) => "Softplus",
         (UiLanguage::English, ModelChoice::Power) => "Power",
         (UiLanguage::English, ModelChoice::Gaussian) => "Gaussian",
+        (UiLanguage::English, ModelChoice::Rational11) => "Rational (1/1)",
+        (UiLanguage::English, ModelChoice::Rational22) => "Rational (2/2)",
+        (UiLanguage::English, ModelChoice::Emg) => "EMG",
+        (UiLanguage::English, ModelChoice::PseudoVoigt) => "Pseudo-Voigt",
         (UiLanguage::English, ModelChoice::LinearSpline) => "Linear Spline",
         (UiLanguage::English, ModelChoice::MonotoneCubicSpline) => "Monotone Cubic (PCHIP)",
         (UiLanguage::English, ModelChoice::NaturalCubicSpline) => "Natural Cubic Spline",
@@ -254,6 +258,10 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::Russian, ModelChoice::Softplus) => "Softplus",
         (UiLanguage::Russian, ModelChoice::Power) => "Степенная",
         (UiLanguage::Russian, ModelChoice::Gaussian) => "Гаусс",
+        (UiLanguage::Russian, ModelChoice::Rational11) => "Рациональная (1/1)",
+        (UiLanguage::Russian, ModelChoice::Rational22) => "Рациональная (2/2)",
+        (UiLanguage::Russian, ModelChoice::Emg) => "EMG",
+        (UiLanguage::Russian, ModelChoice::PseudoVoigt) => "Псевдо-Фойгт",
         (UiLanguage::Russian, ModelChoice::LinearSpline) => "Линейный сплайн",
         (UiLanguage::Russian, ModelChoice::MonotoneCubicSpline) => "Монотонный кубический (PCHIP)",
         (UiLanguage::Russian, ModelChoice::NaturalCubicSpline) => "Натуральный кубический сплайн",
@@ -292,6 +300,10 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::English, CurveFamily::Softplus) => "Softplus",
         (UiLanguage::English, CurveFamily::Power) => "Power",
         (UiLanguage::English, CurveFamily::Gaussian) => "Gaussian",
+        (UiLanguage::English, CurveFamily::Rational11) => "Rational (1/1)",
+        (UiLanguage::English, CurveFamily::Rational22) => "Rational (2/2)",
+        (UiLanguage::English, CurveFamily::Emg) => "EMG",
+        (UiLanguage::English, CurveFamily::PseudoVoigt) => "Pseudo-Voigt",
         (UiLanguage::Russian, CurveFamily::Linear) => "Линейная",
         (UiLanguage::Russian, CurveFamily::Quadratic) => "Квадратичная",
         (UiLanguage::Russian, CurveFamily::Cubic) => "Кубическая",
@@ -321,5 +333,9 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::Russian, CurveFamily::Softplus) => "Softplus",
         (UiLanguage::Russian, CurveFamily::Power) => "Степенная",
         (UiLanguage::Russian, CurveFamily::Gaussian) => "Гаусс",
+        (UiLanguage::Russian, CurveFamily::Rational11) => "Рациональная (1/1)",
+        (UiLanguage::Russian, CurveFamily::Rational22) => "Рациональная (2/2)",
+        (UiLanguage::Russian, CurveFamily::Emg) => "EMG",
+        (UiLanguage::Russian, CurveFamily::PseudoVoigt) => "Псевдо-Фойгт",
     }
 }

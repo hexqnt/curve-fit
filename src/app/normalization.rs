@@ -235,6 +235,34 @@ impl ParametricNormalization {
             ParamScale::new(-1, 0),
             ParamScale::new(-1, 0),
         ];
+        const RATIONAL_11_SCALES: [ParamScale; 4] = [
+            ParamScale::new(1, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const RATIONAL_22_SCALES: [ParamScale; 5] = [
+            ParamScale::new(2, -1),
+            ParamScale::new(1, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(1, 0),
+            ParamScale::new(2, 0),
+        ];
+        const EMG_SCALES: [ParamScale; 5] = [
+            ParamScale::new(-1, -1),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, -1),
+        ];
+        const PSEUDO_VOIGT_SCALES: [ParamScale; 6] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(-1, 0),
+            ParamScale::new(0, 0),
+            ParamScale::new(0, -1),
+        ];
 
         match family {
             CurveFamily::Arrhenius => Some(&ARRHENIUS_SCALES),
@@ -254,6 +282,10 @@ impl ParametricNormalization {
             | CurveFamily::ArctangentStep
             | CurveFamily::Softplus => Some(&STEP_LIKE_SCALES),
             CurveFamily::Gaussian => Some(&GAUSSIAN_SCALES),
+            CurveFamily::Rational11 => Some(&RATIONAL_11_SCALES),
+            CurveFamily::Rational22 => Some(&RATIONAL_22_SCALES),
+            CurveFamily::Emg => Some(&EMG_SCALES),
+            CurveFamily::PseudoVoigt => Some(&PSEUDO_VOIGT_SCALES),
             CurveFamily::Power
             | CurveFamily::Linear
             | CurveFamily::Quadratic

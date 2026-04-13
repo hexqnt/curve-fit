@@ -836,6 +836,262 @@ fn lbfgs_fits_gaussian_data() {
 }
 
 #[test]
+fn lbfgs_fits_rational_11_data() {
+    let true_params = CurveParams::Rational11 {
+        a: 1.3,
+        b: 0.4,
+        c: 0.12,
+        d: -0.2,
+    };
+    let points = build_points(&[-2.0, -1.2, -0.4, 0.0, 0.6, 1.4, 2.2], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Rational11,
+        CurveParams::Rational11 {
+            a: 0.5,
+            b: 0.1,
+            c: 0.0,
+            d: 0.0,
+        },
+        &config,
+    )
+    .expect("rational 1/1 fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
+fn lbfgs_fits_rational_22_data() {
+    let true_params = CurveParams::Rational22 {
+        a: 0.2,
+        b: 0.9,
+        c: 0.6,
+        d: 0.15,
+        e: 0.03,
+    };
+    let points = build_points(&[-2.0, -1.5, -1.0, -0.2, 0.4, 1.0, 1.8, 2.6], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Rational22,
+        CurveParams::Rational22 {
+            a: 0.0,
+            b: 0.4,
+            c: 0.1,
+            d: 0.0,
+            e: 0.0,
+        },
+        &config,
+    )
+    .expect("rational 2/2 fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
+fn lbfgs_fits_emg_positive_tau_data() {
+    let true_params = CurveParams::Emg {
+        a: 2.4,
+        mu: 0.15,
+        sigma: 0.45,
+        tau: 0.7,
+        c: 0.1,
+    };
+    let points = build_points(&[-1.5, -1.0, -0.6, -0.2, 0.2, 0.6, 1.0, 1.5, 2.0], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Emg,
+        CurveParams::Emg {
+            a: 1.0,
+            mu: 0.0,
+            sigma: 0.8,
+            tau: 0.3,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("emg fit (tau>0) must succeed");
+
+    assert!(result.mse < 1e-6);
+}
+
+#[test]
+fn lbfgs_fits_emg_negative_tau_data() {
+    let true_params = CurveParams::Emg {
+        a: 2.2,
+        mu: 0.25,
+        sigma: 0.5,
+        tau: -0.8,
+        c: -0.05,
+    };
+    let points = build_points(&[-1.8, -1.3, -0.8, -0.3, 0.1, 0.5, 0.9, 1.4, 1.9], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Emg,
+        CurveParams::Emg {
+            a: 1.2,
+            mu: 0.0,
+            sigma: 0.9,
+            tau: -0.2,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("emg fit (tau<0) must succeed");
+
+    assert!(result.mse < 1e-6);
+}
+
+#[test]
+fn lbfgs_fits_pseudo_voigt_data() {
+    let true_params = CurveParams::PseudoVoigt {
+        a: 2.8,
+        x0: 0.2,
+        sigma: 0.5,
+        gamma: 0.9,
+        eta: 1.0,
+        c: 0.2,
+    };
+    let points = build_points(&[-2.0, -1.3, -0.8, -0.2, 0.3, 0.8, 1.4, 2.0], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::PseudoVoigt,
+        CurveParams::PseudoVoigt {
+            a: 1.5,
+            x0: 0.0,
+            sigma: 0.8,
+            gamma: 0.6,
+            eta: 0.0,
+            c: 0.0,
+        },
+        &config,
+    )
+    .expect("pseudo-voigt fit must succeed");
+
+    assert!(result.mse < 1e-6);
+}
+
+#[test]
+fn new_families_support_all_optimizers_smoke() {
+    let scenarios = [
+        (
+            CurveFamily::Rational11,
+            CurveParams::Rational11 {
+                a: 1.3,
+                b: 0.4,
+                c: 0.12,
+                d: -0.2,
+            },
+            CurveParams::Rational11 {
+                a: 0.4,
+                b: 0.1,
+                c: 0.0,
+                d: 0.0,
+            },
+            vec![-2.0, -1.4, -0.8, -0.2, 0.5, 1.2, 2.0],
+        ),
+        (
+            CurveFamily::Rational22,
+            CurveParams::Rational22 {
+                a: 0.2,
+                b: 0.9,
+                c: 0.6,
+                d: 0.15,
+                e: 0.03,
+            },
+            CurveParams::Rational22 {
+                a: 0.0,
+                b: 0.2,
+                c: 0.2,
+                d: 0.0,
+                e: 0.0,
+            },
+            vec![-2.0, -1.5, -0.9, -0.2, 0.4, 1.1, 1.8, 2.6],
+        ),
+        (
+            CurveFamily::Emg,
+            CurveParams::Emg {
+                a: 2.4,
+                mu: 0.15,
+                sigma: 0.45,
+                tau: -0.7,
+                c: 0.1,
+            },
+            CurveParams::Emg {
+                a: 1.2,
+                mu: 0.0,
+                sigma: 0.8,
+                tau: -0.2,
+                c: 0.0,
+            },
+            vec![-1.8, -1.3, -0.8, -0.3, 0.1, 0.6, 1.1, 1.7],
+        ),
+        (
+            CurveFamily::PseudoVoigt,
+            CurveParams::PseudoVoigt {
+                a: 2.6,
+                x0: 0.2,
+                sigma: 0.5,
+                gamma: 0.8,
+                eta: 1.2,
+                c: 0.15,
+            },
+            CurveParams::PseudoVoigt {
+                a: 1.4,
+                x0: 0.0,
+                sigma: 0.9,
+                gamma: 0.6,
+                eta: 0.0,
+                c: 0.0,
+            },
+            vec![-2.0, -1.4, -0.9, -0.3, 0.2, 0.7, 1.3, 2.0],
+        ),
+    ];
+    let optimizers = [
+        OptimizerConfig::Lbfgs(LbfgsConfig::default()),
+        OptimizerConfig::NelderMead(NelderMeadConfig::default()),
+        OptimizerConfig::SteepestDescent(SteepestDescentConfig::default()),
+        OptimizerConfig::NewtonCg(NewtonCgConfig::default()),
+        OptimizerConfig::Sgd(SgdConfig::try_new(3_000, 3e-3).expect("SGD config must be valid")),
+        OptimizerConfig::Adam(AdamConfig::try_new(3_000, 3e-3).expect("Adam config must be valid")),
+    ];
+
+    for (family, true_params, initial_params, xs) in scenarios {
+        let points = build_points(&xs, |x| true_params.evaluate(x));
+        let (start_mse, _start_rmse) = calculate_metrics(&points, &initial_params);
+
+        for optimizer in &optimizers {
+            let result =
+                fit_curve_with_optimizer_config(&points, family, initial_params.clone(), optimizer)
+                    .expect("fit for new family/optimizer combination must succeed");
+            assert!(
+                result.mse.is_finite(),
+                "mse must be finite for {family:?}/{optimizer:?}"
+            );
+            assert!(
+                result.mse < start_mse,
+                "optimizer must improve initial fit for {family:?}/{optimizer:?}: start={start_mse}, final={}",
+                result.mse
+            );
+        }
+    }
+}
+
+#[test]
 fn fit_curve_validates_positive_x_domain() {
     let points = build_points(&[-1.0, 1.0, 2.0], |x| x);
     let config = LbfgsConfig::default();

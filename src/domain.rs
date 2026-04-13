@@ -137,6 +137,70 @@ fn eval_natural_log(a: f64, b: f64, x: f64) -> f64 {
     a * (x_safe / b_safe).ln()
 }
 
+fn eval_rational_11(a: f64, b: f64, c: f64, d: f64, x: f64) -> f64 {
+    let denominator = non_zero_param(1.0 + c * x);
+    d + (a * x + b) / denominator
+}
+
+fn eval_rational_22(a: f64, b: f64, c: f64, d: f64, e: f64, x: f64) -> f64 {
+    let numerator = a * x * x + b * x + c;
+    let denominator = non_zero_param(1.0 + d * x + e * x * x);
+    numerator / denominator
+}
+
+fn sigmoid(value: f64) -> f64 {
+    if value >= 0.0 {
+        1.0 / (1.0 + (-value).exp())
+    } else {
+        let exp_value = value.exp();
+        exp_value / (1.0 + exp_value)
+    }
+}
+
+fn erf_approx(value: f64) -> f64 {
+    // Аппроксимация Abramowitz-Stegun 7.1.26 с типичной точностью ~1e-7.
+    let sign = value.signum();
+    let x = value.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * x);
+    let polynomial = (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736)
+        * t
+        + 0.254829592)
+        * t;
+    sign * (1.0 - polynomial * (-x * x).exp())
+}
+
+fn erfc_approx(value: f64) -> f64 {
+    1.0 - erf_approx(value)
+}
+
+fn eval_emg_right(a: f64, mu: f64, sigma: f64, tau: f64, c: f64, x: f64) -> f64 {
+    let sigma_safe = positive_param(sigma);
+    let tau_safe = positive_param(tau);
+    let delta = x - mu;
+    let z = (sigma_safe / tau_safe - delta / sigma_safe) / std::f64::consts::SQRT_2;
+    let exponent = sigma_safe * sigma_safe / (2.0 * tau_safe * tau_safe) - delta / tau_safe;
+    c + (a / (2.0 * tau_safe)) * exponent.exp() * erfc_approx(z)
+}
+
+fn eval_emg(a: f64, mu: f64, sigma: f64, tau: f64, c: f64, x: f64) -> f64 {
+    if tau.is_sign_negative() {
+        let reflected_x = 2.0 * mu - x;
+        eval_emg_right(a, mu, sigma, tau.abs(), c, reflected_x)
+    } else {
+        eval_emg_right(a, mu, sigma, tau, c, x)
+    }
+}
+
+fn eval_pseudo_voigt(a: f64, x0: f64, sigma: f64, gamma: f64, eta_raw: f64, c: f64, x: f64) -> f64 {
+    let sigma_safe = positive_param(sigma);
+    let gamma_safe = positive_param(gamma);
+    let eta = sigmoid(eta_raw);
+    let delta = x - x0;
+    let gaussian = (-(delta * delta) / (2.0 * sigma_safe * sigma_safe)).exp();
+    let lorentzian = 1.0 / (1.0 + (delta / gamma_safe).powi(2));
+    c + a * (eta * gaussian + (1.0 - eta) * lorentzian)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Точка наблюдения `(x, y)` с гарантией конечных координат.
 pub struct Point {
@@ -259,11 +323,15 @@ pub enum CurveFamily {
     Softplus,
     Power,
     Gaussian,
+    Rational11,
+    Rational22,
+    Emg,
+    PseudoVoigt,
 }
 
 impl CurveFamily {
     /// Полный список семейств в стабильном порядке для UI и переборов.
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 33] = [
         Self::Linear,
         Self::Quadratic,
         Self::Cubic,
@@ -293,6 +361,10 @@ impl CurveFamily {
         Self::Softplus,
         Self::Power,
         Self::Gaussian,
+        Self::Rational11,
+        Self::Rational22,
+        Self::Emg,
+        Self::PseudoVoigt,
     ];
 
     /// Короткое человекочитаемое имя семейства.
@@ -327,6 +399,10 @@ impl CurveFamily {
             Self::Softplus => "Softplus",
             Self::Power => "Power",
             Self::Gaussian => "Gaussian",
+            Self::Rational11 => "Rational (1/1)",
+            Self::Rational22 => "Rational (2/2)",
+            Self::Emg => "EMG",
+            Self::PseudoVoigt => "Pseudo-Voigt",
         }
     }
 
@@ -362,6 +438,10 @@ impl CurveFamily {
             Self::Softplus => &["a", "b", "c", "d"],
             Self::Power => &["a", "b"],
             Self::Gaussian => &["a", "b", "c"],
+            Self::Rational11 => &["a", "b", "c", "d"],
+            Self::Rational22 => &["a", "b", "c", "d", "e"],
+            Self::Emg => &["a", "mu", "sigma", "tau", "c"],
+            Self::PseudoVoigt => &["a", "x0", "sigma", "gamma", "eta", "c"],
         }
     }
 
@@ -402,8 +482,15 @@ impl CurveFamily {
             | Self::ExponentialLinear
             | Self::HyperbolicTangent
             | Self::ArctangentStep
-            | Self::Softplus => 4,
-            Self::BiExponential | Self::DampedSinusoid | Self::FivePl | Self::Quartic => 5,
+            | Self::Softplus
+            | Self::Rational11 => 4,
+            Self::BiExponential
+            | Self::DampedSinusoid
+            | Self::FivePl
+            | Self::Quartic
+            | Self::Rational22
+            | Self::Emg => 5,
+            Self::PseudoVoigt => 6,
             Self::Quintic => 6,
             Self::Sextic => 7,
             Self::Septic => 8,
@@ -621,6 +708,34 @@ impl CurveFamily {
                 b: 0.0,
                 c: 1.0,
             },
+            Self::Rational11 => CurveParams::Rational11 {
+                a: 1.0,
+                b: 0.0,
+                c: 0.0,
+                d: 0.0,
+            },
+            Self::Rational22 => CurveParams::Rational22 {
+                a: 0.0,
+                b: 1.0,
+                c: 0.0,
+                d: 0.0,
+                e: 0.0,
+            },
+            Self::Emg => CurveParams::Emg {
+                a: 1.0,
+                mu: 0.0,
+                sigma: 1.0,
+                tau: 0.5,
+                c: 0.0,
+            },
+            Self::PseudoVoigt => CurveParams::PseudoVoigt {
+                a: 1.0,
+                x0: 0.0,
+                sigma: 1.0,
+                gamma: 1.0,
+                eta: 0.0,
+                c: 0.0,
+            },
         }
     }
 
@@ -669,6 +784,14 @@ impl CurveFamily {
             Self::Softplus => eval_softplus(params[0], params[1], params[2], params[3], x),
             Self::Power => eval_power(params[0], params[1], x),
             Self::Gaussian => eval_gaussian(params[0], params[1], params[2], x),
+            Self::Rational11 => eval_rational_11(params[0], params[1], params[2], params[3], x),
+            Self::Rational22 => {
+                eval_rational_22(params[0], params[1], params[2], params[3], params[4], x)
+            }
+            Self::Emg => eval_emg(params[0], params[1], params[2], params[3], params[4], x),
+            Self::PseudoVoigt => eval_pseudo_voigt(
+                params[0], params[1], params[2], params[3], params[4], params[5], x,
+            ),
         }
     }
 }
@@ -861,6 +984,34 @@ pub enum CurveParams {
         b: f64,
         c: f64,
     },
+    Rational11 {
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+    },
+    Rational22 {
+        a: f64,
+        b: f64,
+        c: f64,
+        d: f64,
+        e: f64,
+    },
+    Emg {
+        a: f64,
+        mu: f64,
+        sigma: f64,
+        tau: f64,
+        c: f64,
+    },
+    PseudoVoigt {
+        a: f64,
+        x0: f64,
+        sigma: f64,
+        gamma: f64,
+        eta: f64,
+        c: f64,
+    },
 }
 
 impl CurveParams {
@@ -896,6 +1047,10 @@ impl CurveParams {
             Self::Softplus { .. } => CurveFamily::Softplus,
             Self::Power { .. } => CurveFamily::Power,
             Self::Gaussian { .. } => CurveFamily::Gaussian,
+            Self::Rational11 { .. } => CurveFamily::Rational11,
+            Self::Rational22 { .. } => CurveFamily::Rational22,
+            Self::Emg { .. } => CurveFamily::Emg,
+            Self::PseudoVoigt { .. } => CurveFamily::PseudoVoigt,
         }
     }
 
@@ -975,6 +1130,23 @@ impl CurveParams {
             Self::Softplus { a, b, c, d } => vec![*a, *b, *c, *d],
             Self::Power { a, b } => vec![*a, *b],
             Self::Gaussian { a, b, c } => vec![*a, *b, *c],
+            Self::Rational11 { a, b, c, d } => vec![*a, *b, *c, *d],
+            Self::Rational22 { a, b, c, d, e } => vec![*a, *b, *c, *d, *e],
+            Self::Emg {
+                a,
+                mu,
+                sigma,
+                tau,
+                c,
+            } => vec![*a, *mu, *sigma, *tau, *c],
+            Self::PseudoVoigt {
+                a,
+                x0,
+                sigma,
+                gamma,
+                eta,
+                c,
+            } => vec![*a, *x0, *sigma, *gamma, *eta, *c],
         }
     }
 
@@ -1056,6 +1228,23 @@ impl CurveParams {
             Self::Softplus { a, b, c, d } => eval_softplus(*a, *b, *c, *d, x),
             Self::Power { a, b } => eval_power(*a, *b, x),
             Self::Gaussian { a, b, c } => eval_gaussian(*a, *b, *c, x),
+            Self::Rational11 { a, b, c, d } => eval_rational_11(*a, *b, *c, *d, x),
+            Self::Rational22 { a, b, c, d, e } => eval_rational_22(*a, *b, *c, *d, *e, x),
+            Self::Emg {
+                a,
+                mu,
+                sigma,
+                tau,
+                c,
+            } => eval_emg(*a, *mu, *sigma, *tau, *c, x),
+            Self::PseudoVoigt {
+                a,
+                x0,
+                sigma,
+                gamma,
+                eta,
+                c,
+            } => eval_pseudo_voigt(*a, *x0, *sigma, *gamma, *eta, *c, x),
         }
     }
 
@@ -1264,6 +1453,34 @@ impl CurveParams {
                 a: values[0],
                 b: values[1],
                 c: values[2],
+            },
+            CurveFamily::Rational11 => Self::Rational11 {
+                a: values[0],
+                b: values[1],
+                c: values[2],
+                d: values[3],
+            },
+            CurveFamily::Rational22 => Self::Rational22 {
+                a: values[0],
+                b: values[1],
+                c: values[2],
+                d: values[3],
+                e: values[4],
+            },
+            CurveFamily::Emg => Self::Emg {
+                a: values[0],
+                mu: values[1],
+                sigma: values[2],
+                tau: values[3],
+                c: values[4],
+            },
+            CurveFamily::PseudoVoigt => Self::PseudoVoigt {
+                a: values[0],
+                x0: values[1],
+                sigma: values[2],
+                gamma: values[3],
+                eta: values[4],
+                c: values[5],
             },
         })
     }
@@ -2008,6 +2225,18 @@ mod tests {
                 family: CurveFamily::Quadratic,
                 len: 2,
                 min_required: 3
+            }
+        ));
+
+        let error = CurveFamily::PseudoVoigt
+            .validate_points(&short_points)
+            .expect_err("pseudo-voigt requires at least 6 points");
+        assert!(matches!(
+            error,
+            InputError::TooFewPointsForFamily {
+                family: CurveFamily::PseudoVoigt,
+                len: 2,
+                min_required: 6
             }
         ));
     }

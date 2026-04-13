@@ -15,7 +15,7 @@ fn model_formula_full(model: ModelChoice, polynomial_degree: usize) -> String {
             r"y = a_{1}·exp(-k_{1}·x) + a_{2}·exp(-k_{2}·x) + c".to_string()
         }
         ModelChoice::DampedSinusoid => r"y = A·exp(-k·x)·sin(\omega·x + \phi) + c".to_string(),
-        ModelChoice::Lorentzian => r"y = C + \frac{A}{1 + (\frac{x - x_0}{gamma})^{2}}".to_string(),
+        ModelChoice::Lorentzian => r"y = C + \frac{A}{1 + (\frac{x - x_0}{\gamma})^{2}}".to_string(),
         ModelChoice::NaturalLog => r"y = A·ln(\frac{x}{B})".to_string(),
         ModelChoice::FourPl => r"y = d + \frac{a - d}{1 + (\frac{x}{c})^{b}}".to_string(),
         ModelChoice::FivePl => r"y = d + \frac{a - d}{(1 + (\frac{x}{c})^{b})^{m}}".to_string(),
@@ -31,6 +31,19 @@ fn model_formula_full(model: ModelChoice, polynomial_degree: usize) -> String {
         ModelChoice::Softplus => r"y = a·ln(1 + exp(b·(x - c))) + d".to_string(),
         ModelChoice::Power => r"y = a·x^{b}".to_string(),
         ModelChoice::Gaussian => r"y = a·exp(-\frac{(x - b)^{2}}{2·c^{2}})".to_string(),
+        ModelChoice::Rational11 => r"y = d + \frac{a·x + b}{1 + c·x}".to_string(),
+        ModelChoice::Rational22 => {
+            r"y = \frac{a·x^{2} + b·x + c}{1 + d·x + e·x^{2}}".to_string()
+        }
+        ModelChoice::Emg => {
+            r"y = c + \frac{a}{2·\tau}·exp(\frac{\sigma^{2}}{2·\tau^{2}} - \frac{x - \mu}{\tau})·erfc(\frac{1}{\sqrt{2}}(\frac{\sigma}{|\tau|} - \frac{x - \mu}{\sigma}))".to_string()
+        }
+        ModelChoice::PseudoVoigt => {
+            r"y = c + a·(\eta·G(x; x_0, \sigma) + (1-\eta)·L(x; x_0, \gamma)), \eta = sigmoid(\eta_{raw})
+G(x; x_0, \sigma) = exp(-\frac{(x - x_0)^{2}}{2·\sigma^{2}})
+L(x; x_0, \gamma) = \frac{1}{1 + (\frac{x - x_0}{\gamma})^{2}}"
+                .to_string()
+        }
         ModelChoice::LinearSpline => {
             r"y(x) = y_{i} + \frac{y_{i+1} - y_{i}}{x_{i+1} - x_{i}}·(x - x_{i})".to_string()
         }
@@ -127,6 +140,18 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         (UiLanguage::English, ModelChoice::ExponentialLinear) => {
             "Exponential trend with linear drift background."
         }
+        (UiLanguage::English, ModelChoice::Rational11) => {
+            "Compact rational model with one linear pole term."
+        }
+        (UiLanguage::English, ModelChoice::Rational22) => {
+            "Flexible rational model with quadratic numerator/denominator."
+        }
+        (UiLanguage::English, ModelChoice::Emg) => {
+            "Asymmetric peak (EMG); signed tau controls left/right tail."
+        }
+        (UiLanguage::English, ModelChoice::PseudoVoigt) => {
+            "Mixture of Gaussian and Lorentzian peaks with learnable blend."
+        }
         (UiLanguage::English, ModelChoice::HyperbolicTangent) => {
             "Smooth S-curve transition with bounded tails."
         }
@@ -178,6 +203,18 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         }
         (UiLanguage::Russian, ModelChoice::ExponentialLinear) => {
             "Экспоненциальный тренд с линейным дрейфом фона."
+        }
+        (UiLanguage::Russian, ModelChoice::Rational11) => {
+            "Компактная рациональная модель с линейным полюсом."
+        }
+        (UiLanguage::Russian, ModelChoice::Rational22) => {
+            "Гибкая рациональная модель с квадратами в числителе и знаменателе."
+        }
+        (UiLanguage::Russian, ModelChoice::Emg) => {
+            "Асимметричный пик EMG; знак tau задаёт левый или правый хвост."
+        }
+        (UiLanguage::Russian, ModelChoice::PseudoVoigt) => {
+            "Смесь гауссового и лоренцевого пиков с обучаемой долей."
         }
         (UiLanguage::Russian, ModelChoice::HyperbolicTangent) => {
             "Гладкий S-переход с ограниченными хвостами."
@@ -240,10 +277,24 @@ pub(super) fn formula_plain_text(formula: &str) -> String {
 /// чтобы не тянуть тяжёлые зависимости ради ограниченного подмножества LaTeX.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Vec<u8> {
-    let spans = parse_formula_spans(formula);
-    let visible_chars: usize = spans.iter().map(|span| span.text.chars().count()).sum();
-    let width = ((visible_chars.max(24) as u32) * 14 + 48).clamp(380, 2100);
-    let height = 68_u32;
+    let lines = formula.lines().collect::<Vec<_>>();
+    let line_count = lines.len().max(1);
+    let line_spans = lines
+        .iter()
+        .map(|line| parse_formula_spans(line))
+        .collect::<Vec<_>>();
+    let max_visible_chars = line_spans
+        .iter()
+        .map(|spans| {
+            spans
+                .iter()
+                .map(|span| span.text.chars().count())
+                .sum::<usize>()
+        })
+        .max()
+        .unwrap_or(24);
+    let width = ((max_visible_chars.max(24) as u32) * 14 + 48).clamp(380, 2100);
+    let height = ((line_count as u32) * 30 + 22).clamp(68, 720);
     let rect_width = width - 2;
     let rect_height = height - 2;
     let (background, border, text) = if dark_mode {
@@ -251,12 +302,19 @@ pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Vec<u8> {
     } else {
         ("#ffffff", "#cbd5e1", "#111827")
     };
-    let tspan_markup = formula_spans_to_svg(&spans);
+    let mut text_markup = String::new();
+    for (index, spans) in line_spans.iter().enumerate() {
+        let tspan_markup = formula_spans_to_svg(spans);
+        let y = 32 + (index as u32) * 30;
+        text_markup.push_str(&format!(
+            r#"<text x="16" y="{y}" font-family="Cambria Math, STIX Two Math, DejaVu Serif, serif" font-size="24" fill="{text}">{tspan_markup}</text>"#
+        ));
+    }
 
     format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <rect x="1" y="1" width="{rect_width}" height="{rect_height}" rx="10" fill="{background}" stroke="{border}" stroke-width="1.4"/>
-<text x="16" y="44" font-family="Cambria Math, STIX Two Math, DejaVu Serif, serif" font-size="24" fill="{text}">{tspan_markup}</text>
+{text_markup}
 </svg>"#
     )
     .into_bytes()
@@ -292,7 +350,7 @@ fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
                 if !normal.is_empty() {
                     spans.push(FormulaSpan {
                         kind: FormulaSpanKind::Normal,
-                        text: std::mem::take(&mut normal),
+                        text: latex_group_to_text(&std::mem::take(&mut normal)),
                     });
                 }
                 let numerator = read_braced_group(&mut chars);
@@ -323,7 +381,7 @@ fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
             if !normal.is_empty() {
                 spans.push(FormulaSpan {
                     kind: FormulaSpanKind::Normal,
-                    text: std::mem::take(&mut normal),
+                    text: latex_group_to_text(&std::mem::take(&mut normal)),
                 });
             }
             chars.next();
@@ -334,7 +392,7 @@ fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
                 } else {
                     FormulaSpanKind::Subscript
                 },
-                text: content,
+                text: latex_group_to_text(&content),
             });
         } else {
             normal.push(ch);
@@ -344,7 +402,7 @@ fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
     if !normal.is_empty() {
         spans.push(FormulaSpan {
             kind: FormulaSpanKind::Normal,
-            text: normal,
+            text: latex_group_to_text(&normal),
         });
     }
     spans
@@ -386,38 +444,125 @@ fn read_braced_group(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> St
     content
 }
 
+fn read_latex_command(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut command = String::new();
+    while let Some(ch) = chars.peek().copied() {
+        if ch.is_ascii_alphabetic() {
+            command.push(ch);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    command
+}
+
+fn latex_symbol(command: &str) -> Option<&'static str> {
+    match command {
+        "alpha" => Some("α"),
+        "beta" => Some("β"),
+        "gamma" => Some("γ"),
+        "delta" => Some("δ"),
+        "epsilon" => Some("ε"),
+        "zeta" => Some("ζ"),
+        "eta" => Some("η"),
+        "theta" => Some("θ"),
+        "iota" => Some("ι"),
+        "kappa" => Some("κ"),
+        "lambda" => Some("λ"),
+        "mu" => Some("μ"),
+        "nu" => Some("ν"),
+        "xi" => Some("ξ"),
+        "pi" => Some("π"),
+        "rho" => Some("ρ"),
+        "sigma" => Some("σ"),
+        "tau" => Some("τ"),
+        "upsilon" => Some("υ"),
+        "phi" => Some("φ"),
+        "chi" => Some("χ"),
+        "psi" => Some("ψ"),
+        "omega" => Some("ω"),
+        "Gamma" => Some("Γ"),
+        "Delta" => Some("Δ"),
+        "Theta" => Some("Θ"),
+        "Lambda" => Some("Λ"),
+        "Xi" => Some("Ξ"),
+        "Pi" => Some("Π"),
+        "Sigma" => Some("Σ"),
+        "Upsilon" => Some("Υ"),
+        "Phi" => Some("Φ"),
+        "Psi" => Some("Ψ"),
+        "Omega" => Some("Ω"),
+        "cdot" => Some("·"),
+        "times" => Some("×"),
+        "pm" => Some("±"),
+        "leq" => Some("≤"),
+        "geq" => Some("≥"),
+        "infty" => Some("∞"),
+        _ => None,
+    }
+}
+
 fn latex_group_to_text(text: &str) -> String {
     let mut output = String::new();
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            if try_consume_keyword(&mut chars, "frac") && matches!(chars.next(), Some('{')) {
-                let numerator = read_braced_group(&mut chars);
-                if matches!(chars.next(), Some('{')) {
-                    let denominator = read_braced_group(&mut chars);
-                    output.push('(');
-                    output.push_str(&latex_group_to_text(&numerator));
-                    output.push(')');
-                    output.push('∕');
-                    output.push('(');
-                    output.push_str(&latex_group_to_text(&denominator));
-                    output.push(')');
-                    continue;
+            let command = read_latex_command(&mut chars);
+            if command.is_empty() {
+                output.push(ch);
+                continue;
+            }
+            match command.as_str() {
+                "frac" => {
+                    if matches!(chars.next(), Some('{')) {
+                        let numerator = read_braced_group(&mut chars);
+                        if matches!(chars.next(), Some('{')) {
+                            let denominator = read_braced_group(&mut chars);
+                            output.push('(');
+                            output.push_str(&latex_group_to_text(&numerator));
+                            output.push(')');
+                            output.push('∕');
+                            output.push('(');
+                            output.push_str(&latex_group_to_text(&denominator));
+                            output.push(')');
+                            continue;
+                        }
+                        output.push_str("\\frac{");
+                        output.push_str(&numerator);
+                        continue;
+                    }
+                    output.push_str("\\frac");
                 }
-                output.push_str("\\frac{");
-                output.push_str(&numerator);
-                continue;
+                "quad" => output.push(' '),
+                "text" => {
+                    if matches!(chars.next(), Some('{')) {
+                        let content = read_braced_group(&mut chars);
+                        output.push_str(&latex_group_to_text(&content));
+                    } else {
+                        output.push_str("\\text");
+                    }
+                }
+                "sqrt" => {
+                    if matches!(chars.next(), Some('{')) {
+                        let radicand = read_braced_group(&mut chars);
+                        output.push('√');
+                        output.push('(');
+                        output.push_str(&latex_group_to_text(&radicand));
+                        output.push(')');
+                    } else {
+                        output.push('√');
+                    }
+                }
+                _ => {
+                    if let Some(symbol) = latex_symbol(&command) {
+                        output.push_str(symbol);
+                    } else {
+                        output.push('\\');
+                        output.push_str(&command);
+                    }
+                }
             }
-            if try_consume_keyword(&mut chars, "quad") {
-                output.push(' ');
-                continue;
-            }
-            if try_consume_keyword(&mut chars, "text") && matches!(chars.next(), Some('{')) {
-                let content = read_braced_group(&mut chars);
-                output.push_str(&latex_group_to_text(&content));
-                continue;
-            }
-            output.push(ch);
             continue;
         }
         if (ch == '^' || ch == '_') && matches!(chars.peek(), Some('{')) {
