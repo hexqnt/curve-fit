@@ -1,7 +1,21 @@
 use ndarray::Array2;
+
+/// Вычисляет затухающую синусоиду:
+/// `f(x) = amplitude * exp(-damping * x) * sin(omega * x + phi) + offset`,
+/// где:
+/// - `amplitude` — начальная амплитуда,
+/// - `damping` — коэффициент затухания,
+/// - `omega` — угловая частота,
+/// - `phi` — фазовый сдвиг,
+/// - `offset` — вертикальный сдвиг.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] * (-param[1] * x).exp() * (param[2] * x + param[3]).sin() + param[4]
+    let amplitude = param[0];
+    let damping = param[1];
+    let omega = param[2];
+    let phi = param[3];
+    let offset = param[4];
+    amplitude * (-damping * x).exp() * (omega * x + phi).sin() + offset
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -14,22 +28,27 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let damping = param[1];
+    let omega = param[2];
+    let phi = param[3];
+    let offset = param[4];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let exp_part = (-param[1] * x).exp();
-        let angle = param[2] * x + param[3];
+        let exp_part = (-damping * x).exp();
+        let angle = omega * x + phi;
         let sin_part = angle.sin();
         let cos_part = angle.cos();
-        let model = param[0] * exp_part * sin_part + param[4];
+        let model = amplitude * exp_part * sin_part + offset;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * exp_part * sin_part;
-        gradient[1] += residual * (-param[0] * x * exp_part * sin_part);
-        gradient[2] += residual * (param[0] * exp_part * cos_part * x);
-        gradient[3] += residual * (param[0] * exp_part * cos_part);
+        gradient[1] += residual * (-amplitude * x * exp_part * sin_part);
+        gradient[2] += residual * (amplitude * exp_part * cos_part * x);
+        gradient[3] += residual * (amplitude * exp_part * cos_part);
         gradient[4] += residual;
         index += 1;
     }

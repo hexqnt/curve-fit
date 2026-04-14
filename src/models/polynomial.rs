@@ -1,6 +1,9 @@
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
 use ndarray::Array2;
 
+/// Вычисляет полином в форме Горнера:
+/// `f(x) = p0 * x^n + p1 * x^(n-1) + ... + pn`,
+/// где `param = [p0, p1, ..., pn]` — коэффициенты от старшей степени к младшей.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     param

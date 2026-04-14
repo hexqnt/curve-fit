@@ -1,11 +1,22 @@
 use super::common::positive_param_with_derivative;
 use ndarray::Array2;
 
+/// Вычисляет лоренцев пик:
+/// `f(x) = baseline + amplitude / (1 + ((x - x0) / gamma)^2)`,
+/// где:
+/// - `amplitude` — амплитуда пика,
+/// - `x0` — центр пика,
+/// - `gamma` — полуширина (параметризована положительным преобразованием),
+/// - `baseline` — базовый уровень.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let (gamma, _) = positive_param_with_derivative(param[2]);
-    let u = (x - param[1]) / gamma;
-    param[3] + param[0] / (1.0 + u * u)
+    let amplitude = param[0];
+    let x0 = param[1];
+    let gamma_raw = param[2];
+    let baseline = param[3];
+    let (gamma, _) = positive_param_with_derivative(gamma_raw);
+    let u = (x - x0) / gamma;
+    baseline + amplitude / (1.0 + u * u)
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -18,20 +29,22 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let x0 = param[1];
+    let gamma_raw = param[2];
+    let baseline = param[3];
+    let (gamma, d_gamma_raw) = positive_param_with_derivative(gamma_raw);
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let x0 = param[1];
-        let (gamma, d_gamma_raw) = positive_param_with_derivative(param[2]);
         let u = (x - x0) / gamma;
         let den = 1.0 + u * u;
         let inv_den = 1.0 / den;
-        let model = param[3] + a * inv_den;
+        let model = baseline + amplitude * inv_den;
         let residual = loss_derivative_from_prediction(model, y);
-        let common = 2.0 * a / (den * den * gamma);
+        let common = 2.0 * amplitude / (den * den * gamma);
 
         gradient[0] += residual * inv_den;
         gradient[1] += residual * (common * u);

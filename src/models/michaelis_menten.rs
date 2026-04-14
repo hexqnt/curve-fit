@@ -1,10 +1,19 @@
 use super::common::non_zero_param_with_derivative;
 use ndarray::Array2;
 
+/// Вычисляет модель Михаэлиса-Ментен:
+/// `f(x) = vmax * x / (x + km)`,
+/// где:
+/// - `vmax` — максимальная скорость,
+/// - `km` — константа Михаэлиса.
+///
+/// Знаменатель параметризуется через `non_zero_param_with_derivative`.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let (denominator, _) = non_zero_param_with_derivative(x + param[1]);
-    param[0] * x / denominator
+    let vmax = param[0];
+    let km = param[1];
+    let (denominator, _) = non_zero_param_with_derivative(x + km);
+    vmax * x / denominator
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -17,13 +26,14 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let vmax = param[0];
+    let km = param[1];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let vmax = param[0];
-        let (denominator, d_den_d_km) = non_zero_param_with_derivative(x + param[1]);
+        let (denominator, d_den_d_km) = non_zero_param_with_derivative(x + km);
         let model = vmax * x / denominator;
         let residual = loss_derivative_from_prediction(model, y);
         let d_model_d_vmax = x / denominator;

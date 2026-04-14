@@ -1,9 +1,20 @@
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
 use ndarray::Array2;
 
+/// Вычисляет арктангенс-ступень:
+/// `f(x) = amplitude * atan(slope * (x - x0)) + offset`,
+/// где:
+/// - `amplitude` — амплитуда перехода,
+/// - `slope` — крутизна перехода,
+/// - `x0` — центр перехода по оси `x`,
+/// - `offset` — вертикальный сдвиг.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] * (param[1] * (x - param[2])).atan() + param[3]
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
+    amplitude * (slope * (x - x0)).atan() + offset
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -16,20 +27,24 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let z = param[1] * (x - param[2]);
+        let z = slope * (x - x0);
         let atan_z = z.atan();
         let inv_den = 1.0 / (1.0 + z * z);
-        let model = param[0] * atan_z + param[3];
+        let model = amplitude * atan_z + offset;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * atan_z;
-        gradient[1] += residual * (param[0] * (x - param[2]) * inv_den);
-        gradient[2] += residual * (-param[0] * param[1] * inv_den);
+        gradient[1] += residual * (amplitude * (x - x0) * inv_den);
+        gradient[2] += residual * (-amplitude * slope * inv_den);
         gradient[3] += residual;
         index += 1;
     }
@@ -53,20 +68,21 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((4, 4));
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let b = param[1];
-        let c = param[2];
-        let u = x - c;
-        let z = b * u;
+        let u = x - x0;
+        let z = slope * u;
         let atan_z = z.atan();
         let inv_den = 1.0 / (1.0 + z * z);
         let d2_shape_dz2 = -2.0 * z * inv_den * inv_den;
-        let model = a * atan_z + param[3];
+        let model = amplitude * atan_z + offset;
         if !model.is_finite() {
             return None;
         }
@@ -78,15 +94,15 @@ where
         }
 
         let jac_a = atan_z;
-        let jac_b = a * inv_den * u;
-        let jac_c = -a * inv_den * b;
+        let jac_b = amplitude * inv_den * u;
+        let jac_c = -amplitude * inv_den * slope;
         let jac_d = 1.0;
 
         let d2_model_dadb = inv_den * u;
-        let d2_model_dadc = -inv_den * b;
-        let d2_model_dbdb = a * d2_shape_dz2 * u * u;
-        let d2_model_dbdc = a * (d2_shape_dz2 * (-b) * u - inv_den);
-        let d2_model_dcdc = a * d2_shape_dz2 * b * b;
+        let d2_model_dadc = -inv_den * slope;
+        let d2_model_dbdb = amplitude * d2_shape_dz2 * u * u;
+        let d2_model_dbdc = amplitude * (d2_shape_dz2 * (-slope) * u - inv_den);
+        let d2_model_dcdc = amplitude * d2_shape_dz2 * slope * slope;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

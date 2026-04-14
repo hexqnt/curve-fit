@@ -3,9 +3,18 @@ use super::common::{
 };
 use ndarray::Array2;
 
+/// Вычисляет обратную зависимость:
+/// `f(x) = offset + scale / x`,
+/// где:
+/// - `offset` — базовый уровень,
+/// - `scale` — коэффициент обратной компоненты.
+///
+/// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] + param[1] / positive_x(x)
+    let offset = param[0];
+    let scale = param[1];
+    offset + scale / positive_x(x)
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -18,12 +27,14 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let offset = param[0];
+    let scale = param[1];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
         let y = y_values[index];
-        let model = param[0] + param[1] / x;
+        let model = offset + scale / x;
         let residual = loss_derivative_from_prediction(model, y);
         gradient[0] += residual;
         gradient[1] += residual / x;
@@ -49,13 +60,15 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((2, 2));
+    let offset = param[0];
+    let scale = param[1];
 
     let mut index = 0;
     while index < sample_count {
         let x = positive_x(x_values[index]);
         let y = y_values[index];
         let inv_x = 1.0 / x;
-        let model = param[0] + param[1] * inv_x;
+        let model = offset + scale * inv_x;
         if !model.is_finite() {
             return None;
         }

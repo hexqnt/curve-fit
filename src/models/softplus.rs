@@ -4,9 +4,20 @@ use super::common::{
 };
 use ndarray::Array2;
 
+/// Вычисляет softplus-переход:
+/// `f(x) = amplitude * softplus(slope * (x - x0)) + offset`,
+/// где:
+/// - `amplitude` — масштаб перехода,
+/// - `slope` — крутизна перехода,
+/// - `x0` — центр перехода по оси `x`,
+/// - `offset` — вертикальный сдвиг.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] * math_softplus(param[1] * (x - param[2])) + param[3]
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
+    amplitude * math_softplus(slope * (x - x0)) + offset
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -19,20 +30,24 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let z = param[1] * (x - param[2]);
+        let z = slope * (x - x0);
         let softplus_z = math_softplus(z);
         let sigma_z = sigmoid(z);
-        let model = param[0] * softplus_z + param[3];
+        let model = amplitude * softplus_z + offset;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * softplus_z;
-        gradient[1] += residual * (param[0] * sigma_z * (x - param[2]));
-        gradient[2] += residual * (-param[0] * sigma_z * param[1]);
+        gradient[1] += residual * (amplitude * sigma_z * (x - x0));
+        gradient[2] += residual * (-amplitude * sigma_z * slope);
         gradient[3] += residual;
         index += 1;
     }
@@ -56,20 +71,21 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((4, 4));
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let b = param[1];
-        let c = param[2];
-        let u = x - c;
-        let z = b * u;
+        let u = x - x0;
+        let z = slope * u;
         let softplus_z = math_softplus(z);
         let sigma_z = sigmoid(z);
         let d2_shape_dz2 = sigma_z * (1.0 - sigma_z);
-        let model = a * softplus_z + param[3];
+        let model = amplitude * softplus_z + offset;
         if !model.is_finite() {
             return None;
         }
@@ -81,15 +97,15 @@ where
         }
 
         let jac_a = softplus_z;
-        let jac_b = a * sigma_z * u;
-        let jac_c = -a * sigma_z * b;
+        let jac_b = amplitude * sigma_z * u;
+        let jac_c = -amplitude * sigma_z * slope;
         let jac_d = 1.0;
 
         let d2_model_dadb = sigma_z * u;
-        let d2_model_dadc = -sigma_z * b;
-        let d2_model_dbdb = a * d2_shape_dz2 * u * u;
-        let d2_model_dbdc = -a * (b * u * d2_shape_dz2 + sigma_z);
-        let d2_model_dcdc = a * d2_shape_dz2 * b * b;
+        let d2_model_dadc = -sigma_z * slope;
+        let d2_model_dbdb = amplitude * d2_shape_dz2 * u * u;
+        let d2_model_dbdc = -amplitude * (slope * u * d2_shape_dz2 + sigma_z);
+        let d2_model_dcdc = amplitude * d2_shape_dz2 * slope * slope;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

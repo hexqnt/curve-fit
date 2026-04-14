@@ -1,12 +1,24 @@
 use super::common::non_zero_param_with_derivative;
 use ndarray::Array2;
 
+/// Вычисляет рациональную функцию порядка (1, 1):
+/// `f(x) = offset + (num_slope * x + num_offset) / (1 + den_slope * x)`,
+/// где:
+/// - `num_slope`, `num_offset` — коэффициенты числителя,
+/// - `den_slope` — коэффициент знаменателя,
+/// - `offset` — вертикальный сдвиг.
+///
+/// Знаменатель параметризуется через `non_zero_param_with_derivative`.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let numerator = param[0] * x + param[1];
-    let denominator_raw = 1.0 + param[2] * x;
+    let num_slope = param[0];
+    let num_offset = param[1];
+    let den_slope = param[2];
+    let offset = param[3];
+    let numerator = num_slope * x + num_offset;
+    let denominator_raw = 1.0 + den_slope * x;
     let (denominator, _) = non_zero_param_with_derivative(denominator_raw);
-    param[3] + numerator / denominator
+    offset + numerator / denominator
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -19,15 +31,19 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let num_slope = param[0];
+    let num_offset = param[1];
+    let den_slope = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let numerator = param[0] * x + param[1];
-        let denominator_raw = 1.0 + param[2] * x;
+        let numerator = num_slope * x + num_offset;
+        let denominator_raw = 1.0 + den_slope * x;
         let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
-        let model = param[3] + numerator / denominator;
+        let model = offset + numerator / denominator;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * (x / denominator);

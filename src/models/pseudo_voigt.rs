@@ -1,15 +1,30 @@
 use super::common::{positive_param_with_derivative, sigmoid};
 use ndarray::Array2;
 
+/// Вычисляет псевдо-Войт профиль:
+/// `f(x) = baseline + amplitude * (eta * G(x) + (1 - eta) * L(x))`,
+/// где:
+/// - `amplitude` — амплитуда,
+/// - `x0` — центр пика,
+/// - `sigma` — ширина гауссовой части (положительный параметр),
+/// - `gamma` — ширина лоренцевой части (положительный параметр),
+/// - `eta` — вес смешивания `G/L` (через сигмоиду),
+/// - `baseline` — базовый уровень.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let (sigma, _) = positive_param_with_derivative(param[2]);
-    let (gamma, _) = positive_param_with_derivative(param[3]);
-    let eta = sigmoid(param[4]);
-    let delta = x - param[1];
+    let amplitude = param[0];
+    let x0 = param[1];
+    let sigma_raw = param[2];
+    let gamma_raw = param[3];
+    let eta_raw = param[4];
+    let baseline = param[5];
+    let (sigma, _) = positive_param_with_derivative(sigma_raw);
+    let (gamma, _) = positive_param_with_derivative(gamma_raw);
+    let eta = sigmoid(eta_raw);
+    let delta = x - x0;
     let gaussian = (-(delta * delta) / (2.0 * sigma * sigma)).exp();
     let lorentzian = 1.0 / (1.0 + (delta / gamma).powi(2));
-    param[5] + param[0] * (eta * gaussian + (1.0 - eta) * lorentzian)
+    baseline + amplitude * (eta * gaussian + (1.0 - eta) * lorentzian)
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -22,17 +37,21 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let x0 = param[1];
+    let sigma_raw = param[2];
+    let gamma_raw = param[3];
+    let eta_raw = param[4];
+    let baseline = param[5];
+    let (sigma, d_sigma_raw) = positive_param_with_derivative(sigma_raw);
+    let (gamma, d_gamma_raw) = positive_param_with_derivative(gamma_raw);
+    let eta = sigmoid(eta_raw);
+    let eta_prime = eta * (1.0 - eta);
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let x0 = param[1];
-        let (sigma, d_sigma_raw) = positive_param_with_derivative(param[2]);
-        let (gamma, d_gamma_raw) = positive_param_with_derivative(param[3]);
-        let eta = sigmoid(param[4]);
-        let eta_prime = eta * (1.0 - eta);
         let delta = x - x0;
 
         let sigma2 = sigma * sigma;
@@ -48,14 +67,15 @@ pub(super) fn accumulate_gradient<L>(
         let d_lorentzian_d_gamma = 2.0 * u * u / (den2 * gamma);
 
         let mix = eta * gaussian + (1.0 - eta) * lorentzian;
-        let model = param[5] + a * mix;
+        let model = baseline + amplitude * mix;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * mix;
-        gradient[1] += residual * a * (eta * d_gaussian_dx0 + (1.0 - eta) * d_lorentzian_dx0);
-        gradient[2] += residual * a * eta * d_gaussian_d_sigma * d_sigma_raw;
-        gradient[3] += residual * a * (1.0 - eta) * d_lorentzian_d_gamma * d_gamma_raw;
-        gradient[4] += residual * a * (gaussian - lorentzian) * eta_prime;
+        gradient[1] +=
+            residual * amplitude * (eta * d_gaussian_dx0 + (1.0 - eta) * d_lorentzian_dx0);
+        gradient[2] += residual * amplitude * eta * d_gaussian_d_sigma * d_sigma_raw;
+        gradient[3] += residual * amplitude * (1.0 - eta) * d_lorentzian_d_gamma * d_gamma_raw;
+        gradient[4] += residual * amplitude * (gaussian - lorentzian) * eta_prime;
         gradient[5] += residual;
         index += 1;
     }

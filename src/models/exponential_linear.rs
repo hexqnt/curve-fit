@@ -1,9 +1,20 @@
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
 use ndarray::Array2;
 
+/// Вычисляет экспоненциально-линейную модель:
+/// `f(x) = exp_amplitude * exp(exp_rate * x) + linear_slope * x + offset`,
+/// где:
+/// - `exp_amplitude` — амплитуда экспоненциальной части,
+/// - `exp_rate` — показатель экспоненциального роста/затухания,
+/// - `linear_slope` — наклон линейной части,
+/// - `offset` — свободный член.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] * (param[1] * x).exp() + param[2] * x + param[3]
+    let exp_amplitude = param[0];
+    let exp_rate = param[1];
+    let linear_slope = param[2];
+    let offset = param[3];
+    exp_amplitude * (exp_rate * x).exp() + linear_slope * x + offset
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -16,16 +27,20 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let exp_amplitude = param[0];
+    let exp_rate = param[1];
+    let linear_slope = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let exp_part = (param[1] * x).exp();
-        let model = param[0] * exp_part + param[2] * x + param[3];
+        let exp_part = (exp_rate * x).exp();
+        let model = exp_amplitude * exp_part + linear_slope * x + offset;
         let residual = loss_derivative_from_prediction(model, y);
         gradient[0] += residual * exp_part;
-        gradient[1] += residual * (param[0] * exp_part * x);
+        gradient[1] += residual * (exp_amplitude * exp_part * x);
         gradient[2] += residual * x;
         gradient[3] += residual;
         index += 1;
@@ -50,13 +65,17 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((4, 4));
+    let exp_amplitude = param[0];
+    let exp_rate = param[1];
+    let linear_slope = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
         let y = y_values[index];
-        let exp_part = (param[1] * x).exp();
-        let model = param[0] * exp_part + param[2] * x + param[3];
+        let exp_part = (exp_rate * x).exp();
+        let model = exp_amplitude * exp_part + linear_slope * x + offset;
         if !model.is_finite() {
             return None;
         }
@@ -68,11 +87,11 @@ where
         }
 
         let jac_a = exp_part;
-        let jac_b = param[0] * x * exp_part;
+        let jac_b = exp_amplitude * x * exp_part;
         let jac_c = x;
         let jac_d = 1.0;
         let d2_model_dadb = x * exp_part;
-        let d2_model_dbdb = param[0] * x * x * exp_part;
+        let d2_model_dbdb = exp_amplitude * x * x * exp_part;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

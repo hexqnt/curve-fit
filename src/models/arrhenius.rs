@@ -3,10 +3,19 @@ use super::common::{
 };
 use ndarray::Array2;
 
+/// Вычисляет кривую Аррениуса:
+/// `f(x) = prefactor * exp(temp_coeff / x)`,
+/// где:
+/// - `prefactor` — масштабный коэффициент,
+/// - `temp_coeff` — параметр температурной чувствительности.
+///
+/// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     let x = positive_x(x);
-    param[0] * (param[1] / x).exp()
+    let prefactor = param[0];
+    let temp_coeff = param[1];
+    prefactor * (temp_coeff / x).exp()
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -19,16 +28,18 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let prefactor = param[0];
+    let temp_coeff = param[1];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
         let y = y_values[index];
-        let exp_term = (param[1] / x).exp();
-        let model = param[0] * exp_term;
+        let exp_term = (temp_coeff / x).exp();
+        let model = prefactor * exp_term;
         let residual = loss_derivative_from_prediction(model, y);
         gradient[0] += residual * exp_term;
-        gradient[1] += residual * (param[0] * exp_term / x);
+        gradient[1] += residual * (prefactor * exp_term / x);
         index += 1;
     }
 }
@@ -51,14 +62,16 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((2, 2));
+    let prefactor = param[0];
+    let temp_coeff = param[1];
 
     let mut index = 0;
     while index < sample_count {
         let x = positive_x(x_values[index]);
         let y = y_values[index];
-        let exp_term = (param[1] / x).exp();
+        let exp_term = (temp_coeff / x).exp();
         let inv_x = 1.0 / x;
-        let model = param[0] * exp_term;
+        let model = prefactor * exp_term;
         if !model.is_finite() {
             return None;
         }
@@ -70,9 +83,9 @@ where
         }
 
         let jac_a = exp_term;
-        let jac_b = param[0] * exp_term * inv_x;
+        let jac_b = prefactor * exp_term * inv_x;
         let d2_model_dadb = exp_term * inv_x;
-        let d2_model_dbdb = param[0] * exp_term * inv_x * inv_x;
+        let d2_model_dbdb = prefactor * exp_term * inv_x * inv_x;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

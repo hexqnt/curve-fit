@@ -1,10 +1,19 @@
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
 use ndarray::Array2;
 
+/// Вычисляет кривую Гомпертца:
+/// `f(x) = upper_asymptote * exp(-exp(-growth_rate * (x - x0)))`,
+/// где:
+/// - `upper_asymptote` — верхняя асимптота,
+/// - `growth_rate` — скорость роста,
+/// - `x0` — положение точки перегиба.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let inner = (-param[1] * (x - param[2])).exp();
-    param[0] * (-inner).exp()
+    let upper_asymptote = param[0];
+    let growth_rate = param[1];
+    let x0 = param[2];
+    let inner = (-growth_rate * (x - x0)).exp();
+    upper_asymptote * (-inner).exp()
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -17,20 +26,23 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let upper_asymptote = param[0];
+    let growth_rate = param[1];
+    let x0 = param[2];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let x_centered = x - param[2];
-        let exp_inner = (-param[1] * x_centered).exp();
+        let x_centered = x - x0;
+        let exp_inner = (-growth_rate * x_centered).exp();
         let exp_outer = (-exp_inner).exp();
-        let model = param[0] * exp_outer;
+        let model = upper_asymptote * exp_outer;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * exp_outer;
-        gradient[1] += residual * (param[0] * exp_outer * exp_inner * x_centered);
-        gradient[2] += residual * (-param[0] * exp_outer * exp_inner * param[1]);
+        gradient[1] += residual * (upper_asymptote * exp_outer * exp_inner * x_centered);
+        gradient[2] += residual * (-upper_asymptote * exp_outer * exp_inner * growth_rate);
         index += 1;
     }
 }
@@ -53,20 +65,20 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((3, 3));
+    let upper_asymptote = param[0];
+    let growth_rate = param[1];
+    let x0 = param[2];
 
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let b = param[1];
-        let c = param[2];
-        let u = x - c;
-        let exp_inner = (-b * u).exp();
+        let u = x - x0;
+        let exp_inner = (-growth_rate * u).exp();
         let exp_outer = (-exp_inner).exp();
         let exp_product = exp_outer * exp_inner;
         let d2_shape_dz2 = exp_product * (exp_inner - 1.0);
-        let model = a * exp_outer;
+        let model = upper_asymptote * exp_outer;
         if !model.is_finite() {
             return None;
         }
@@ -78,14 +90,14 @@ where
         }
 
         let jac_a = exp_outer;
-        let jac_b = a * exp_product * u;
-        let jac_c = -a * exp_product * b;
+        let jac_b = upper_asymptote * exp_product * u;
+        let jac_c = -upper_asymptote * exp_product * growth_rate;
 
         let d2_model_dadb = exp_product * u;
-        let d2_model_dadc = -exp_product * b;
-        let d2_model_dbdb = a * d2_shape_dz2 * u * u;
-        let d2_model_dbdc = -a * (b * u * d2_shape_dz2 + exp_product);
-        let d2_model_dcdc = a * d2_shape_dz2 * b * b;
+        let d2_model_dadc = -exp_product * growth_rate;
+        let d2_model_dbdb = upper_asymptote * d2_shape_dz2 * u * u;
+        let d2_model_dbdc = -upper_asymptote * (growth_rate * u * d2_shape_dz2 + exp_product);
+        let d2_model_dcdc = upper_asymptote * d2_shape_dz2 * growth_rate * growth_rate;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

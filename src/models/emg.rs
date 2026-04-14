@@ -2,29 +2,38 @@ use super::common::{erfc_approx, positive_param_with_derivative};
 use ndarray::Array2;
 
 #[inline]
-fn eval_right(a: f64, mu: f64, sigma: f64, tau: f64, c: f64, x: f64) -> f64 {
+fn eval_right(amplitude: f64, mu: f64, sigma: f64, tau: f64, baseline: f64, x: f64) -> f64 {
     let (sigma, _) = positive_param_with_derivative(sigma);
     let (tau, _) = positive_param_with_derivative(tau);
     let delta = x - mu;
     let z = (sigma / tau - delta / sigma) / std::f64::consts::SQRT_2;
     let exponent = sigma * sigma / (2.0 * tau * tau) - delta / tau;
-    c + (a / (2.0 * tau)) * exponent.exp() * erfc_approx(z)
+    baseline + (amplitude / (2.0 * tau)) * exponent.exp() * erfc_approx(z)
 }
 
 #[inline]
+/// Вычисляет экспоненциально-модифицированную гауссиану (EMG):
+/// `f(x) = baseline + (amplitude / (2 * tau)) * exp(sigma^2 / (2 * tau^2) - (x - mu) / tau) * erfc(z)`,
+/// где:
+/// - `amplitude` — амплитуда,
+/// - `mu` — центр гауссовой части,
+/// - `sigma` — ширина гауссовой части,
+/// - `tau` — экспоненциальная постоянная,
+/// - `baseline` — вертикальный сдвиг.
+///
+/// Для `tau < 0` используется отражение по `mu`, что даёт хвост в противоположную сторону.
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    if param[3].is_sign_negative() {
-        let reflected_x = 2.0 * param[1] - x;
-        eval_right(
-            param[0],
-            param[1],
-            param[2],
-            param[3].abs(),
-            param[4],
-            reflected_x,
-        )
+    let amplitude = param[0];
+    let mu = param[1];
+    let sigma = param[2];
+    let tau = param[3];
+    let baseline = param[4];
+
+    if tau.is_sign_negative() {
+        let reflected_x = 2.0 * mu - x;
+        eval_right(amplitude, mu, sigma, tau.abs(), baseline, reflected_x)
     } else {
-        eval_right(param[0], param[1], param[2], param[3], param[4], x)
+        eval_right(amplitude, mu, sigma, tau, baseline, x)
     }
 }
 

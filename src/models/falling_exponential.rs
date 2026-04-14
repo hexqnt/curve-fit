@@ -1,11 +1,20 @@
 use super::common::non_zero_param_with_derivative;
 use ndarray::Array2;
 
+/// Вычисляет кривую экспоненциального спада:
+/// `f(x) = y0 - (v0 / k) * (1 - exp(-k * x))`,
+/// где:
+/// - `y0` — начальный уровень,
+/// - `v0` — масштаб скорости спада,
+/// - `k` — коэффициент спада (параметризован как ненулевой).
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    let (k, _) = non_zero_param_with_derivative(param[2]);
+    let y0 = param[0];
+    let v0 = param[1];
+    let k_raw = param[2];
+    let (k, _) = non_zero_param_with_derivative(k_raw);
     let one_minus_exp = -(-k * x).exp_m1();
-    param[0] - (param[1] / k) * one_minus_exp
+    y0 - (v0 / k) * one_minus_exp
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -18,14 +27,15 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let y0 = param[0];
+    let v0 = param[1];
+    let k_raw = param[2];
+    let (k, d_k_raw) = non_zero_param_with_derivative(k_raw);
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let y0 = param[0];
-        let v0 = param[1];
-        let (k, d_k_raw) = non_zero_param_with_derivative(param[2]);
         let exp_part = (-k * x).exp();
         let one_minus_exp = -(-k * x).exp_m1();
         let model = y0 - (v0 / k) * one_minus_exp;

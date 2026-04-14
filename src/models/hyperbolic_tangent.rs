@@ -1,9 +1,20 @@
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
 use ndarray::Array2;
 
+/// Вычисляет гиперболический тангенс с масштабом и сдвигом:
+/// `f(x) = amplitude * tanh(slope * (x - x0)) + offset`,
+/// где:
+/// - `amplitude` — амплитуда перехода,
+/// - `slope` — крутизна перехода,
+/// - `x0` — центр перехода по оси `x`,
+/// - `offset` — вертикальный сдвиг.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
-    param[0] * (param[1] * (x - param[2])).tanh() + param[3]
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
+    amplitude * (slope * (x - x0)).tanh() + offset
 }
 
 pub(super) fn accumulate_gradient<L>(
@@ -16,20 +27,24 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
-        let z = param[1] * (x - param[2]);
+        let z = slope * (x - x0);
         let tanh_z = z.tanh();
         let sech2_z = 1.0 - tanh_z * tanh_z;
-        let model = param[0] * tanh_z + param[3];
+        let model = amplitude * tanh_z + offset;
         let residual = loss_derivative_from_prediction(model, y);
 
         gradient[0] += residual * tanh_z;
-        gradient[1] += residual * (param[0] * sech2_z * (x - param[2]));
-        gradient[2] += residual * (-param[0] * sech2_z * param[1]);
+        gradient[1] += residual * (amplitude * sech2_z * (x - x0));
+        gradient[2] += residual * (-amplitude * sech2_z * slope);
         gradient[3] += residual;
         index += 1;
     }
@@ -53,20 +68,21 @@ where
     let sample_count = x_values.len();
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((4, 4));
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
 
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
         let y = y_values[index];
-        let a = param[0];
-        let b = param[1];
-        let c = param[2];
-        let u = x - c;
-        let z = b * u;
+        let u = x - x0;
+        let z = slope * u;
         let tanh_z = z.tanh();
         let sech2_z = 1.0 - tanh_z * tanh_z;
         let d2_shape_dz2 = -2.0 * sech2_z * tanh_z;
-        let model = a * tanh_z + param[3];
+        let model = amplitude * tanh_z + offset;
         if !model.is_finite() {
             return None;
         }
@@ -78,15 +94,15 @@ where
         }
 
         let jac_a = tanh_z;
-        let jac_b = a * sech2_z * u;
-        let jac_c = -a * sech2_z * b;
+        let jac_b = amplitude * sech2_z * u;
+        let jac_c = -amplitude * sech2_z * slope;
         let jac_d = 1.0;
 
         let d2_model_dadb = sech2_z * u;
-        let d2_model_dadc = -sech2_z * b;
-        let d2_model_dbdb = a * d2_shape_dz2 * u * u;
-        let d2_model_dbdc = a * (d2_shape_dz2 * (-b) * u - sech2_z);
-        let d2_model_dcdc = a * d2_shape_dz2 * b * b;
+        let d2_model_dadc = -sech2_z * slope;
+        let d2_model_dbdb = amplitude * d2_shape_dz2 * u * u;
+        let d2_model_dbdc = amplitude * (d2_shape_dz2 * (-slope) * u - sech2_z);
+        let d2_model_dcdc = amplitude * d2_shape_dz2 * slope * slope;
 
         hessian[[0, 0]] += loss_second * jac_a * jac_a;
         hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;

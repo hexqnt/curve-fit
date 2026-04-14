@@ -1,11 +1,23 @@
 use super::common::non_zero_param_with_derivative;
 use ndarray::Array2;
 
+/// Вычисляет рациональную функцию порядка (2, 2):
+/// `f(x) = (num_quad * x^2 + num_linear * x + num_const) / (1 + den_linear * x + den_quad * x^2)`,
+/// где:
+/// - `num_quad`, `num_linear`, `num_const` — коэффициенты числителя,
+/// - `den_linear`, `den_quad` — коэффициенты знаменателя.
+///
+/// Знаменатель параметризуется через `non_zero_param_with_derivative`.
 #[inline]
 pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+    let num_quad = param[0];
+    let num_linear = param[1];
+    let num_const = param[2];
+    let den_linear = param[3];
+    let den_quad = param[4];
     let x2 = x * x;
-    let numerator = param[0] * x2 + param[1] * x + param[2];
-    let denominator_raw = 1.0 + param[3] * x + param[4] * x2;
+    let numerator = num_quad * x2 + num_linear * x + num_const;
+    let denominator_raw = 1.0 + den_linear * x + den_quad * x2;
     let (denominator, _) = non_zero_param_with_derivative(denominator_raw);
     numerator / denominator
 }
@@ -20,14 +32,19 @@ pub(super) fn accumulate_gradient<L>(
     L: FnMut(f64, f64) -> f64,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
+    let num_quad = param[0];
+    let num_linear = param[1];
+    let num_const = param[2];
+    let den_linear = param[3];
+    let den_quad = param[4];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
         let y = y_values[index];
         let x2 = x * x;
-        let numerator = param[0] * x2 + param[1] * x + param[2];
-        let denominator_raw = 1.0 + param[3] * x + param[4] * x2;
+        let numerator = num_quad * x2 + num_linear * x + num_const;
+        let denominator_raw = 1.0 + den_linear * x + den_quad * x2;
         let (denominator, d_den_raw) = non_zero_param_with_derivative(denominator_raw);
         let model = numerator / denominator;
         let residual = loss_derivative_from_prediction(model, y);
