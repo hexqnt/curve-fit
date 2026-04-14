@@ -12,23 +12,37 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
         .fold(0.0, |acc, coefficient| acc * x + coefficient)
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), param.len());
+
+    let value = value_at(param, x);
+    let mut basis = 1.0;
+    for grad_value in grad.iter_mut().rev() {
+        *grad_value = basis;
+        basis *= x;
+    }
+
+    value
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
     value_first: &[f64],
     gradient: &mut [f64],
 ) {
+    debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
 
+    let mut point_grad = vec![0.0; gradient.len()];
     let mut index = 0;
     while index < x_values.len() {
-        let x = x_values[index];
-        let residual = value_first[index];
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        let mut basis = 1.0;
-        for gradient_value in gradient.iter_mut().rev() {
-            *gradient_value += residual * basis;
-            basis *= x;
+        for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+            *gradient_value += upstream * point_grad_value;
         }
         index += 1;
     }

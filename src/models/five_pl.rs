@@ -26,39 +26,57 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     bottom + (top - bottom) * (1.0 + pow).powf(-asymmetry)
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 5);
+
+    let top = param[0];
+    let hill_slope = param[1];
+    let ec50_raw = param[2];
+    let bottom = param[3];
+    let asymmetry_raw = param[4];
+    let x = positive_x(x);
+    let (ec50, d_c_raw) = positive_param_with_derivative(ec50_raw);
+    let (asymmetry, d_m_raw) = positive_param_with_derivative(asymmetry_raw);
+    let ratio = x / ec50;
+    let pow = ratio.powf(hill_slope);
+    let den = 1.0 + pow;
+    let inv = den.powf(-asymmetry);
+    let d_pow_db = pow * ratio.ln();
+    let d_pow_dc = -pow * hill_slope / ec50;
+    let d_inv_db = -asymmetry * den.powf(-asymmetry - 1.0) * d_pow_db;
+    let d_inv_dc = -asymmetry * den.powf(-asymmetry - 1.0) * d_pow_dc;
+    let d_inv_dm = -inv * den.ln();
+
+    grad[0] = inv;
+    grad[1] = (top - bottom) * d_inv_db;
+    grad[2] = (top - bottom) * d_inv_dc * d_c_raw;
+    grad[3] = 1.0 - inv;
+    grad[4] = (top - bottom) * d_inv_dm * d_m_raw;
+
+    bottom + (top - bottom) * inv
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
     value_first: &[f64],
     gradient: &mut [f64],
 ) {
-    let top = param[0];
-    let hill_slope = param[1];
-    let ec50_raw = param[2];
-    let bottom = param[3];
-    let asymmetry_raw = param[4];
-    let (ec50, d_c_raw) = positive_param_with_derivative(ec50_raw);
-    let (asymmetry, d_m_raw) = positive_param_with_derivative(asymmetry_raw);
+    debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
 
+    let mut point_grad = [0.0; 5];
     let mut index = 0;
     while index < x_values.len() {
-        let x = positive_x(x_values[index]);
-        let ratio = x / ec50;
-        let pow = ratio.powf(hill_slope);
-        let den = 1.0 + pow;
-        let inv = den.powf(-asymmetry);
-        let residual = value_first[index];
-        let d_pow_db = pow * ratio.ln();
-        let d_pow_dc = -pow * hill_slope / ec50;
-        let d_inv_db = -asymmetry * den.powf(-asymmetry - 1.0) * d_pow_db;
-        let d_inv_dc = -asymmetry * den.powf(-asymmetry - 1.0) * d_pow_dc;
-        let d_inv_dm = -inv * den.ln();
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        gradient[0] += residual * inv;
-        gradient[1] += residual * (top - bottom) * d_inv_db;
-        gradient[2] += residual * (top - bottom) * d_inv_dc * d_c_raw;
-        gradient[3] += residual * (1.0 - inv);
-        gradient[4] += residual * (top - bottom) * d_inv_dm * d_m_raw;
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
+        gradient[3] += upstream * point_grad[3];
+        gradient[4] += upstream * point_grad[4];
         index += 1;
     }
 }

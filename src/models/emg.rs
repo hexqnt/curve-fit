@@ -37,12 +37,35 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     }
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 5);
+    grad.fill(0.0);
+    value_at(param, x)
+}
+
 pub(super) fn add_value_grad(
-    _x_values: &[f64],
-    _param: &[f64],
-    _value_first: &[f64],
-    _gradient: &mut [f64],
+    x_values: &[f64],
+    param: &[f64],
+    value_first: &[f64],
+    gradient: &mut [f64],
 ) {
+    debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
+
+    let mut point_grad = [0.0; 5];
+    let mut index = 0;
+    while index < x_values.len() {
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
+
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
+        gradient[3] += upstream * point_grad[3];
+        gradient[4] += upstream * point_grad[4];
+        index += 1;
+    }
 }
 
 pub(super) fn add_value_grad_raw_hessian(

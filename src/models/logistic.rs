@@ -16,6 +16,24 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     upper_asymptote * sigmoid(z)
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 3);
+
+    let upper_asymptote = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let z = slope * (x - x0);
+    let s = sigmoid(z);
+    let ds_dz = s * (1.0 - s);
+
+    grad[0] = s;
+    grad[1] = upper_asymptote * ds_dz * (x - x0);
+    grad[2] = -upper_asymptote * ds_dz * slope;
+
+    upper_asymptote * s
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
@@ -23,38 +41,21 @@ pub(super) fn add_value_grad(
     gradient: &mut [f64],
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
-
-    let upper_asymptote = param[0];
-    let slope = param[1];
-    let x0 = param[2];
+    debug_assert_eq!(gradient.len(), param.len());
 
     // Для каждой точки считаем вклад в градиент скалярной цели по параметрам
     // логистической модели. Используем цепное правило:
     // dF/dθ = (dF/dŷ) * (dŷ/dθ), где F — любой downstream-скаляр
     // (например, loss или выход следующего звена в цепочке).
+    let mut point_grad = [0.0; 3];
     let mut index = 0;
     while index < x_values.len() {
-        let x = x_values[index];
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        // Обозначения:
-        // z = slope * (x - x0), s = sigmoid(z), ŷ = upper_asymptote * s.
-        // Тогда dŷ/d(upper_asymptote) = s.
-        let z = slope * (x - x0);
-        let s = sigmoid(z);
-
-        // Внешняя производная по предсказанию модели.
-        let value_first = value_first[index];
-
-        // Производная сигмоиды по аргументу z:
-        // ds/dz = s * (1 - s).
-        let ds_dz = s * (1.0 - s);
-
-        // dŷ/d(upper_asymptote) = s
-        gradient[0] += value_first * s;
-        // dŷ/d(slope) = upper_asymptote * ds/dz * (x - x0)
-        gradient[1] += value_first * (upper_asymptote * ds_dz * (x - x0));
-        // dŷ/d(x0) = upper_asymptote * ds/dz * d(slope * (x - x0))/d(x0) = -upper_asymptote * ds/dz * slope
-        gradient[2] += value_first * (upper_asymptote * ds_dz * (-slope));
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
         index += 1;
     }
 }

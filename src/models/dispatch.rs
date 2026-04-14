@@ -92,6 +92,7 @@ pub(crate) fn add_model_grad_unscaled(
     gradient: &mut [f64],
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
 
     if family.is_polynomial() {
         polynomial::add_value_grad(x_values, param, value_first, gradient);

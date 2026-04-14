@@ -17,29 +17,47 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     a1 * (-k1 * x).exp() + a2 * (-k2 * x).exp() + offset
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 5);
+
+    let a1 = param[0];
+    let k1 = param[1];
+    let a2 = param[2];
+    let k2 = param[3];
+    let offset = param[4];
+    let exp1 = (-k1 * x).exp();
+    let exp2 = (-k2 * x).exp();
+
+    grad[0] = exp1;
+    grad[1] = -a1 * x * exp1;
+    grad[2] = exp2;
+    grad[3] = -a2 * x * exp2;
+    grad[4] = 1.0;
+
+    a1 * exp1 + a2 * exp2 + offset
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
     value_first: &[f64],
     gradient: &mut [f64],
 ) {
-    let a1 = param[0];
-    let k1 = param[1];
-    let a2 = param[2];
-    let k2 = param[3];
+    debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
 
+    let mut point_grad = [0.0; 5];
     let mut index = 0;
     while index < x_values.len() {
-        let x = x_values[index];
-        let exp1 = (-k1 * x).exp();
-        let exp2 = (-k2 * x).exp();
-        let residual = value_first[index];
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        gradient[0] += residual * exp1;
-        gradient[1] += residual * (-a1 * x * exp1);
-        gradient[2] += residual * exp2;
-        gradient[3] += residual * (-a2 * x * exp2);
-        gradient[4] += residual;
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
+        gradient[3] += upstream * point_grad[3];
+        gradient[4] += upstream * point_grad[4];
         index += 1;
     }
 }

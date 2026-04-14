@@ -16,6 +16,24 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     upper_asymptote * (-inner).exp()
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 3);
+
+    let upper_asymptote = param[0];
+    let growth_rate = param[1];
+    let x0 = param[2];
+    let x_centered = x - x0;
+    let exp_inner = (-growth_rate * x_centered).exp();
+    let exp_outer = (-exp_inner).exp();
+
+    grad[0] = exp_outer;
+    grad[1] = upper_asymptote * exp_outer * exp_inner * x_centered;
+    grad[2] = -upper_asymptote * exp_outer * exp_inner * growth_rate;
+
+    upper_asymptote * exp_outer
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
@@ -23,22 +41,17 @@ pub(super) fn add_value_grad(
     gradient: &mut [f64],
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
 
-    let upper_asymptote = param[0];
-    let growth_rate = param[1];
-    let x0 = param[2];
-
+    let mut point_grad = [0.0; 3];
     let mut index = 0;
     while index < x_values.len() {
-        let x = x_values[index];
-        let x_centered = x - x0;
-        let exp_inner = (-growth_rate * x_centered).exp();
-        let exp_outer = (-exp_inner).exp();
-        let residual = value_first[index];
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        gradient[0] += residual * exp_outer;
-        gradient[1] += residual * (upper_asymptote * exp_outer * exp_inner * x_centered);
-        gradient[2] += residual * (-upper_asymptote * exp_outer * exp_inner * growth_rate);
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
         index += 1;
     }
 }

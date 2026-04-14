@@ -19,28 +19,45 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     amplitude * math_softplus(slope * (x - x0)) + offset
 }
 
+#[inline]
+pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
+    debug_assert_eq!(grad.len(), 4);
+
+    let amplitude = param[0];
+    let slope = param[1];
+    let x0 = param[2];
+    let offset = param[3];
+    let z = slope * (x - x0);
+    let softplus_z = math_softplus(z);
+    let sigma_z = sigmoid(z);
+
+    grad[0] = softplus_z;
+    grad[1] = amplitude * sigma_z * (x - x0);
+    grad[2] = -amplitude * sigma_z * slope;
+    grad[3] = 1.0;
+
+    amplitude * softplus_z + offset
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
     value_first: &[f64],
     gradient: &mut [f64],
 ) {
-    let amplitude = param[0];
-    let slope = param[1];
-    let x0 = param[2];
+    debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(gradient.len(), param.len());
 
+    let mut point_grad = [0.0; 4];
     let mut index = 0;
     while index < x_values.len() {
-        let x = x_values[index];
-        let z = slope * (x - x0);
-        let softplus_z = math_softplus(z);
-        let sigma_z = sigmoid(z);
-        let residual = value_first[index];
+        let upstream = value_first[index];
+        value_grad_at(param, x_values[index], &mut point_grad);
 
-        gradient[0] += residual * softplus_z;
-        gradient[1] += residual * (amplitude * sigma_z * (x - x0));
-        gradient[2] += residual * (-amplitude * sigma_z * slope);
-        gradient[3] += residual;
+        gradient[0] += upstream * point_grad[0];
+        gradient[1] += upstream * point_grad[1];
+        gradient[2] += upstream * point_grad[2];
+        gradient[3] += upstream * point_grad[3];
         index += 1;
     }
 }
