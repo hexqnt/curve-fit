@@ -1,6 +1,4 @@
-use super::common::{
-    is_finite_non_negative, positive_x, scale_and_mirror_upper_hessian, stabilize_hessian,
-};
+use super::common::{is_finite_non_negative, positive_x, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
 
 /// Вычисляет обратную зависимость:
@@ -11,51 +9,47 @@ use ndarray::Array2;
 ///
 /// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let offset = param[0];
     let scale = param[1];
     offset + scale / positive_x(x)
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
-    param: &[f64],
-    loss: &L,
+    _param: &[f64],
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
-    let offset = param[0];
-    let scale = param[1];
+) {
+    debug_assert_eq!(x_values.len(), value_first.len());
 
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
-        let model = offset + scale / x;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
         gradient[0] += residual;
         gradient[1] += residual / x;
         index += 1;
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    value_second: &[f64],
+) -> Option<Array2<f64>> {
+    debug_assert_eq!(x_values.len(), value_second.len());
+
     if param.len() != 2 {
         return None;
     }
 
     let sample_count = x_values.len();
+    if sample_count == 0 {
+        return Some(Array2::zeros((2, 2)));
+    }
+
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((2, 2));
     let offset = param[0];
@@ -64,14 +58,13 @@ where
     let mut index = 0;
     while index < sample_count {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
         let inv_x = 1.0 / x;
         let model = offset + scale * inv_x;
         if !model.is_finite() {
             return None;
         }
 
-        let weight = loss.d2_prediction(model, y);
+        let weight = value_second[index];
         if !is_finite_non_negative(weight) {
             return None;
         }
@@ -83,13 +76,12 @@ where
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-    stabilize_hessian(&mut hessian);
     Some(hessian)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eval;
+    use super::{add_value_grad_raw_hessian, value_at};
     use crate::domain::CurveFamily;
     use crate::models::test_support::{
         assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
@@ -97,7 +89,7 @@ mod tests {
 
     #[test]
     fn value_matches_known_example() {
-        let value = eval(&[1.25, -0.6], 2.0);
+        let value = value_at(&[1.25, -0.6], 2.0);
         assert_near(value, 0.95, 1e-12);
     }
 
@@ -111,5 +103,13 @@ mod tests {
             2e-5,
             2e-4,
         );
+    }
+
+    #[test]
+    fn raw_hessian_is_zero_for_empty_dataset() {
+        let hessian = add_value_grad_raw_hessian(&[], &[1.0, 0.5], &[], &[])
+            .expect("empty dataset must produce zero hessian");
+        assert_eq!(hessian.shape(), &[2, 2]);
+        assert!(hessian.iter().all(|&value| value == 0.0));
     }
 }

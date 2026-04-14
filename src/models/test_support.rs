@@ -1,8 +1,6 @@
-use super::common::HESSIAN_DIAGONAL_JITTER;
 use super::{
-    GradientComputation, PredictionLoss, accumulate_gradient, analytic_hessian, evaluate_raw,
-    objective_value, objective_value_grad, objective_value_grad_hessian,
-    objective_value_grad_raw_hessian,
+    CurveObjective, DataTerm, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss,
+    central_diff_gradient_from_value, central_diff_hessian_from_gradient, value_at,
 };
 use crate::domain::CurveFamily;
 use ndarray::Array2;
@@ -62,7 +60,7 @@ fn mean_soft_l1_cost(
         .iter()
         .zip(y_values.iter())
         .map(|(&x, &y)| {
-            let prediction = evaluate_raw(family, param, x);
+            let prediction = value_at(family, param, x);
             soft_l1_value(prediction, y)
         })
         .sum::<f64>();
@@ -135,13 +133,6 @@ where
         }
     }
 
-    for index in 0..dimension {
-        if !hessian[[index, index]].is_finite() {
-            hessian[[index, index]] = 0.0;
-        }
-        hessian[[index, index]] += HESSIAN_DIAGONAL_JITTER;
-    }
-
     hessian
 }
 
@@ -155,61 +146,70 @@ pub(super) fn assert_family_gradient_and_hessian_match_numerical_reference(
 ) {
     let y_values = x_values
         .iter()
-        .map(|&x| evaluate_raw(family, true_params, x))
+        .map(|&x| value_at(family, true_params, x))
         .collect::<Vec<_>>();
 
     let loss = SoftL1Loss;
-    let objective_value = objective_value(family, x_values, &y_values, probe_params, &loss);
+    let term = DataTerm::new(family, x_values, &y_values, loss);
+    let objective = CurveObjective::new(probe_params.len(), term);
 
-    let mut objective_grad = vec![0.0; probe_params.len()];
-    let (objective_value_from_grad, objective_mode_from_grad) = objective_value_grad(
-        family,
-        x_values,
-        &y_values,
-        probe_params,
-        &loss,
-        &mut objective_grad,
-    );
-    assert_eq!(objective_mode_from_grad, GradientComputation::Analytic);
+    let value = objective.value(probe_params);
+    let (value_from_grad, gradient) = objective.value_grad(probe_params);
+    let (value_from_raw_hessian, gradient_from_raw_hessian, raw_hessian) =
+        objective.value_grad_raw_hessian(probe_params);
+    let (value_from_hessian, gradient_from_hessian, hessian) =
+        objective.value_grad_hessian(probe_params);
 
-    let mut objective_grad_with_hessian = vec![0.0; probe_params.len()];
-    let (objective_value_from_hessian, objective_mode_from_hessian, objective_hessian) =
-        objective_value_grad_hessian(
-            family,
-            x_values,
-            &y_values,
-            probe_params,
-            &loss,
-            &mut objective_grad_with_hessian,
-        );
-    assert_eq!(objective_mode_from_hessian, GradientComputation::Analytic);
-    assert_near(
-        objective_value,
-        objective_value_from_grad,
-        OBJECTIVE_VALUE_EPS,
-    );
-    assert_near(
-        objective_value,
-        objective_value_from_hessian,
-        OBJECTIVE_VALUE_EPS,
-    );
+    assert_near(value, value_from_grad, OBJECTIVE_VALUE_EPS);
+    assert_near(value, value_from_raw_hessian, OBJECTIVE_VALUE_EPS);
+    assert_near(value, value_from_hessian, OBJECTIVE_VALUE_EPS);
+
     for index in 0..probe_params.len() {
         assert_near(
-            objective_grad[index],
-            objective_grad_with_hessian[index],
+            gradient[index],
+            gradient_from_raw_hessian[index],
+            gradient_epsilon,
+        );
+        assert_near(
+            gradient[index],
+            gradient_from_hessian[index],
             gradient_epsilon,
         );
     }
 
-    let mut raw_grad = vec![0.0; probe_params.len()];
-    let (_, _, raw_hessian) = objective_value_grad_raw_hessian(
-        family,
-        x_values,
-        &y_values,
+    let numerical_gradient = numerical_gradient_from_cost(probe_params, |param| {
+        mean_soft_l1_cost(family, x_values, &y_values, param)
+    });
+    for index in 0..probe_params.len() {
+        assert_near(gradient[index], numerical_gradient[index], gradient_epsilon);
+    }
+
+    let mut numerical_gradient_from_value = vec![0.0; probe_params.len()];
+    central_diff_gradient_from_value(
         probe_params,
-        &loss,
-        &mut raw_grad,
+        GRADIENT_REL_STEP,
+        GRADIENT_MIN_STEP,
+        |param| objective.value(param),
+        &mut numerical_gradient_from_value,
     );
+    for index in 0..probe_params.len() {
+        assert_near(
+            gradient[index],
+            numerical_gradient_from_value[index],
+            gradient_epsilon,
+        );
+    }
+
+    let numerical_hessian_from_grad = central_diff_hessian_from_gradient(
+        probe_params,
+        HESSIAN_REL_STEP,
+        HESSIAN_MIN_STEP,
+        |param, output| {
+            let (_, gradient_probe) = objective.value_grad(param);
+            output.copy_from_slice(&gradient_probe);
+        },
+    );
+
     for row in 0..probe_params.len() {
         for column in 0..probe_params.len() {
             assert_near(
@@ -218,53 +218,39 @@ pub(super) fn assert_family_gradient_and_hessian_match_numerical_reference(
                 hessian_epsilon,
             );
             assert_near(
-                objective_hessian[[row, column]],
-                objective_hessian[[column, row]],
+                hessian[[row, column]],
+                hessian[[column, row]],
+                hessian_epsilon,
+            );
+            assert_near(
+                raw_hessian[[row, column]],
+                numerical_hessian_from_grad[[row, column]],
                 hessian_epsilon,
             );
         }
     }
 
-    let mut analytic_gradient = vec![0.0; probe_params.len()];
-    let mode = accumulate_gradient(
-        family,
-        x_values,
-        &y_values,
-        probe_params,
-        &loss,
-        &mut analytic_gradient,
-    );
-    assert_eq!(mode, GradientComputation::Analytic);
-
-    let sample_scale = 1.0 / x_values.len() as f64;
-    for value in &mut analytic_gradient {
-        *value *= sample_scale;
-    }
-
-    let numerical_gradient = numerical_gradient_from_cost(probe_params, |param| {
-        mean_soft_l1_cost(family, x_values, &y_values, param)
-    });
-
-    for index in 0..probe_params.len() {
-        assert_near(
-            analytic_gradient[index],
-            numerical_gradient[index],
-            gradient_epsilon,
-        );
-    }
-
-    let analytic_hessian = analytic_hessian(family, x_values, &y_values, probe_params, &loss)
-        .expect("analytic hessian must be available");
-
-    let numerical_hessian = numerical_hessian_from_cost(probe_params, |param| {
-        mean_soft_l1_cost(family, x_values, &y_values, param)
-    });
+    let mut stabilized_numerical_hessian = numerical_hessian_from_grad.clone();
+    super::common::stabilize_hessian(&mut stabilized_numerical_hessian);
 
     for row in 0..probe_params.len() {
         for column in 0..probe_params.len() {
             assert_near(
-                analytic_hessian[[row, column]],
-                numerical_hessian[[row, column]],
+                hessian[[row, column]],
+                stabilized_numerical_hessian[[row, column]],
+                hessian_epsilon,
+            );
+        }
+    }
+
+    let numerical_hessian_from_value = numerical_hessian_from_cost(probe_params, |param| {
+        mean_soft_l1_cost(family, x_values, &y_values, param)
+    });
+    for row in 0..probe_params.len() {
+        for column in 0..probe_params.len() {
+            assert_near(
+                raw_hessian[[row, column]],
+                numerical_hessian_from_value[[row, column]],
                 hessian_epsilon,
             );
         }

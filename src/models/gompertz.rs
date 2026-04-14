@@ -1,4 +1,4 @@
-use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
+use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
 
 /// Вычисляет кривую Гомпертца:
@@ -8,7 +8,7 @@ use ndarray::Array2;
 /// - `growth_rate` — скорость роста,
 /// - `x0` — положение точки перегиба.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let upper_asymptote = param[0];
     let growth_rate = param[1];
     let x0 = param[2];
@@ -16,16 +16,14 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     upper_asymptote * (-inner).exp()
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
+    debug_assert_eq!(x_values.len(), value_first.len());
+
     let upper_asymptote = param[0];
     let growth_rate = param[1];
     let x0 = param[2];
@@ -33,12 +31,10 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
-        let y = y_values[index];
         let x_centered = x - x0;
         let exp_inner = (-growth_rate * x_centered).exp();
         let exp_outer = (-exp_inner).exp();
-        let model = upper_asymptote * exp_outer;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
 
         gradient[0] += residual * exp_outer;
         gradient[1] += residual * (upper_asymptote * exp_outer * exp_inner * x_centered);
@@ -47,20 +43,24 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    value_first: &[f64],
+    value_second: &[f64],
+) -> Option<Array2<f64>> {
+    debug_assert_eq!(x_values.len(), value_first.len());
+    debug_assert_eq!(x_values.len(), value_second.len());
+
     if param.len() != 3 {
         return None;
     }
 
     let sample_count = x_values.len();
+    if sample_count == 0 {
+        return Some(Array2::zeros((3, 3)));
+    }
+
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((3, 3));
     let upper_asymptote = param[0];
@@ -70,7 +70,6 @@ where
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
-        let y = y_values[index];
         let u = x - x0;
         let exp_inner = (-growth_rate * u).exp();
         let exp_outer = (-exp_inner).exp();
@@ -81,9 +80,9 @@ where
             return None;
         }
 
-        let loss_first = loss.d_prediction(model, y);
-        let loss_second = loss.d2_prediction(model, y);
-        if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
+        let value_first = value_first[index];
+        let value_second = value_second[index];
+        if !value_first.is_finite() || !is_finite_non_negative(value_second) {
             return None;
         }
 
@@ -97,23 +96,22 @@ where
         let d2_model_dbdc = -upper_asymptote * (growth_rate * u * d2_shape_dz2 + exp_product);
         let d2_model_dcdc = upper_asymptote * d2_shape_dz2 * growth_rate * growth_rate;
 
-        hessian[[0, 0]] += loss_second * jac_a * jac_a;
-        hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;
-        hessian[[0, 2]] += loss_second * jac_a * jac_c + loss_first * d2_model_dadc;
-        hessian[[1, 1]] += loss_second * jac_b * jac_b + loss_first * d2_model_dbdb;
-        hessian[[1, 2]] += loss_second * jac_b * jac_c + loss_first * d2_model_dbdc;
-        hessian[[2, 2]] += loss_second * jac_c * jac_c + loss_first * d2_model_dcdc;
+        hessian[[0, 0]] += value_second * jac_a * jac_a;
+        hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;
+        hessian[[0, 2]] += value_second * jac_a * jac_c + value_first * d2_model_dadc;
+        hessian[[1, 1]] += value_second * jac_b * jac_b + value_first * d2_model_dbdb;
+        hessian[[1, 2]] += value_second * jac_b * jac_c + value_first * d2_model_dbdc;
+        hessian[[2, 2]] += value_second * jac_c * jac_c + value_first * d2_model_dcdc;
         index += 1;
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-    stabilize_hessian(&mut hessian);
     Some(hessian)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eval;
+    use super::{add_value_grad_raw_hessian, value_at};
     use crate::domain::CurveFamily;
     use crate::models::test_support::{
         assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
@@ -121,7 +119,7 @@ mod tests {
 
     #[test]
     fn value_matches_known_example() {
-        let value = eval(&[1.7, 0.8, -0.2], 0.3);
+        let value = value_at(&[1.7, 0.8, -0.2], 0.3);
         let inner = (-0.8_f64 * 0.5).exp();
         assert_near(value, 1.7 * (-inner).exp(), 1e-12);
     }
@@ -136,5 +134,13 @@ mod tests {
             4e-5,
             8e-4,
         );
+    }
+
+    #[test]
+    fn raw_hessian_is_zero_for_empty_dataset() {
+        let hessian = add_value_grad_raw_hessian(&[], &[1.0, 0.8, 0.0], &[], &[])
+            .expect("empty dataset must produce zero hessian");
+        assert_eq!(hessian.shape(), &[3, 3]);
+        assert!(hessian.iter().all(|&value| value == 0.0));
     }
 }

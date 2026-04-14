@@ -22,7 +22,7 @@ fn eval_right(amplitude: f64, mu: f64, sigma: f64, tau: f64, baseline: f64, x: f
 /// - `baseline` — вертикальный сдвиг.
 ///
 /// Для `tau < 0` используется отражение по `mu`, что даёт хвост в противоположную сторону.
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let amplitude = param[0];
     let mu = param[1];
     let sigma = param[2];
@@ -37,25 +37,19 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     }
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
+    _value_first: &[f64],
     _gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
+) {
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

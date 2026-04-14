@@ -1,35 +1,29 @@
-use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian, stabilize_hessian};
+use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
 
 /// Вычисляет полином в форме Горнера:
 /// `f(x) = p0 * x^n + p1 * x^(n-1) + ... + pn`,
 /// где `param = [p0, p1, ..., pn]` — коэффициенты от старшей степени к младшей.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     param
         .iter()
         .copied()
         .fold(0.0, |acc, coefficient| acc * x + coefficient)
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     debug_assert_eq!(gradient.len(), param.len());
 
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
-        let y = y_values[index];
-        let model = eval(param, x);
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
 
         let mut basis = 1.0;
         for gradient_value in gradient.iter_mut().rev() {
@@ -40,17 +34,12 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
-
+    _value_first: &[f64],
+    value_second: &[f64],
+) -> Option<Array2<f64>> {
     let dimension = param.len();
     if dimension == 0 {
         return None;
@@ -64,13 +53,12 @@ where
     let mut index = 0;
     while index < sample_count {
         let x = x_values[index];
-        let y = y_values[index];
-        let model = eval(param, x);
+        let model = value_at(param, x);
         if !model.is_finite() {
             return None;
         }
 
-        let weight = loss.d2_prediction(model, y);
+        let weight = value_second[index];
         if !is_finite_non_negative(weight) {
             return None;
         }
@@ -98,13 +86,12 @@ where
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-    stabilize_hessian(&mut hessian);
     Some(hessian)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eval;
+    use super::value_at;
     use crate::domain::CurveFamily;
     use crate::models::test_support::{
         assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
@@ -112,7 +99,7 @@ mod tests {
 
     #[test]
     fn value_matches_known_example() {
-        let value = eval(&[2.0, -3.0, 1.0], 4.0);
+        let value = value_at(&[2.0, -3.0, 1.0], 4.0);
         assert_near(value, 21.0, 1e-12);
     }
 

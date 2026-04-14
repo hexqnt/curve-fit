@@ -10,7 +10,7 @@ const LN_2: f64 = std::f64::consts::LN_2;
 /// - `amplitude` — амплитуда экспоненциальной части,
 /// - `half_life` — период полураспада (параметризован положительным преобразованием).
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let offset = param[0];
     let amplitude = param[1];
     let half_life_raw = param[2];
@@ -19,17 +19,12 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     offset + amplitude * exponent.exp()
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
-    let offset = param[0];
+) {
     let amplitude = param[1];
     let half_life_raw = param[2];
     let (half_life, d_c_raw) = positive_param_with_derivative(half_life_raw);
@@ -37,11 +32,9 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
-        let y = y_values[index];
         let exponent = -LN_2 * x / half_life;
         let pow = exponent.exp();
-        let model = offset + amplitude * pow;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
         let d_model_d_c = amplitude * pow * LN_2 * x / (half_life * half_life);
 
         gradient[0] += residual;
@@ -51,14 +44,11 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

@@ -11,7 +11,7 @@ use ndarray::Array2;
 ///
 /// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let top = param[0];
     let hill_slope = param[1];
     let ec50_raw = param[2];
@@ -23,16 +23,12 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     bottom + (top - bottom) / (1.0 + pow)
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     let top = param[0];
     let hill_slope = param[1];
     let ec50_raw = param[2];
@@ -42,13 +38,11 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
         let ratio = x / ec50;
         let pow = ratio.powf(hill_slope);
         let den = 1.0 + pow;
         let inv_den = 1.0 / den;
-        let model = bottom + (top - bottom) * inv_den;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
         let d_pow_db = pow * ratio.ln();
         let d_pow_dc = -pow * hill_slope / ec50;
         let d_model_da = inv_den;
@@ -64,14 +58,11 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

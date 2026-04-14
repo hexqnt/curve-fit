@@ -11,7 +11,7 @@ use ndarray::Array2;
 /// - `eta` — вес смешивания `G/L` (через сигмоиду),
 /// - `baseline` — базовый уровень.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let amplitude = param[0];
     let x0 = param[1];
     let sigma_raw = param[2];
@@ -27,22 +27,17 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     baseline + amplitude * (eta * gaussian + (1.0 - eta) * lorentzian)
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     let amplitude = param[0];
     let x0 = param[1];
     let sigma_raw = param[2];
     let gamma_raw = param[3];
     let eta_raw = param[4];
-    let baseline = param[5];
     let (sigma, d_sigma_raw) = positive_param_with_derivative(sigma_raw);
     let (gamma, d_gamma_raw) = positive_param_with_derivative(gamma_raw);
     let eta = sigmoid(eta_raw);
@@ -51,7 +46,6 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
-        let y = y_values[index];
         let delta = x - x0;
 
         let sigma2 = sigma * sigma;
@@ -67,8 +61,7 @@ pub(super) fn accumulate_gradient<L>(
         let d_lorentzian_d_gamma = 2.0 * u * u / (den2 * gamma);
 
         let mix = eta * gaussian + (1.0 - eta) * lorentzian;
-        let model = baseline + amplitude * mix;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
 
         gradient[0] += residual * mix;
         gradient[1] +=
@@ -81,14 +74,11 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

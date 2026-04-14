@@ -9,7 +9,7 @@ use ndarray::Array2;
 ///
 /// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let scale = param[0];
     let x_scale_raw = param[1];
     let x = positive_x(x);
@@ -17,16 +17,12 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     scale * (x / x_scale).ln()
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     let scale = param[0];
     let x_scale_raw = param[1];
     let (x_scale, d_b_raw) = positive_param_with_derivative(x_scale_raw);
@@ -34,10 +30,8 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
         let ln_term = (x / x_scale).ln();
-        let model = scale * ln_term;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
 
         gradient[0] += residual * ln_term;
         gradient[1] += residual * (-scale / x_scale) * d_b_raw;
@@ -45,14 +39,11 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

@@ -544,10 +544,6 @@ impl CurveFamily {
             },
         }
     }
-
-    pub(crate) fn evaluate_raw(self, params: &[f64], x: f64) -> f64 {
-        models::evaluate_raw(self, params, x)
-    }
 }
 
 impl fmt::Display for CurveFamily {

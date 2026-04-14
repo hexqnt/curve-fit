@@ -73,7 +73,7 @@ fn curve_objective_arrhenius_is_consistent_across_levels() {
     let probe_params = [1.2, 0.5];
     let y_values = x_values
         .iter()
-        .map(|&x| models::evaluate_raw(CurveFamily::Arrhenius, &true_params, x))
+        .map(|&x| models::value_at(CurveFamily::Arrhenius, &true_params, x))
         .collect::<Vec<_>>();
 
     let term = models::DataTerm::new(
@@ -136,7 +136,7 @@ fn curve_objective_emg_matches_numerical_derivatives() {
     let probe_params = [1.2, 0.1, 0.5, 0.4, 0.0];
     let y_values = x_values
         .iter()
-        .map(|&x| models::evaluate_raw(CurveFamily::Emg, &true_params, x))
+        .map(|&x| models::value_at(CurveFamily::Emg, &true_params, x))
         .collect::<Vec<_>>();
 
     let term = models::DataTerm::new(CurveFamily::Emg, &x_values, &y_values, MsePredictionLoss);

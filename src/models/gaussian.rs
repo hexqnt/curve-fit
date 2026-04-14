@@ -8,7 +8,7 @@ use ndarray::Array2;
 /// - `mean` — центр пика,
 /// - `sigma` — ширина (параметризована положительным преобразованием).
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let amplitude = param[0];
     let mean = param[1];
     let sigma_raw = param[2];
@@ -17,16 +17,12 @@ pub(super) fn eval(param: &[f64], x: f64) -> f64 {
     amplitude * (-(delta * delta) / (2.0 * sigma * sigma)).exp()
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     let amplitude = param[0];
     let mean = param[1];
     let sigma_raw = param[2];
@@ -35,12 +31,10 @@ pub(super) fn accumulate_gradient<L>(
     let mut index = 0;
     while index < x_values.len() {
         let x = x_values[index];
-        let y = y_values[index];
         let c2 = sigma * sigma;
         let delta = x - mean;
         let exp_part = (-(delta * delta) / (2.0 * c2)).exp();
-        let model = amplitude * exp_part;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
         let d_model_d_a = exp_part;
         let d_model_d_b = amplitude * exp_part * delta / c2;
         let d_model_d_c = amplitude * exp_part * delta * delta / (c2 * sigma);
@@ -52,14 +46,11 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     _x_values: &[f64],
-    _y_values: &[f64],
     _param: &[f64],
-    _loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    _value_first: &[f64],
+    _value_second: &[f64],
+) -> Option<Array2<f64>> {
     None
 }

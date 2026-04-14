@@ -1,6 +1,4 @@
-use super::common::{
-    is_finite_non_negative, positive_x, scale_and_mirror_upper_hessian, stabilize_hessian,
-};
+use super::common::{is_finite_non_negative, positive_x, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
 
 /// Вычисляет кривую Аррениуса:
@@ -11,48 +9,39 @@ use ndarray::Array2;
 ///
 /// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
-pub(super) fn eval(param: &[f64], x: f64) -> f64 {
+pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let x = positive_x(x);
     let prefactor = param[0];
     let temp_coeff = param[1];
     prefactor * (temp_coeff / x).exp()
 }
 
-pub(super) fn accumulate_gradient<L>(
+pub(super) fn add_value_grad(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
+    value_first: &[f64],
     gradient: &mut [f64],
-) where
-    L: super::PredictionLoss,
-{
-    debug_assert_eq!(x_values.len(), y_values.len());
+) {
     let prefactor = param[0];
     let temp_coeff = param[1];
 
     let mut index = 0;
     while index < x_values.len() {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
         let exp_term = (temp_coeff / x).exp();
-        let model = prefactor * exp_term;
-        let residual = loss.d_prediction(model, y);
+        let residual = value_first[index];
         gradient[0] += residual * exp_term;
         gradient[1] += residual * (prefactor * exp_term / x);
         index += 1;
     }
 }
 
-pub(super) fn analytic_hessian<L>(
+pub(super) fn add_value_grad_raw_hessian(
     x_values: &[f64],
-    y_values: &[f64],
     param: &[f64],
-    loss: &L,
-) -> Option<Array2<f64>>
-where
-    L: super::PredictionLoss,
-{
+    value_first: &[f64],
+    value_second: &[f64],
+) -> Option<Array2<f64>> {
     if param.len() != 2 {
         return None;
     }
@@ -66,17 +55,16 @@ where
     let mut index = 0;
     while index < sample_count {
         let x = positive_x(x_values[index]);
-        let y = y_values[index];
         let exp_term = (temp_coeff / x).exp();
         let inv_x = 1.0 / x;
-        let model = prefactor * exp_term;
+        let model = value_at(param, x);
         if !model.is_finite() {
             return None;
         }
 
-        let loss_first = loss.d_prediction(model, y);
-        let loss_second = loss.d2_prediction(model, y);
-        if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
+        let value_first = value_first[index];
+        let value_second = value_second[index];
+        if !value_first.is_finite() || !is_finite_non_negative(value_second) {
             return None;
         }
 
@@ -85,20 +73,19 @@ where
         let d2_model_dadb = exp_term * inv_x;
         let d2_model_dbdb = prefactor * exp_term * inv_x * inv_x;
 
-        hessian[[0, 0]] += loss_second * jac_a * jac_a;
-        hessian[[0, 1]] += loss_second * jac_a * jac_b + loss_first * d2_model_dadb;
-        hessian[[1, 1]] += loss_second * jac_b * jac_b + loss_first * d2_model_dbdb;
+        hessian[[0, 0]] += value_second * jac_a * jac_a;
+        hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;
+        hessian[[1, 1]] += value_second * jac_b * jac_b + value_first * d2_model_dbdb;
         index += 1;
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
-    stabilize_hessian(&mut hessian);
     Some(hessian)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eval;
+    use super::value_at;
     use crate::domain::CurveFamily;
     use crate::models::test_support::{
         assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
@@ -106,7 +93,7 @@ mod tests {
 
     #[test]
     fn value_matches_known_example() {
-        let value = eval(&[1.2, 0.5], 2.0);
+        let value = value_at(&[1.2, 0.5], 2.0);
         assert_near(value, 1.2 * (0.25_f64).exp(), 1e-12);
     }
 
