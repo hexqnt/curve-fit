@@ -41,23 +41,21 @@ pub(super) fn accumulate_gradient<L>(
     _x_values: &[f64],
     _y_values: &[f64],
     _param: &[f64],
-    _loss_derivative_from_prediction: &mut L,
+    _loss: &L,
     _gradient: &mut [f64],
 ) where
-    L: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
 }
 
-pub(super) fn analytic_hessian<L1, L2>(
+pub(super) fn analytic_hessian<L>(
     _x_values: &[f64],
     _y_values: &[f64],
     _param: &[f64],
-    _loss_derivative_from_prediction: &mut L1,
-    _loss_second_derivative_from_prediction: &mut L2,
+    _loss: &L,
 ) -> Option<Array2<f64>>
 where
-    L1: FnMut(f64, f64) -> f64,
-    L2: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     None
 }

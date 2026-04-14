@@ -1,5 +1,9 @@
 use super::common::HESSIAN_DIAGONAL_JITTER;
-use super::{GradientComputation, accumulate_gradient, analytic_hessian, evaluate_raw};
+use super::{
+    GradientComputation, PredictionLoss, accumulate_gradient, analytic_hessian, evaluate_raw,
+    objective_value, objective_value_grad, objective_value_grad_hessian,
+    objective_value_grad_raw_hessian,
+};
 use crate::domain::CurveFamily;
 use ndarray::Array2;
 
@@ -7,8 +11,9 @@ const GRADIENT_REL_STEP: f64 = 1e-6;
 const GRADIENT_MIN_STEP: f64 = 1e-7;
 const HESSIAN_REL_STEP: f64 = 2e-4;
 const HESSIAN_MIN_STEP: f64 = 1e-6;
+const OBJECTIVE_VALUE_EPS: f64 = 1e-12;
 
-fn assert_near(actual: f64, expected: f64, epsilon: f64) {
+pub(super) fn assert_near(actual: f64, expected: f64, epsilon: f64) {
     let delta = (actual - expected).abs();
     assert!(
         delta <= epsilon,
@@ -29,6 +34,22 @@ fn soft_l1_derivative(prediction: f64, target: f64) -> f64 {
 fn soft_l1_second_derivative(prediction: f64, target: f64) -> f64 {
     let residual = prediction - target;
     2.0 / (1.0 + residual * residual).powf(1.5)
+}
+
+struct SoftL1Loss;
+
+impl PredictionLoss for SoftL1Loss {
+    fn value(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_value(prediction, target)
+    }
+
+    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_derivative(prediction, target)
+    }
+
+    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_second_derivative(prediction, target)
+    }
 }
 
 fn mean_soft_l1_cost(
@@ -124,7 +145,7 @@ where
     hessian
 }
 
-fn assert_family_gradient_and_hessian_match_numerical_reference(
+pub(super) fn assert_family_gradient_and_hessian_match_numerical_reference(
     family: CurveFamily,
     x_values: &[f64],
     true_params: &[f64],
@@ -137,14 +158,80 @@ fn assert_family_gradient_and_hessian_match_numerical_reference(
         .map(|&x| evaluate_raw(family, true_params, x))
         .collect::<Vec<_>>();
 
+    let loss = SoftL1Loss;
+    let objective_value = objective_value(family, x_values, &y_values, probe_params, &loss);
+
+    let mut objective_grad = vec![0.0; probe_params.len()];
+    let (objective_value_from_grad, objective_mode_from_grad) = objective_value_grad(
+        family,
+        x_values,
+        &y_values,
+        probe_params,
+        &loss,
+        &mut objective_grad,
+    );
+    assert_eq!(objective_mode_from_grad, GradientComputation::Analytic);
+
+    let mut objective_grad_with_hessian = vec![0.0; probe_params.len()];
+    let (objective_value_from_hessian, objective_mode_from_hessian, objective_hessian) =
+        objective_value_grad_hessian(
+            family,
+            x_values,
+            &y_values,
+            probe_params,
+            &loss,
+            &mut objective_grad_with_hessian,
+        );
+    assert_eq!(objective_mode_from_hessian, GradientComputation::Analytic);
+    assert_near(
+        objective_value,
+        objective_value_from_grad,
+        OBJECTIVE_VALUE_EPS,
+    );
+    assert_near(
+        objective_value,
+        objective_value_from_hessian,
+        OBJECTIVE_VALUE_EPS,
+    );
+    for index in 0..probe_params.len() {
+        assert_near(
+            objective_grad[index],
+            objective_grad_with_hessian[index],
+            gradient_epsilon,
+        );
+    }
+
+    let mut raw_grad = vec![0.0; probe_params.len()];
+    let (_, _, raw_hessian) = objective_value_grad_raw_hessian(
+        family,
+        x_values,
+        &y_values,
+        probe_params,
+        &loss,
+        &mut raw_grad,
+    );
+    for row in 0..probe_params.len() {
+        for column in 0..probe_params.len() {
+            assert_near(
+                raw_hessian[[row, column]],
+                raw_hessian[[column, row]],
+                hessian_epsilon,
+            );
+            assert_near(
+                objective_hessian[[row, column]],
+                objective_hessian[[column, row]],
+                hessian_epsilon,
+            );
+        }
+    }
+
     let mut analytic_gradient = vec![0.0; probe_params.len()];
-    let mut loss_derivative = |prediction: f64, target: f64| soft_l1_derivative(prediction, target);
     let mode = accumulate_gradient(
         family,
         x_values,
         &y_values,
         probe_params,
-        &mut loss_derivative,
+        &loss,
         &mut analytic_gradient,
     );
     assert_eq!(mode, GradientComputation::Analytic);
@@ -166,18 +253,8 @@ fn assert_family_gradient_and_hessian_match_numerical_reference(
         );
     }
 
-    let mut loss_first = |prediction: f64, target: f64| soft_l1_derivative(prediction, target);
-    let mut loss_second =
-        |prediction: f64, target: f64| soft_l1_second_derivative(prediction, target);
-    let analytic_hessian = analytic_hessian(
-        family,
-        x_values,
-        &y_values,
-        probe_params,
-        &mut loss_first,
-        &mut loss_second,
-    )
-    .expect("analytic hessian must be available");
+    let analytic_hessian = analytic_hessian(family, x_values, &y_values, probe_params, &loss)
+        .expect("analytic hessian must be available");
 
     let numerical_hessian = numerical_hessian_from_cost(probe_params, |param| {
         mean_soft_l1_cost(family, x_values, &y_values, param)
@@ -192,148 +269,4 @@ fn assert_family_gradient_and_hessian_match_numerical_reference(
             );
         }
     }
-}
-
-#[test]
-fn polynomial_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Linear,
-        &[-1.0, 0.0, 2.0, 3.5],
-        &[1.5, -0.25],
-        &[0.3, -0.7],
-        2e-5,
-        2e-4,
-    );
-}
-
-#[test]
-fn inverse_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Inverse,
-        &[1.0, 2.0, 4.0, 8.0],
-        &[1.0, 0.5],
-        &[0.9, 0.3],
-        2e-5,
-        2e-4,
-    );
-}
-
-#[test]
-fn exponential_basic_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::ExponentialBasic,
-        &[-1.0, -0.2, 0.3, 1.1, 2.0],
-        &[0.8, 1.4, 0.6],
-        &[0.5, 1.1, 0.3],
-        2e-5,
-        3e-4,
-    );
-}
-
-#[test]
-fn exponential_linear_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::ExponentialLinear,
-        &[-1.2, -0.5, 0.0, 0.7, 1.4],
-        &[1.4, 0.35, -0.4, 0.2],
-        &[1.0, 0.2, -0.2, 0.0],
-        3e-5,
-        6e-4,
-    );
-}
-
-#[test]
-fn arrhenius_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Arrhenius,
-        &[0.4, 0.8, 1.4, 2.5, 4.0],
-        &[1.5, 0.9],
-        &[1.2, 0.5],
-        2e-5,
-        3e-4,
-    );
-}
-
-#[test]
-fn power_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Power,
-        &[0.3, 0.8, 1.2, 2.5, 4.0],
-        &[1.1, 0.8],
-        &[0.8, 0.5],
-        3e-5,
-        4e-4,
-    );
-}
-
-#[test]
-fn logistic_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Logistic,
-        &[-2.0, -1.0, -0.3, 0.4, 1.1, 2.0],
-        &[2.2, 1.1, 0.3],
-        &[1.8, 0.8, -0.1],
-        3e-5,
-        6e-4,
-    );
-}
-
-#[test]
-fn gompertz_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Gompertz,
-        &[-1.5, -0.8, -0.2, 0.6, 1.4, 2.3],
-        &[1.9, 0.9, 0.2],
-        &[1.4, 0.6, -0.2],
-        4e-5,
-        8e-4,
-    );
-}
-
-#[test]
-fn hyperbolic_tangent_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::HyperbolicTangent,
-        &[-2.0, -1.0, -0.2, 0.7, 1.6, 2.4],
-        &[1.7, 0.9, 0.4, -0.3],
-        &[1.2, 0.6, 0.1, -0.1],
-        4e-5,
-        1e-3,
-    );
-}
-
-#[test]
-fn arctangent_step_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::ArctangentStep,
-        &[-2.2, -1.3, -0.5, 0.2, 1.1, 2.1],
-        &[2.1, 0.8, 0.3, 0.4],
-        &[1.7, 0.5, -0.2, 0.1],
-        4e-5,
-        1e-3,
-    );
-}
-
-#[test]
-fn softplus_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::Softplus,
-        &[-2.0, -1.1, -0.4, 0.3, 1.0, 1.9],
-        &[1.3, 0.7, 0.2, 0.2],
-        &[1.0, 0.5, -0.1, 0.0],
-        4e-5,
-        1e-3,
-    );
-}
-
-#[test]
-fn bi_exponential_derivatives_match_numerical_reference() {
-    assert_family_gradient_and_hessian_match_numerical_reference(
-        CurveFamily::BiExponential,
-        &[-0.8, -0.1, 0.3, 0.9, 1.8, 2.7],
-        &[1.2, 0.7, 0.5, 0.25, -0.3],
-        &[0.9, 0.4, 0.4, 0.1, -0.1],
-        5e-5,
-        2e-3,
-    );
 }

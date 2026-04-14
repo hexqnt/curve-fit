@@ -21,10 +21,10 @@ pub(super) fn accumulate_gradient<L>(
     x_values: &[f64],
     y_values: &[f64],
     param: &[f64],
-    loss_derivative_from_prediction: &mut L,
+    loss: &L,
     gradient: &mut [f64],
 ) where
-    L: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
     let offset = param[0];
@@ -35,23 +35,21 @@ pub(super) fn accumulate_gradient<L>(
         let x = positive_x(x_values[index]);
         let y = y_values[index];
         let model = offset + scale / x;
-        let residual = loss_derivative_from_prediction(model, y);
+        let residual = loss.d_prediction(model, y);
         gradient[0] += residual;
         gradient[1] += residual / x;
         index += 1;
     }
 }
 
-pub(super) fn analytic_hessian<L1, L2>(
+pub(super) fn analytic_hessian<L>(
     x_values: &[f64],
     y_values: &[f64],
     param: &[f64],
-    _loss_derivative_from_prediction: &mut L1,
-    loss_second_derivative_from_prediction: &mut L2,
+    loss: &L,
 ) -> Option<Array2<f64>>
 where
-    L1: FnMut(f64, f64) -> f64,
-    L2: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     if param.len() != 2 {
         return None;
@@ -73,7 +71,7 @@ where
             return None;
         }
 
-        let weight = loss_second_derivative_from_prediction(model, y);
+        let weight = loss.d2_prediction(model, y);
         if !is_finite_non_negative(weight) {
             return None;
         }
@@ -87,4 +85,31 @@ where
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
     stabilize_hessian(&mut hessian);
     Some(hessian)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eval;
+    use crate::domain::CurveFamily;
+    use crate::models::test_support::{
+        assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
+    };
+
+    #[test]
+    fn value_matches_known_example() {
+        let value = eval(&[1.25, -0.6], 2.0);
+        assert_near(value, 0.95, 1e-12);
+    }
+
+    #[test]
+    fn derivatives_match_numerical_reference() {
+        assert_family_gradient_and_hessian_match_numerical_reference(
+            CurveFamily::Inverse,
+            &[1.0, 2.0, 4.0, 8.0],
+            &[1.0, 0.5],
+            &[0.9, 0.3],
+            2e-5,
+            2e-4,
+        );
+    }
 }

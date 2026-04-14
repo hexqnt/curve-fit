@@ -1,15 +1,16 @@
 #[cfg(feature = "portable-simd")]
 use super::simd;
 use super::{
-    CurveProblem, DEFAULT_SPLINE_KNOTS, FitError, IncrementalSplineFitRunner,
-    IncrementalSplineFitStep, MetricQuantization, MetricQuantizationDecimalPlaces,
-    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
-    SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy, approximate_spline_knots,
-    build_spline_initial_curve_from_knot_y, build_spline_result_from_knot_y,
-    calculate_iteration_metrics, calculate_iteration_metrics_with_quantization, calculate_metrics,
-    evaluate_linear_spline, expanded_spline_curve_x_bounds, fit_akima_spline,
-    fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
-    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config,
+    CurveProblem, CurveProblemPredictionLoss, DEFAULT_SPLINE_KNOTS, FitError,
+    IncrementalSplineFitRunner, IncrementalSplineFitStep, MetricQuantization,
+    MetricQuantizationDecimalPlaces, OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy,
+    SplineExtrapolation, SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy,
+    approximate_spline_knots, build_spline_initial_curve_from_knot_y,
+    build_spline_result_from_knot_y, calculate_iteration_metrics,
+    calculate_iteration_metrics_with_quantization, calculate_metrics, evaluate_linear_spline,
+    expanded_spline_curve_x_bounds, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
+    fit_curve_with_optimizer_config, fit_curve_with_progress,
+    fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
     fit_linear_spline_with_config, fit_monotone_cubic_spline, fit_natural_cubic_spline,
     sorted_points_with_duplicate_policy,
@@ -18,6 +19,25 @@ use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
     NewtonCgConfig, OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
 };
+use crate::models::{self, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss};
+
+#[derive(Clone, Copy)]
+struct MsePredictionLoss;
+
+impl PredictionLoss for MsePredictionLoss {
+    fn value(&self, prediction: f64, target: f64) -> f64 {
+        let residual = prediction - target;
+        residual * residual
+    }
+
+    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
+        2.0 * (prediction - target)
+    }
+
+    fn d2_prediction(&self, _prediction: f64, _target: f64) -> f64 {
+        2.0
+    }
+}
 
 fn build_points<F>(xs: &[f64], f: F) -> Points
 where
@@ -44,6 +64,184 @@ fn quantization(decimal_places: u8) -> MetricQuantization {
         MetricQuantizationDecimalPlaces::try_new(decimal_places)
             .expect("test decimal places must be valid"),
     )
+}
+
+#[test]
+fn curve_objective_arrhenius_is_consistent_across_levels() {
+    let x_values = [0.4, 0.8, 1.4, 2.5, 4.0];
+    let true_params = [1.5, 0.9];
+    let probe_params = [1.2, 0.5];
+    let y_values = x_values
+        .iter()
+        .map(|&x| models::evaluate_raw(CurveFamily::Arrhenius, &true_params, x))
+        .collect::<Vec<_>>();
+
+    let term = models::DataTerm::new(
+        CurveFamily::Arrhenius,
+        &x_values,
+        &y_values,
+        MsePredictionLoss,
+    );
+    let objective = models::CurveObjective::new(probe_params.len(), term);
+
+    let value = objective.value(&probe_params);
+    let (value_from_grad, gradient) = objective.value_grad(&probe_params);
+    let (value_from_raw_hessian, gradient_from_raw_hessian, raw_hessian) =
+        objective.value_grad_raw_hessian(&probe_params);
+    let (value_from_hessian, gradient_from_hessian, hessian) =
+        objective.value_grad_hessian(&probe_params);
+
+    assert_near(value, value_from_grad, 1e-12);
+    assert_near(value, value_from_raw_hessian, 1e-12);
+    assert_near(value, value_from_hessian, 1e-12);
+    for index in 0..probe_params.len() {
+        assert_near(gradient[index], gradient_from_raw_hessian[index], 1e-10);
+        assert_near(gradient[index], gradient_from_hessian[index], 1e-10);
+    }
+
+    let mut numerical_gradient = vec![0.0; probe_params.len()];
+    models::central_diff_gradient_from_value(
+        &probe_params,
+        1e-6,
+        1e-7,
+        |param| objective.value(param),
+        &mut numerical_gradient,
+    );
+    for index in 0..probe_params.len() {
+        assert_near(gradient[index], numerical_gradient[index], 2e-5);
+    }
+
+    let numerical_hessian =
+        models::central_diff_hessian_from_gradient(&probe_params, 2e-4, 1e-6, |param, output| {
+            let (_, gradient_probe) = objective.value_grad(param);
+            output.copy_from_slice(&gradient_probe);
+        });
+    for row in 0..probe_params.len() {
+        for column in 0..probe_params.len() {
+            assert_near(raw_hessian[[row, column]], raw_hessian[[column, row]], 3e-4);
+            assert_near(hessian[[row, column]], hessian[[column, row]], 3e-4);
+            assert_near(
+                hessian[[row, column]],
+                numerical_hessian[[row, column]],
+                3e-4,
+            );
+        }
+    }
+}
+
+#[test]
+fn curve_objective_emg_matches_numerical_derivatives() {
+    let x_values = [-1.5, -0.8, -0.2, 0.3, 1.0, 1.8];
+    let true_params = [1.4, 0.2, 0.6, 0.5, 0.1];
+    let probe_params = [1.2, 0.1, 0.5, 0.4, 0.0];
+    let y_values = x_values
+        .iter()
+        .map(|&x| models::evaluate_raw(CurveFamily::Emg, &true_params, x))
+        .collect::<Vec<_>>();
+
+    let term = models::DataTerm::new(CurveFamily::Emg, &x_values, &y_values, MsePredictionLoss);
+    let objective = models::CurveObjective::new(probe_params.len(), term);
+
+    let value = objective.value(&probe_params);
+    let (value_from_grad, gradient) = objective.value_grad(&probe_params);
+    let (value_from_hessian, gradient_from_hessian, hessian) =
+        objective.value_grad_hessian(&probe_params);
+
+    assert_near(value, value_from_grad, 1e-12);
+    assert_near(value, value_from_hessian, 1e-12);
+    for index in 0..probe_params.len() {
+        assert_near(gradient[index], gradient_from_hessian[index], 1e-9);
+    }
+
+    let mut numerical_gradient = vec![0.0; probe_params.len()];
+    models::central_diff_gradient_from_value(
+        &probe_params,
+        1e-6,
+        1e-7,
+        |param| objective.value(param),
+        &mut numerical_gradient,
+    );
+    for index in 0..probe_params.len() {
+        assert_near(gradient[index], numerical_gradient[index], 5e-5);
+    }
+
+    let numerical_hessian =
+        models::central_diff_hessian_from_gradient(&probe_params, 2e-4, 1e-6, |param, output| {
+            let (_, gradient_probe) = objective.value_grad(param);
+            output.copy_from_slice(&gradient_probe);
+        });
+    for row in 0..probe_params.len() {
+        for column in 0..probe_params.len() {
+            assert_near(
+                hessian[[row, column]],
+                numerical_hessian[[row, column]],
+                2e-3,
+            );
+        }
+    }
+}
+
+#[test]
+fn prediction_loss_adapter_respects_metric_and_quantization() {
+    let points = build_points(&[0.0, 1.0], |_| 0.0);
+    let prediction = 1.225;
+    let target = 0.0;
+    let raw_residual = prediction - target;
+    let quantized_residual = 1.23;
+
+    for metric in OptimizationLossMetric::ALL {
+        let raw_problem = CurveProblem::new_with_metric_quantization(
+            CurveFamily::Linear,
+            &points,
+            metric,
+            MetricQuantization::Disabled,
+        );
+        let quantized_problem = CurveProblem::new_with_metric_quantization(
+            CurveFamily::Linear,
+            &points,
+            metric,
+            quantization(2),
+        );
+
+        let raw_loss = CurveProblemPredictionLoss {
+            problem: &raw_problem,
+        };
+        let quantized_loss = CurveProblemPredictionLoss {
+            problem: &quantized_problem,
+        };
+
+        assert_near(
+            raw_loss.value(prediction, target),
+            metric.value_from_residual(raw_residual),
+            1e-12,
+        );
+        assert_near(
+            raw_loss.d_prediction(prediction, target),
+            metric.residual_derivative(raw_residual),
+            1e-12,
+        );
+        assert_near(
+            raw_loss.d2_prediction(prediction, target),
+            metric.residual_second_derivative(raw_residual),
+            1e-12,
+        );
+
+        assert_near(
+            quantized_loss.value(prediction, target),
+            metric.value_from_residual(quantized_residual),
+            1e-12,
+        );
+        assert_near(
+            quantized_loss.d_prediction(prediction, target),
+            metric.residual_derivative(quantized_residual),
+            1e-12,
+        );
+        assert_near(
+            quantized_loss.d2_prediction(prediction, target),
+            metric.residual_second_derivative(quantized_residual),
+            1e-12,
+        );
+    }
 }
 
 #[test]

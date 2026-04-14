@@ -27,10 +27,10 @@ pub(super) fn accumulate_gradient<L>(
     x_values: &[f64],
     y_values: &[f64],
     param: &[f64],
-    loss_derivative_from_prediction: &mut L,
+    loss: &L,
     gradient: &mut [f64],
 ) where
-    L: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
     let top = param[0];
@@ -48,7 +48,7 @@ pub(super) fn accumulate_gradient<L>(
         let den = 1.0 + pow;
         let inv_den = 1.0 / den;
         let model = bottom + (top - bottom) * inv_den;
-        let residual = loss_derivative_from_prediction(model, y);
+        let residual = loss.d_prediction(model, y);
         let d_pow_db = pow * ratio.ln();
         let d_pow_dc = -pow * hill_slope / ec50;
         let d_model_da = inv_den;
@@ -64,16 +64,14 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L1, L2>(
+pub(super) fn analytic_hessian<L>(
     _x_values: &[f64],
     _y_values: &[f64],
     _param: &[f64],
-    _loss_derivative_from_prediction: &mut L1,
-    _loss_second_derivative_from_prediction: &mut L2,
+    _loss: &L,
 ) -> Option<Array2<f64>>
 where
-    L1: FnMut(f64, f64) -> f64,
-    L2: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     None
 }

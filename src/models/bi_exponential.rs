@@ -21,10 +21,10 @@ pub(super) fn accumulate_gradient<L>(
     x_values: &[f64],
     y_values: &[f64],
     param: &[f64],
-    loss_derivative_from_prediction: &mut L,
+    loss: &L,
     gradient: &mut [f64],
 ) where
-    L: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     debug_assert_eq!(x_values.len(), y_values.len());
     let a1 = param[0];
@@ -40,7 +40,7 @@ pub(super) fn accumulate_gradient<L>(
         let exp1 = (-k1 * x).exp();
         let exp2 = (-k2 * x).exp();
         let model = a1 * exp1 + a2 * exp2 + offset;
-        let residual = loss_derivative_from_prediction(model, y);
+        let residual = loss.d_prediction(model, y);
 
         gradient[0] += residual * exp1;
         gradient[1] += residual * (-a1 * x * exp1);
@@ -51,16 +51,14 @@ pub(super) fn accumulate_gradient<L>(
     }
 }
 
-pub(super) fn analytic_hessian<L1, L2>(
+pub(super) fn analytic_hessian<L>(
     x_values: &[f64],
     y_values: &[f64],
     param: &[f64],
-    loss_derivative_from_prediction: &mut L1,
-    loss_second_derivative_from_prediction: &mut L2,
+    loss: &L,
 ) -> Option<Array2<f64>>
 where
-    L1: FnMut(f64, f64) -> f64,
-    L2: FnMut(f64, f64) -> f64,
+    L: super::PredictionLoss,
 {
     if param.len() != 5 {
         return None;
@@ -86,8 +84,8 @@ where
             return None;
         }
 
-        let loss_first = loss_derivative_from_prediction(model, y);
-        let loss_second = loss_second_derivative_from_prediction(model, y);
+        let loss_first = loss.d_prediction(model, y);
+        let loss_second = loss.d2_prediction(model, y);
         if !loss_first.is_finite() || !is_finite_non_negative(loss_second) {
             return None;
         }
@@ -128,4 +126,32 @@ where
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
     stabilize_hessian(&mut hessian);
     Some(hessian)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eval;
+    use crate::domain::CurveFamily;
+    use crate::models::test_support::{
+        assert_family_gradient_and_hessian_match_numerical_reference, assert_near,
+    };
+
+    #[test]
+    fn value_matches_known_example() {
+        let value = eval(&[1.0, 0.4, 0.5, 0.2, -0.1], 1.5);
+        let expected = (-0.6_f64).exp() + 0.5 * (-0.3_f64).exp() - 0.1;
+        assert_near(value, expected, 1e-12);
+    }
+
+    #[test]
+    fn derivatives_match_numerical_reference() {
+        assert_family_gradient_and_hessian_match_numerical_reference(
+            CurveFamily::BiExponential,
+            &[-0.8, -0.1, 0.3, 0.9, 1.8, 2.7],
+            &[1.2, 0.7, 0.5, 0.25, -0.3],
+            &[0.9, 0.4, 0.4, 0.1, -0.1],
+            5e-5,
+            2e-3,
+        );
+    }
 }

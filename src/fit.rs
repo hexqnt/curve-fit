@@ -19,7 +19,7 @@ use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
     NewtonCgConfig, OptimizerConfig, Points, SgdConfig, SteepestDescentConfig,
 };
-use crate::models::{self, GradientComputation};
+use crate::models::{self, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss};
 
 mod curve;
 mod simd;
@@ -136,8 +136,6 @@ const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
 const HESSIAN_FD_REL_STEP: f64 = 1e-4;
 const HESSIAN_FD_MIN_STEP: f64 = 1e-6;
 pub(crate) const HESSIAN_DIAGONAL_JITTER: f64 = models::HESSIAN_DIAGONAL_JITTER;
-const GRADIENT_FD_REL_STEP: f64 = 1e-5;
-const GRADIENT_FD_MIN_STEP: f64 = 1e-7;
 
 fn positive_x(value: f64) -> f64 {
     models::positive_x(value)
@@ -163,12 +161,6 @@ fn array1_to_vec(values: &Array1<f64>) -> Vec<f64> {
 fn array1_as_slice(values: &Array1<f64>) -> &[f64] {
     values
         .as_slice()
-        .expect("Array1 parameters must have contiguous memory layout")
-}
-
-fn array1_as_slice_mut(values: &mut Array1<f64>) -> &mut [f64] {
-    values
-        .as_slice_mut()
         .expect("Array1 parameters must have contiguous memory layout")
 }
 
@@ -410,6 +402,142 @@ struct CurveProblem {
     residual_quantizer: ResidualQuantizer,
 }
 
+#[derive(Clone, Copy)]
+struct CurveProblemPredictionLoss<'a> {
+    problem: &'a CurveProblem,
+}
+
+impl PredictionLoss for CurveProblemPredictionLoss<'_> {
+    fn value(&self, prediction: f64, target: f64) -> f64 {
+        self.problem.loss_value_from_prediction(prediction, target)
+    }
+
+    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
+        self.problem
+            .loss_derivative_from_prediction(prediction, target)
+    }
+
+    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
+        self.problem
+            .loss_second_derivative_from_prediction(prediction, target)
+    }
+}
+
+struct CurveProblemObjective<'a> {
+    problem: &'a CurveProblem,
+}
+
+impl CurveProblemObjective<'_> {
+    fn simd_enabled(&self) -> bool {
+        matches!(
+            self.problem.metric_quantization,
+            MetricQuantization::Disabled
+        )
+    }
+
+    fn value(&self, param: &[f64]) -> f64 {
+        if self.simd_enabled() && self.problem.family.is_polynomial() {
+            return simd::polynomial_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+        }
+        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
+            return simd::inverse_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+        }
+
+        let loss = CurveProblemPredictionLoss {
+            problem: self.problem,
+        };
+        let term = models::DataTerm::new(
+            self.problem.family,
+            self.problem.point_x.as_ref(),
+            self.problem.point_y.as_ref(),
+            loss,
+        );
+        let objective = models::CurveObjective::new(self.problem.family.parameter_count(), term);
+        objective.value(param)
+    }
+
+    fn value_grad(&self, param: &[f64]) -> (f64, Vec<f64>) {
+        if self.simd_enabled() && self.problem.family.is_polynomial() {
+            let mut gradient = vec![0.0; self.problem.family.parameter_count()];
+            simd::accumulate_polynomial_gradient(
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                param,
+                self.problem.loss_metric,
+                &mut gradient,
+            );
+            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
+            for value in &mut gradient {
+                *value *= sample_scale;
+            }
+            let value = simd::polynomial_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            return (value, gradient);
+        }
+        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
+            let mut gradient = vec![0.0; self.problem.family.parameter_count()];
+            simd::accumulate_inverse_gradient(
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                param,
+                self.problem.loss_metric,
+                &mut gradient,
+            );
+            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
+            for value in &mut gradient {
+                *value *= sample_scale;
+            }
+            let value = simd::inverse_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            return (value, gradient);
+        }
+
+        let loss = CurveProblemPredictionLoss {
+            problem: self.problem,
+        };
+        let term = models::DataTerm::new(
+            self.problem.family,
+            self.problem.point_x.as_ref(),
+            self.problem.point_y.as_ref(),
+            loss,
+        );
+        let objective = models::CurveObjective::new(self.problem.family.parameter_count(), term);
+        objective.value_grad(param)
+    }
+
+    fn value_grad_hessian(&self, param: &[f64]) -> (f64, Vec<f64>, Array2<f64>) {
+        let loss = CurveProblemPredictionLoss {
+            problem: self.problem,
+        };
+        let term = models::DataTerm::new(
+            self.problem.family,
+            self.problem.point_x.as_ref(),
+            self.problem.point_y.as_ref(),
+            loss,
+        );
+        let objective = models::CurveObjective::new(self.problem.family.parameter_count(), term);
+        objective.value_grad_hessian(param)
+    }
+}
+
 impl CurveProblem {
     fn new_with_metric_quantization(
         family: CurveFamily,
@@ -456,39 +584,8 @@ impl CurveProblem {
             .residual_second_derivative(self.residual(predicted, observed))
     }
 
-    fn analytic_hessian_for_supported_families(&self, param: &Array1<f64>) -> Option<Array2<f64>> {
-        if matches!(self.loss_metric, OptimizationLossMetric::Mae) {
-            return None;
-        }
-
-        let param = array1_as_slice(param);
-        models::analytic_hessian(
-            self.family,
-            self.point_x.as_ref(),
-            self.point_y.as_ref(),
-            param,
-            |predicted, observed| self.loss_derivative_from_prediction(predicted, observed),
-            |predicted, observed| self.loss_second_derivative_from_prediction(predicted, observed),
-        )
-    }
-
-    fn numerical_gradient_from_cost(
-        &self,
-        param: &[f64],
-        gradient: &mut [f64],
-    ) -> Result<(), argmin::core::Error> {
-        let mut probe = vec_to_array1(param);
-        for index in 0..gradient.len() {
-            let step =
-                ((param[index].abs() + 1.0) * GRADIENT_FD_REL_STEP).max(GRADIENT_FD_MIN_STEP);
-            probe[index] = param[index] + step;
-            let cost_plus = CostFunction::cost(self, &probe)?;
-            probe[index] = param[index] - step;
-            let cost_minus = CostFunction::cost(self, &probe)?;
-            probe[index] = param[index];
-            gradient[index] = (cost_plus - cost_minus) / (2.0 * step);
-        }
-        Ok(())
+    fn objective(&self) -> CurveProblemObjective<'_> {
+        CurveProblemObjective { problem: self }
     }
 }
 
@@ -1622,48 +1719,12 @@ impl CostFunction for CurveProblem {
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
         let param = array1_as_slice(param);
-        if self.family.is_polynomial()
-            && matches!(self.metric_quantization, MetricQuantization::Disabled)
-        {
-            return Ok(simd::polynomial_cost(
-                param,
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                self.loss_metric,
-            ));
+        let value = self.objective().value(param);
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Ok(LARGE_COST)
         }
-
-        if self.family == CurveFamily::Inverse
-            && matches!(self.metric_quantization, MetricQuantization::Disabled)
-        {
-            return Ok(simd::inverse_cost(
-                param,
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                self.loss_metric,
-            ));
-        }
-
-        let sample_count = self.point_x.len() as f64;
-        let mut sum = 0.0;
-
-        let mut index = 0;
-        while index < self.point_x.len() {
-            let x = self.point_x[index];
-            let y = self.point_y[index];
-            let predicted = self.family.evaluate_raw(param, x);
-            let residual = self.residual(predicted, y);
-            if !residual.is_finite() {
-                return Ok(LARGE_COST);
-            }
-            sum += self.loss_value_from_prediction(predicted, y);
-            if !sum.is_finite() {
-                return Ok(LARGE_COST);
-            }
-            index += 1;
-        }
-
-        Ok(sum / sample_count)
     }
 }
 
@@ -1673,57 +1734,13 @@ impl Gradient for CurveProblem {
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
         let param = array1_as_slice(param);
-        let mut gradient = Array1::zeros(self.family.parameter_count());
-        let sample_scale = 1.0 / self.point_x.len() as f64;
-        let gradient_slice = array1_as_slice_mut(&mut gradient);
-
-        if self.family.is_polynomial()
-            && matches!(self.metric_quantization, MetricQuantization::Disabled)
-        {
-            simd::accumulate_polynomial_gradient(
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                param,
-                self.loss_metric,
-                gradient_slice,
-            );
-        } else if self.family == CurveFamily::Inverse
-            && matches!(self.metric_quantization, MetricQuantization::Disabled)
-        {
-            simd::accumulate_inverse_gradient(
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                param,
-                self.loss_metric,
-                gradient_slice,
-            );
-        } else {
-            let mode = models::accumulate_gradient(
-                self.family,
-                self.point_x.as_ref(),
-                self.point_y.as_ref(),
-                param,
-                |predicted, observed| self.loss_derivative_from_prediction(predicted, observed),
-                gradient_slice,
-            );
-            if matches!(mode, GradientComputation::NeedsNumerical) {
-                self.numerical_gradient_from_cost(param, gradient_slice)?;
-                // Далее применяется общий sample_scale, поэтому здесь возвращается сумма.
-                let sample_count = self.point_x.len() as f64;
-                for value in gradient_slice.iter_mut() {
-                    *value *= sample_count;
-                }
-            }
-        }
-
-        for value in gradient_slice.iter_mut() {
-            *value *= sample_scale;
+        let (_, mut gradient) = self.objective().value_grad(param);
+        for value in &mut gradient {
             if !value.is_finite() {
                 *value = LARGE_COST;
             }
         }
-
-        Ok(gradient)
+        Ok(vec_to_array1(&gradient))
     }
 }
 
@@ -1732,7 +1749,8 @@ impl Hessian for CurveProblem {
     type Hessian = Array2<f64>;
 
     fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
-        if let Some(hessian) = self.analytic_hessian_for_supported_families(param) {
+        if !matches!(self.loss_metric, OptimizationLossMetric::Mae) {
+            let (_, _, hessian) = self.objective().value_grad_hessian(array1_as_slice(param));
             return Ok(hessian);
         }
         numerical_hessian_from_gradient(self, param)
