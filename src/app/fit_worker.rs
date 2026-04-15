@@ -136,6 +136,7 @@ impl CurveFitApp {
                 }
                 Ok(FitWorkerMessage::Stopped) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.active_fit_points = None;
                     self.finalize_replay_after_fit_stopped();
                     if !self.discard_fit_worker_updates {
@@ -170,8 +171,10 @@ impl CurveFitApp {
                         );
                         self.finalize_replay_after_fit_completion();
                         self.fit_result = Some(result);
+                        self.complete_fit_timer_successfully();
                         self.status = Some(StatusMessage::FitCompleted);
                     } else {
+                        self.reset_fit_timer();
                         self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
@@ -192,8 +195,10 @@ impl CurveFitApp {
                         self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
                         self.finalize_replay_after_fit_completion();
                         self.spline_result = Some(result);
+                        self.complete_fit_timer_successfully();
                         self.status = Some(StatusMessage::FitCompleted);
                     } else {
+                        self.reset_fit_timer();
                         self.set_fit_stopped_status_if_fitting();
                     }
                     self.active_fit_points = None;
@@ -202,6 +207,7 @@ impl CurveFitApp {
                 }
                 Ok(FitWorkerMessage::Failed(error)) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.active_fit_points = None;
                     if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::Error(error));
@@ -214,6 +220,7 @@ impl CurveFitApp {
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.active_fit_points = None;
                     if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::Error(
@@ -315,6 +322,7 @@ impl CurveFitApp {
                             Ok(params) => params,
                             Err(error) => {
                                 self.fit_in_progress = false;
+                                self.reset_fit_timer();
                                 self.status = Some(StatusMessage::Error(error));
                                 self.active_fit_points = None;
                                 break;
@@ -345,6 +353,7 @@ impl CurveFitApp {
                         result.params = match normalization.denormalize_params(&result.params) {
                             Ok(params) => params,
                             Err(error) => {
+                                self.reset_fit_timer();
                                 self.status = Some(StatusMessage::Error(error));
                                 self.active_fit_points = None;
                                 break;
@@ -376,11 +385,13 @@ impl CurveFitApp {
                     self.upsert_parametric_replay_frame(result.iterations, result.params.clone());
                     self.finalize_replay_after_fit_completion();
                     self.fit_result = Some(result);
+                    self.complete_fit_timer_successfully();
                     self.status = Some(StatusMessage::FitCompleted);
                     break;
                 }
                 Ok(IncrementalFitStep::Cancelled) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
@@ -388,6 +399,7 @@ impl CurveFitApp {
                 }
                 Err(error) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.status = Some(StatusMessage::Error(error.to_string()));
                     self.active_fit_points = None;
                     break;
@@ -423,12 +435,14 @@ impl CurveFitApp {
                     self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
                     self.finalize_replay_after_fit_completion();
                     self.spline_result = Some(result);
+                    self.complete_fit_timer_successfully();
                     self.status = Some(StatusMessage::FitCompleted);
                     self.active_fit_points = None;
                     break;
                 }
                 Ok(IncrementalSplineFitStep::Cancelled) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
@@ -436,6 +450,7 @@ impl CurveFitApp {
                 }
                 Err(error) => {
                     self.fit_in_progress = false;
+                    self.reset_fit_timer();
                     self.status = Some(StatusMessage::Error(error.to_string()));
                     self.active_fit_points = None;
                     break;
@@ -671,6 +686,7 @@ impl CurveFitApp {
                 }
             };
             self.upsert_spline_replay_frame(0, Self::plot_points_from_pairs(initial_curve));
+            self.start_fit_timer();
             self.status = Some(StatusMessage::FittingInProgress);
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -703,6 +719,7 @@ impl CurveFitApp {
                         self.fit_in_progress = true;
                     }
                     Err(error) => {
+                        self.reset_fit_timer();
                         self.status = Some(StatusMessage::Error(error.to_string()));
                     }
                 }
@@ -769,6 +786,7 @@ impl CurveFitApp {
             metric_quantization,
         );
         self.upsert_parametric_replay_frame(0, initial_params.clone());
+        self.start_fit_timer();
         self.status = Some(StatusMessage::FittingInProgress);
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -805,6 +823,7 @@ impl CurveFitApp {
                     self.fit_in_progress = true;
                 }
                 Err(error) => {
+                    self.reset_fit_timer();
                     self.active_fit_points = None;
                     self.status = Some(StatusMessage::Error(error.to_string()));
                 }

@@ -747,6 +747,8 @@ pub struct CurveFitApp {
     fit_metric_quantization: MetricQuantization,
     fit_preview_params: Option<CurveParams>,
     fit_preview_iteration: Option<u64>,
+    fit_started_at: Option<Instant>,
+    last_fit_duration: Option<Duration>,
     fit_result: Option<FitResult>,
     spline_result: Option<SplineResult>,
     active_fit_points: Option<Points>,
@@ -971,8 +973,36 @@ impl CurveFitApp {
         )
     }
 
+    // Таймер относится только к одному запуску фита:
+    // новый старт сбрасывает прошлый замер, а при успехе фиксируется длительность.
+    fn start_fit_timer(&mut self) {
+        self.fit_started_at = Some(Instant::now());
+        self.last_fit_duration = None;
+    }
+
+    fn complete_fit_timer_successfully(&mut self) {
+        self.last_fit_duration = self
+            .fit_started_at
+            .take()
+            .map(|started_at| Instant::now().saturating_duration_since(started_at));
+    }
+
+    fn reset_fit_timer(&mut self) {
+        self.fit_started_at = None;
+        self.last_fit_duration = None;
+    }
+
+    fn format_fit_duration(duration: Duration) -> String {
+        if duration < Duration::from_secs(1) {
+            format!("{} ms", duration.as_millis())
+        } else {
+            format!("{:.2} s", duration.as_secs_f64())
+        }
+    }
+
     fn clear_fit_outputs(&mut self) {
         self.cancel_fit_and_discard_updates();
+        self.reset_fit_timer();
         self.fit_result = None;
         self.spline_result = None;
         self.active_fit_points = None;
@@ -1333,6 +1363,8 @@ impl Default for CurveFitApp {
             fit_metric_quantization: MetricQuantization::Disabled,
             fit_preview_params: None,
             fit_preview_iteration: None,
+            fit_started_at: None,
+            last_fit_duration: None,
             fit_result: None,
             spline_result: None,
             active_fit_points: None,

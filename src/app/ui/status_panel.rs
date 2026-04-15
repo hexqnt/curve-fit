@@ -1,4 +1,5 @@
 use super::*;
+use std::borrow::Cow;
 
 const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
 
@@ -106,7 +107,15 @@ pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {
         };
         ui.horizontal(|ui| {
             ui.colored_label(color, "●");
-            ui.label(status.text(app.ui_language));
+            let status_text = match (status, app.last_fit_duration) {
+                (StatusMessage::FitCompleted, Some(duration)) => Cow::Owned(format!(
+                    "{} ({})",
+                    status.text(app.ui_language),
+                    CurveFitApp::format_fit_duration(duration)
+                )),
+                _ => Cow::Borrowed(status.text(app.ui_language)),
+            };
+            ui.label(status_text.as_ref());
         });
     }
 }

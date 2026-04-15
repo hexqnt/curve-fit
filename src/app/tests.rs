@@ -1079,6 +1079,20 @@ fn successful_fit_starts_replay_from_first_frame() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
+fn successful_fit_records_duration() {
+    let mut app = make_linear_fit_app();
+
+    app.run_fit();
+    assert!(app.fit_in_progress);
+    wait_fit_completion(&mut app);
+
+    assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
+    assert!(app.last_fit_duration.is_some());
+    assert!(app.fit_started_at.is_none());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
 fn successful_fit_with_auto_replay_disabled_selects_last_iteration() {
     let mut app = make_linear_fit_app();
     app.replay.autoplay_on_fit = false;
@@ -1261,6 +1275,7 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
             rmse: 0.0,
             iterations: 1,
         }),
+        last_fit_duration: Some(std::time::Duration::from_millis(184)),
         status: Some(StatusMessage::FitCompleted),
         ..Default::default()
     };
@@ -1277,6 +1292,34 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
     app.invalidate_points_cache();
     app.refresh_status_after_points_edit();
     assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
+    assert_eq!(
+        app.last_fit_duration,
+        Some(std::time::Duration::from_millis(184))
+    );
+}
+
+#[test]
+fn clear_fit_outputs_resets_fit_duration_state() {
+    let mut app = CurveFitApp::default();
+    app.start_fit_timer();
+    app.last_fit_duration = Some(std::time::Duration::from_millis(42));
+
+    app.clear_fit_outputs();
+
+    assert!(app.fit_started_at.is_none());
+    assert!(app.last_fit_duration.is_none());
+}
+
+#[test]
+fn format_fit_duration_uses_expected_units_at_boundary() {
+    assert_eq!(
+        CurveFitApp::format_fit_duration(std::time::Duration::from_millis(999)),
+        "999 ms"
+    );
+    assert_eq!(
+        CurveFitApp::format_fit_duration(std::time::Duration::from_millis(1_000)),
+        "1.00 s"
+    );
 }
 
 #[test]
