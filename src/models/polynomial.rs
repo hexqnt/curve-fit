@@ -4,6 +4,9 @@ use ndarray::Array2;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+const MAX_POLYNOMIAL_PARAMS: usize = 10;
+const MAX_UPPER_HESSIAN_LEN: usize = MAX_POLYNOMIAL_PARAMS * (MAX_POLYNOMIAL_PARAMS + 1) / 2;
+
 /// Вычисляет полином в форме Горнера:
 /// `f(x) = p0 * x^n + p1 * x^(n-1) + ... + pn`,
 /// где `param = [p0, p1, ..., pn]` — коэффициенты от старшей степени к младшей.
@@ -62,6 +65,7 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    debug_assert!(gradient.len() <= MAX_POLYNOMIAL_PARAMS);
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -69,13 +73,15 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut accum = vec![Vf64::splat(0.0); gradient.len()];
-        let mut point_grad = vec![Vf64::splat(0.0); gradient.len()];
+        let mut accum = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
+        let accum = &mut accum[..gradient.len()];
+        let mut point_grad = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
+        let point_grad = &mut point_grad[..gradient.len()];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
+            value_grad_simd_at(param, x, point_grad);
 
             for (accum_value, point_grad_value) in accum.iter_mut().zip(point_grad.iter().copied())
             {
@@ -87,9 +93,10 @@ pub(super) fn add_value_grad(
             *gradient_value += accum_value.reduce_sum();
         }
 
-        let mut point_grad = vec![0.0; gradient.len()];
+        let mut point_grad = [0.0; MAX_POLYNOMIAL_PARAMS];
+        let point_grad = &mut point_grad[..gradient.len()];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
+            value_grad_at(param, x, point_grad);
             for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
                 *gradient_value += upstream * point_grad_value;
             }
@@ -107,6 +114,7 @@ pub(super) fn add_value_grad_raw_hessian(
     if dimension == 0 {
         return None;
     }
+    debug_assert!(dimension <= MAX_POLYNOMIAL_PARAMS);
 
     let sample_count = x_values.len();
     if sample_count == 0 {
@@ -114,12 +122,15 @@ pub(super) fn add_value_grad_raw_hessian(
     }
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((dimension, dimension));
-    let mut basis = vec![0.0; dimension];
+    let mut basis = [0.0; MAX_POLYNOMIAL_PARAMS];
+    let basis = &mut basis[..dimension];
 
     {
-        let mut basis_simd = vec![Vf64::splat(0.0); dimension];
+        let mut basis_simd = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
+        let basis_simd = &mut basis_simd[..dimension];
         let upper_len = dimension * (dimension + 1) / 2;
-        let mut upper = vec![Vf64::splat(0.0); upper_len];
+        let mut upper = [Vf64::splat(0.0); MAX_UPPER_HESSIAN_LEN];
+        let upper = &mut upper[..upper_len];
         let zero = Vf64::splat(0.0);
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
         let (value_second_chunks, value_second_tail) = value_second.as_chunks::<{ Vf64::LEN }>();

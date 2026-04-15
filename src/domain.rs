@@ -98,6 +98,7 @@ impl TryFrom<Vec<Point>> for Points {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 /// Поддерживаемые семейства аналитических кривых.
 pub enum CurveFamily {
     Linear,
@@ -135,9 +136,220 @@ pub enum CurveFamily {
     PseudoVoigt,
 }
 
+const CURVE_FAMILY_COUNT: usize = CurveFamily::PseudoVoigt as usize + 1;
+
+#[derive(Debug, Clone, Copy)]
+struct CurveFamilyMetadata {
+    label: &'static str,
+    parameter_names: &'static [&'static str],
+    min_points: usize,
+    requires_positive_x: bool,
+}
+
+const CURVE_FAMILY_METADATA: [CurveFamilyMetadata; CURVE_FAMILY_COUNT] = [
+    CurveFamilyMetadata {
+        label: "Linear",
+        parameter_names: &["a", "b"],
+        min_points: 2,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Quadratic",
+        parameter_names: &["a", "b", "c"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Cubic",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Quartic",
+        parameter_names: &["a", "b", "c", "d", "e"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Quintic",
+        parameter_names: &["a", "b", "c", "d", "e", "f"],
+        min_points: 6,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Sextic",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g"],
+        min_points: 7,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Septic",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g", "h"],
+        min_points: 8,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Octic",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+        min_points: 9,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Nonic",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+        min_points: 10,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Arrhenius",
+        parameter_names: &["A", "B"],
+        min_points: 2,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "Inverse",
+        parameter_names: &["A", "B"],
+        min_points: 2,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "Logistic",
+        parameter_names: &["A", "B", "C"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Gompertz",
+        parameter_names: &["A", "B", "C"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Bi-Exponential",
+        parameter_names: &["a1", "k1", "a2", "k2", "c"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Damped Sinusoid",
+        parameter_names: &["a", "k", "omega", "phi", "c"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Lorentzian",
+        parameter_names: &["A", "x0", "gamma", "C"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Natural Log",
+        parameter_names: &["A", "B"],
+        min_points: 2,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "4PL",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "5PL",
+        parameter_names: &["a", "b", "c", "d", "m"],
+        min_points: 5,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "Michaelis-Menten",
+        parameter_names: &["Vmax", "Km"],
+        min_points: 2,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Exponential (Basic)",
+        parameter_names: &["a", "b", "c"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Exponential + Linear",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Exponential (Half-life)",
+        parameter_names: &["a", "b", "c"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Falling Exponential",
+        parameter_names: &["Y0", "V0", "K"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Hyperbolic Tangent",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Arctangent Step",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Softplus",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Power",
+        parameter_names: &["a", "b"],
+        min_points: 2,
+        requires_positive_x: true,
+    },
+    CurveFamilyMetadata {
+        label: "Gaussian",
+        parameter_names: &["a", "b", "c"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Rational (1/1)",
+        parameter_names: &["a", "b", "c", "d"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Rational (2/2)",
+        parameter_names: &["a", "b", "c", "d", "e"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "EMG",
+        parameter_names: &["a", "mu", "sigma", "tau", "c"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Pseudo-Voigt",
+        parameter_names: &["a", "x0", "sigma", "gamma", "eta", "c"],
+        min_points: 6,
+        requires_positive_x: false,
+    },
+];
+
 impl CurveFamily {
     /// Полный список семейств в стабильном порядке для UI и переборов.
-    pub const ALL: [Self; 33] = [
+    pub const ALL: [Self; CURVE_FAMILY_COUNT] = [
         Self::Linear,
         Self::Quadratic,
         Self::Cubic,
@@ -173,82 +385,20 @@ impl CurveFamily {
         Self::PseudoVoigt,
     ];
 
+    #[inline]
+    fn metadata(self) -> &'static CurveFamilyMetadata {
+        debug_assert_eq!(Self::ALL.len(), CURVE_FAMILY_METADATA.len());
+        &CURVE_FAMILY_METADATA[self as usize]
+    }
+
     /// Короткое человекочитаемое имя семейства.
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Linear => "Linear",
-            Self::Quadratic => "Quadratic",
-            Self::Cubic => "Cubic",
-            Self::Quartic => "Quartic",
-            Self::Quintic => "Quintic",
-            Self::Sextic => "Sextic",
-            Self::Septic => "Septic",
-            Self::Octic => "Octic",
-            Self::Nonic => "Nonic",
-            Self::Arrhenius => "Arrhenius",
-            Self::Inverse => "Inverse",
-            Self::Logistic => "Logistic",
-            Self::Gompertz => "Gompertz",
-            Self::BiExponential => "Bi-Exponential",
-            Self::DampedSinusoid => "Damped Sinusoid",
-            Self::Lorentzian => "Lorentzian",
-            Self::NaturalLog => "Natural Log",
-            Self::FourPl => "4PL",
-            Self::FivePl => "5PL",
-            Self::MichaelisMenten => "Michaelis-Menten",
-            Self::ExponentialBasic => "Exponential (Basic)",
-            Self::ExponentialLinear => "Exponential + Linear",
-            Self::ExponentialHalfLife => "Exponential (Half-life)",
-            Self::FallingExponential => "Falling Exponential",
-            Self::HyperbolicTangent => "Hyperbolic Tangent",
-            Self::ArctangentStep => "Arctangent Step",
-            Self::Softplus => "Softplus",
-            Self::Power => "Power",
-            Self::Gaussian => "Gaussian",
-            Self::Rational11 => "Rational (1/1)",
-            Self::Rational22 => "Rational (2/2)",
-            Self::Emg => "EMG",
-            Self::PseudoVoigt => "Pseudo-Voigt",
-        }
+        self.metadata().label
     }
 
     /// Имена параметров в порядке внутреннего вектора значений.
     pub fn parameter_names(self) -> &'static [&'static str] {
-        match self {
-            Self::Linear => &["a", "b"],
-            Self::Quadratic => &["a", "b", "c"],
-            Self::Cubic => &["a", "b", "c", "d"],
-            Self::Quartic => &["a", "b", "c", "d", "e"],
-            Self::Quintic => &["a", "b", "c", "d", "e", "f"],
-            Self::Sextic => &["a", "b", "c", "d", "e", "f", "g"],
-            Self::Septic => &["a", "b", "c", "d", "e", "f", "g", "h"],
-            Self::Octic => &["a", "b", "c", "d", "e", "f", "g", "h", "i"],
-            Self::Nonic => &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
-            Self::Arrhenius => &["A", "B"],
-            Self::Inverse => &["A", "B"],
-            Self::Logistic => &["A", "B", "C"],
-            Self::Gompertz => &["A", "B", "C"],
-            Self::BiExponential => &["a1", "k1", "a2", "k2", "c"],
-            Self::DampedSinusoid => &["a", "k", "omega", "phi", "c"],
-            Self::Lorentzian => &["A", "x0", "gamma", "C"],
-            Self::NaturalLog => &["A", "B"],
-            Self::FourPl => &["a", "b", "c", "d"],
-            Self::FivePl => &["a", "b", "c", "d", "m"],
-            Self::MichaelisMenten => &["Vmax", "Km"],
-            Self::ExponentialBasic => &["a", "b", "c"],
-            Self::ExponentialLinear => &["a", "b", "c", "d"],
-            Self::ExponentialHalfLife => &["a", "b", "c"],
-            Self::FallingExponential => &["Y0", "V0", "K"],
-            Self::HyperbolicTangent => &["a", "b", "c", "d"],
-            Self::ArctangentStep => &["a", "b", "c", "d"],
-            Self::Softplus => &["a", "b", "c", "d"],
-            Self::Power => &["a", "b"],
-            Self::Gaussian => &["a", "b", "c"],
-            Self::Rational11 => &["a", "b", "c", "d"],
-            Self::Rational22 => &["a", "b", "c", "d", "e"],
-            Self::Emg => &["a", "mu", "sigma", "tau", "c"],
-            Self::PseudoVoigt => &["a", "x0", "sigma", "gamma", "eta", "c"],
-        }
+        self.metadata().parameter_names
     }
 
     /// Возвращает `true`, если семейство является полиномом степени `1..=9`.
@@ -274,50 +424,12 @@ impl CurveFamily {
 
     /// Минимальное число точек, необходимое для устойчивой подгонки.
     pub fn min_points(self) -> usize {
-        match self {
-            Self::Linear | Self::MichaelisMenten | Self::Power => 2,
-            Self::Quadratic
-            | Self::ExponentialBasic
-            | Self::ExponentialHalfLife
-            | Self::FallingExponential
-            | Self::Gaussian
-            | Self::Logistic
-            | Self::Gompertz => 3,
-            Self::FourPl
-            | Self::Cubic
-            | Self::ExponentialLinear
-            | Self::HyperbolicTangent
-            | Self::ArctangentStep
-            | Self::Softplus
-            | Self::Rational11 => 4,
-            Self::BiExponential
-            | Self::DampedSinusoid
-            | Self::FivePl
-            | Self::Quartic
-            | Self::Rational22
-            | Self::Emg => 5,
-            Self::PseudoVoigt => 6,
-            Self::Quintic => 6,
-            Self::Sextic => 7,
-            Self::Septic => 8,
-            Self::Octic => 9,
-            Self::Nonic => 10,
-            Self::Arrhenius | Self::Inverse | Self::NaturalLog => 2,
-            Self::Lorentzian => 4,
-        }
+        self.metadata().min_points
     }
 
     /// Возвращает `true`, если семейство определено только при `x > 0`.
     pub fn requires_positive_x(self) -> bool {
-        matches!(
-            self,
-            Self::FourPl
-                | Self::FivePl
-                | Self::Power
-                | Self::Arrhenius
-                | Self::Inverse
-                | Self::NaturalLog
-        )
+        self.metadata().requires_positive_x
     }
 
     /// Проверяет набор точек на совместимость с выбранным семейством.
@@ -804,91 +916,193 @@ impl CurveParams {
         }
     }
 
-    /// Возвращает параметры в виде вектора в каноническом порядке.
-    pub fn values(&self) -> Vec<f64> {
+    fn with_family_values<R>(&self, f: impl FnOnce(CurveFamily, &[f64]) -> R) -> R {
         match self {
-            Self::Linear { a, b } => vec![*a, *b],
-            Self::Quadratic { a, b, c } => vec![*a, *b, *c],
-            Self::Cubic { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::Quartic { a, b, c, d, e } => vec![*a, *b, *c, *d, *e],
-            Self::Quintic { a, b, c, d, e, f } => vec![*a, *b, *c, *d, *e, *f],
+            Self::Linear { a, b } => {
+                let values = [*a, *b];
+                f(CurveFamily::Linear, &values)
+            }
+            Self::Quadratic { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::Quadratic, &values)
+            }
+            Self::Cubic { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::Cubic, &values)
+            }
+            Self::Quartic { a, b, c, d, e } => {
+                let values = [*a, *b, *c, *d, *e];
+                f(CurveFamily::Quartic, &values)
+            }
+            Self::Quintic {
+                a,
+                b,
+                c,
+                d,
+                e,
+                f: f_coef,
+            } => {
+                let values = [*a, *b, *c, *d, *e, *f_coef];
+                f(CurveFamily::Quintic, &values)
+            }
             Self::Sextic {
                 a,
                 b,
                 c,
                 d,
                 e,
-                f,
+                f: f_coef,
                 g,
-            } => vec![*a, *b, *c, *d, *e, *f, *g],
+            } => {
+                let values = [*a, *b, *c, *d, *e, *f_coef, *g];
+                f(CurveFamily::Sextic, &values)
+            }
             Self::Septic {
                 a,
                 b,
                 c,
                 d,
                 e,
-                f,
+                f: f_coef,
                 g,
                 h,
-            } => vec![*a, *b, *c, *d, *e, *f, *g, *h],
+            } => {
+                let values = [*a, *b, *c, *d, *e, *f_coef, *g, *h];
+                f(CurveFamily::Septic, &values)
+            }
             Self::Octic {
                 a,
                 b,
                 c,
                 d,
                 e,
-                f,
+                f: f_coef,
                 g,
                 h,
                 i,
-            } => vec![*a, *b, *c, *d, *e, *f, *g, *h, *i],
+            } => {
+                let values = [*a, *b, *c, *d, *e, *f_coef, *g, *h, *i];
+                f(CurveFamily::Octic, &values)
+            }
             Self::Nonic {
                 a,
                 b,
                 c,
                 d,
                 e,
-                f,
+                f: f_coef,
                 g,
                 h,
                 i,
                 j,
-            } => vec![*a, *b, *c, *d, *e, *f, *g, *h, *i, *j],
-            Self::Arrhenius { a, b } => vec![*a, *b],
-            Self::Inverse { a, b } => vec![*a, *b],
-            Self::Logistic { a, b, c } => vec![*a, *b, *c],
-            Self::Gompertz { a, b, c } => vec![*a, *b, *c],
-            Self::BiExponential { a1, k1, a2, k2, c } => vec![*a1, *k1, *a2, *k2, *c],
+            } => {
+                let values = [*a, *b, *c, *d, *e, *f_coef, *g, *h, *i, *j];
+                f(CurveFamily::Nonic, &values)
+            }
+            Self::Arrhenius { a, b } => {
+                let values = [*a, *b];
+                f(CurveFamily::Arrhenius, &values)
+            }
+            Self::Inverse { a, b } => {
+                let values = [*a, *b];
+                f(CurveFamily::Inverse, &values)
+            }
+            Self::Logistic { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::Logistic, &values)
+            }
+            Self::Gompertz { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::Gompertz, &values)
+            }
+            Self::BiExponential { a1, k1, a2, k2, c } => {
+                let values = [*a1, *k1, *a2, *k2, *c];
+                f(CurveFamily::BiExponential, &values)
+            }
             Self::DampedSinusoid {
                 a,
                 k,
                 omega,
                 phi,
                 c,
-            } => vec![*a, *k, *omega, *phi, *c],
-            Self::Lorentzian { a, x0, gamma, c } => vec![*a, *x0, *gamma, *c],
-            Self::NaturalLog { a, b } => vec![*a, *b],
-            Self::FourPl { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::FivePl { a, b, c, d, m } => vec![*a, *b, *c, *d, *m],
-            Self::MichaelisMenten { vmax, km } => vec![*vmax, *km],
-            Self::ExponentialBasic { a, b, c } => vec![*a, *b, *c],
-            Self::ExponentialLinear { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::ExponentialHalfLife { a, b, c } => vec![*a, *b, *c],
-            Self::FallingExponential { y0, v0, k } => vec![*y0, *v0, *k],
-            Self::HyperbolicTangent { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::ArctangentStep { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::Softplus { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::Power { a, b } => vec![*a, *b],
-            Self::Gaussian { a, b, c } => vec![*a, *b, *c],
-            Self::Rational11 { a, b, c, d } => vec![*a, *b, *c, *d],
-            Self::Rational22 { a, b, c, d, e } => vec![*a, *b, *c, *d, *e],
+            } => {
+                let values = [*a, *k, *omega, *phi, *c];
+                f(CurveFamily::DampedSinusoid, &values)
+            }
+            Self::Lorentzian { a, x0, gamma, c } => {
+                let values = [*a, *x0, *gamma, *c];
+                f(CurveFamily::Lorentzian, &values)
+            }
+            Self::NaturalLog { a, b } => {
+                let values = [*a, *b];
+                f(CurveFamily::NaturalLog, &values)
+            }
+            Self::FourPl { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::FourPl, &values)
+            }
+            Self::FivePl { a, b, c, d, m } => {
+                let values = [*a, *b, *c, *d, *m];
+                f(CurveFamily::FivePl, &values)
+            }
+            Self::MichaelisMenten { vmax, km } => {
+                let values = [*vmax, *km];
+                f(CurveFamily::MichaelisMenten, &values)
+            }
+            Self::ExponentialBasic { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::ExponentialBasic, &values)
+            }
+            Self::ExponentialLinear { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::ExponentialLinear, &values)
+            }
+            Self::ExponentialHalfLife { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::ExponentialHalfLife, &values)
+            }
+            Self::FallingExponential { y0, v0, k } => {
+                let values = [*y0, *v0, *k];
+                f(CurveFamily::FallingExponential, &values)
+            }
+            Self::HyperbolicTangent { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::HyperbolicTangent, &values)
+            }
+            Self::ArctangentStep { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::ArctangentStep, &values)
+            }
+            Self::Softplus { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::Softplus, &values)
+            }
+            Self::Power { a, b } => {
+                let values = [*a, *b];
+                f(CurveFamily::Power, &values)
+            }
+            Self::Gaussian { a, b, c } => {
+                let values = [*a, *b, *c];
+                f(CurveFamily::Gaussian, &values)
+            }
+            Self::Rational11 { a, b, c, d } => {
+                let values = [*a, *b, *c, *d];
+                f(CurveFamily::Rational11, &values)
+            }
+            Self::Rational22 { a, b, c, d, e } => {
+                let values = [*a, *b, *c, *d, *e];
+                f(CurveFamily::Rational22, &values)
+            }
             Self::Emg {
                 a,
                 mu,
                 sigma,
                 tau,
                 c,
-            } => vec![*a, *mu, *sigma, *tau, *c],
+            } => {
+                let values = [*a, *mu, *sigma, *tau, *c];
+                f(CurveFamily::Emg, &values)
+            }
             Self::PseudoVoigt {
                 a,
                 x0,
@@ -896,13 +1110,21 @@ impl CurveParams {
                 gamma,
                 eta,
                 c,
-            } => vec![*a, *x0, *sigma, *gamma, *eta, *c],
+            } => {
+                let values = [*a, *x0, *sigma, *gamma, *eta, *c];
+                f(CurveFamily::PseudoVoigt, &values)
+            }
         }
+    }
+
+    /// Возвращает параметры в виде вектора в каноническом порядке.
+    pub fn values(&self) -> Vec<f64> {
+        self.with_family_values(|_family, values| values.to_vec())
     }
 
     /// Вычисляет значение модели для заданного `x`.
     pub fn evaluate(&self, x: f64) -> f64 {
-        models::evaluate_curve_params(self, x)
+        self.with_family_values(|family, values| models::value_at(family, values, x))
     }
 
     /// Конструирует параметры семейства из среза значений.
@@ -1797,9 +2019,17 @@ impl std::error::Error for InputError {}
 #[cfg(test)]
 mod tests {
     use super::{
-        AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
-        NewtonCgConfig, Point, Points, SgdConfig, SteepestDescentConfig,
+        AdamConfig, CURVE_FAMILY_COUNT, CurveFamily, CurveParams, InputError, LbfgsConfig,
+        NelderMeadConfig, NewtonCgConfig, Point, Points, SgdConfig, SteepestDescentConfig,
     };
+
+    #[test]
+    fn curve_family_all_matches_discriminant_order() {
+        assert_eq!(CurveFamily::ALL.len(), CURVE_FAMILY_COUNT);
+        for (index, family) in CurveFamily::ALL.iter().copied().enumerate() {
+            assert_eq!(family as usize, index);
+        }
+    }
 
     #[test]
     fn point_rejects_non_finite_values() {

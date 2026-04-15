@@ -1,22 +1,18 @@
 use super::*;
 
 pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64, record_undo: bool) {
-    let mut points = match app.parse_points_for_edit() {
-        Ok(points) => points,
+    let point = match Point::try_new(x, y) {
+        Ok(point) => point,
         Err(error) => {
-            app.status = Some(StatusMessage::Error(error));
+            app.status = Some(StatusMessage::Error(error.to_string()));
             return;
         }
     };
 
-    match Point::try_new(x, y) {
-        Ok(point) => {
-            points.push(point);
-            app.write_points_text(&points, record_undo);
-        }
-        Err(error) => {
-            app.status = Some(StatusMessage::Error(error.to_string()));
-        }
+    if let Err(error) = app.edit_valid_points_in_cache(record_undo, false, move |points| {
+        points.push(point);
+    }) {
+        app.status = Some(StatusMessage::Error(error));
     }
 }
 
@@ -32,24 +28,25 @@ pub(super) fn spray_points_from_plot(
         return;
     }
 
-    let mut points = match app.parse_points_for_edit() {
-        Ok(points) => points,
-        Err(error) => {
-            app.status = Some(StatusMessage::Error(error));
-            return;
-        }
-    };
-
+    let mut generated_points = Vec::with_capacity(points_to_add);
     for _ in 0..points_to_add {
         let [offset_x, offset_y] = app.next_spray_unit_disk_offset();
         let x = center_x + offset_x * radius_x;
         let y = center_y + offset_y * radius_y;
         if let Ok(point) = Point::try_new(x, y) {
-            points.push(point);
+            generated_points.push(point);
         }
     }
 
-    app.write_points_text(&points, false);
+    if generated_points.is_empty() {
+        return;
+    }
+
+    if let Err(error) = app.edit_valid_points_in_cache(false, false, |points| {
+        points.extend(generated_points);
+    }) {
+        app.status = Some(StatusMessage::Error(error));
+    }
 }
 
 pub(super) fn erase_points_from_plot(
@@ -59,25 +56,19 @@ pub(super) fn erase_points_from_plot(
     radius_x: f64,
     radius_y: f64,
 ) {
-    let mut points = match app.parse_points_for_edit() {
-        Ok(points) => points,
-        Err(error) => {
-            app.status = Some(StatusMessage::Error(error));
-            return;
-        }
-    };
-
     if radius_x <= 0.0 || radius_y <= 0.0 {
         return;
     }
 
-    points.retain(|point| {
-        let dx = (point.x() - center_x) / radius_x;
-        let dy = (point.y() - center_y) / radius_y;
-        dx * dx + dy * dy > 1.0
-    });
-
-    app.write_points_text(&points, false);
+    if let Err(error) = app.edit_valid_points_in_cache(false, false, |points| {
+        points.retain(|point| {
+            let dx = (point.x() - center_x) / radius_x;
+            let dy = (point.y() - center_y) / radius_y;
+            dx * dx + dy * dy > 1.0
+        });
+    }) {
+        app.status = Some(StatusMessage::Error(error));
+    }
 }
 
 fn plot_position_from_screen(
@@ -111,7 +102,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
             .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
     if is_continuous_tool && primary_down_on_plot {
         if app.active_tool_bounds.is_none() {
-            app.push_points_undo_snapshot(app.points.text.clone());
+            app.push_current_points_undo_snapshot();
         }
         app.active_tool_bounds
             .get_or_insert(*plot_response.transform.bounds());
@@ -184,6 +175,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
     }
 
     if !(is_continuous_tool && primary_down_on_plot) {
+        app.flush_points_text_from_cache_if_pending();
         app.active_tool_bounds = None;
     }
 }

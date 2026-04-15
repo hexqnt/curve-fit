@@ -12,6 +12,7 @@ pub(super) struct PointsEditorState {
     pub(super) text: String,
     pub(super) cache: Option<ParsedPointsCache>,
     pub(super) cache_dirty: bool,
+    pub(super) text_sync_pending: bool,
     pub(super) parse_debounce_deadline: Option<Instant>,
     pub(super) undo_stack: Vec<String>,
     pub(super) redo_stack: Vec<String>,
@@ -23,6 +24,7 @@ impl Default for PointsEditorState {
             text: String::new(),
             cache: None,
             cache_dirty: true,
+            text_sync_pending: false,
             parse_debounce_deadline: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -33,6 +35,7 @@ impl Default for PointsEditorState {
 impl CurveFitApp {
     pub(super) fn invalidate_points_cache(&mut self) {
         self.points.cache_dirty = true;
+        self.points.text_sync_pending = false;
         // Небольшой debounce уменьшает число парсингов во время быстрого ввода текста.
         self.points.parse_debounce_deadline =
             Some(Instant::now() + Duration::from_millis(POINTS_PARSE_DEBOUNCE_MS));
@@ -59,6 +62,7 @@ impl CurveFitApp {
         if should_parse {
             self.points.cache = Some(parse_points_text_cache(&self.points.text));
             self.points.cache_dirty = false;
+            self.points.text_sync_pending = false;
             self.points.parse_debounce_deadline = None;
         }
         self.points
@@ -130,6 +134,88 @@ impl CurveFitApp {
         }
     }
 
+    pub(super) fn flush_points_text_from_cache_if_pending(&mut self) {
+        if !self.points.text_sync_pending {
+            return;
+        }
+
+        let synced_text = self.points.cache.as_ref().and_then(|cache| {
+            cache
+                .parsed_points
+                .as_ref()
+                .ok()
+                .map(|points| points_to_text(points))
+        });
+        if let Some(synced_text) = synced_text {
+            self.points.text = synced_text;
+        }
+        self.points.text_sync_pending = false;
+    }
+
+    pub(super) fn push_current_points_undo_snapshot(&mut self) {
+        self.flush_points_text_from_cache_if_pending();
+        self.push_points_undo_snapshot(self.points.text.clone());
+    }
+
+    pub(super) fn edit_valid_points_in_cache<F>(
+        &mut self,
+        record_undo: bool,
+        sync_text_immediately: bool,
+        edit: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(&mut Vec<Point>),
+    {
+        let parse_error = match &self.points_cache_with_policy(true).parsed_points {
+            Ok(_) => None,
+            Err(error) => Some(error.clone()),
+        };
+        if let Some(error) = parse_error {
+            return Err(error);
+        }
+
+        if record_undo {
+            self.push_current_points_undo_snapshot();
+        }
+        self.points.redo_stack.clear();
+
+        let maybe_synced_text = {
+            let cache = self
+                .points
+                .cache
+                .as_mut()
+                .expect("points cache must be initialized");
+            let points = cache
+                .parsed_points
+                .as_mut()
+                .expect("parse error branch is handled above");
+            edit(points);
+            cache.parse_error_line = None;
+            cache.plot_points = points
+                .iter()
+                .map(|point| PlotPoint::new(point.x(), point.y()))
+                .collect::<Vec<_>>()
+                .into();
+            sync_text_immediately.then(|| points_to_text(points))
+        };
+
+        if let Some(synced_text) = maybe_synced_text {
+            self.points.text = synced_text;
+            self.points.text_sync_pending = false;
+        } else {
+            self.points.text_sync_pending = true;
+        }
+
+        if matches!(
+            self.status.as_ref(),
+            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
+        ) {
+            self.status = Some(self.idle_status_after_points_edit());
+        }
+
+        Ok(())
+    }
+
     pub(super) fn apply_points_text_change(&mut self, new_text: String, keep_redo: bool) {
         if self.points.text == new_text {
             return;
@@ -160,20 +246,17 @@ impl CurveFitApp {
         let Some(next) = self.points.redo_stack.pop() else {
             return;
         };
-        self.push_points_undo_snapshot(self.points.text.clone());
+        self.push_current_points_undo_snapshot();
         self.apply_points_text_change(next, true);
         self.refresh_status_after_points_edit();
     }
 
-    pub(super) fn parse_points_for_edit(&mut self) -> Result<Vec<Point>, String> {
-        match &self.points_cache_with_policy(true).parsed_points {
-            Ok(points) => Ok(points.clone()),
-            Err(error) => Err(error.clone()),
-        }
-    }
-
     pub(super) fn parse_points_strict(&mut self) -> Result<Points, String> {
-        Points::try_from(self.parse_points_for_edit()?).map_err(|error| error.to_string())
+        let parsed_points = match &self.points_cache_with_policy(true).parsed_points {
+            Ok(points) => points.clone(),
+            Err(error) => return Err(error.clone()),
+        };
+        Points::try_from(parsed_points).map_err(|error| error.to_string())
     }
 
     pub(super) fn set_points_cache_from_valid_points(&mut self, points: &[Point]) {
@@ -189,10 +272,12 @@ impl CurveFitApp {
             plot_points,
         });
         self.points.cache_dirty = false;
+        self.points.text_sync_pending = false;
         self.points.parse_debounce_deadline = None;
     }
 
     pub(super) fn clear_points_text(&mut self, record_undo: bool) {
+        self.flush_points_text_from_cache_if_pending();
         if self.points.text.is_empty() {
             return;
         }
@@ -211,12 +296,13 @@ impl CurveFitApp {
     }
 
     pub(super) fn write_points_text(&mut self, points: &[Point], record_undo: bool) {
+        self.flush_points_text_from_cache_if_pending();
         let new_text = points_to_text(points);
         if self.points.text == new_text {
             return;
         }
         if record_undo {
-            self.push_points_undo_snapshot(self.points.text.clone());
+            self.push_current_points_undo_snapshot();
         }
         self.points.text = new_text;
         self.points.redo_stack.clear();
