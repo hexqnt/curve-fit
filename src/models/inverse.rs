@@ -1,5 +1,8 @@
+use super::common::{Vf64, positive_x_simd};
 use super::common::{is_finite_non_negative, positive_x, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::num::SimdFloat;
 
 /// Вычисляет обратную зависимость:
 /// `f(x) = offset + scale / x`,
@@ -13,6 +16,13 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
     let offset = param[0];
     let scale = param[1];
     offset + scale / positive_x(x)
+}
+
+#[allow(dead_code)]
+#[inline]
+pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
+    let x = positive_x_simd(x);
+    Vf64::splat(param[0]) + Vf64::splat(param[1]) / x
 }
 
 #[inline]
@@ -29,6 +39,19 @@ pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
     offset + scale * inv_x
 }
 
+#[inline]
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 2]) -> Vf64 {
+    let x = positive_x_simd(x);
+    let offset = Vf64::splat(param[0]);
+    let scale = Vf64::splat(param[1]);
+    let inv_x = Vf64::splat(1.0) / x;
+
+    grad[0] = Vf64::splat(1.0);
+    grad[1] = inv_x;
+
+    offset + scale * inv_x
+}
+
 pub(super) fn add_value_grad(
     x_values: &[f64],
     param: &[f64],
@@ -38,14 +61,33 @@ pub(super) fn add_value_grad(
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
 
-    let mut point_grad = [0.0; 2];
-    let mut index = 0;
-    while index < x_values.len() {
-        let upstream = value_first[index];
-        value_grad_at(param, x_values[index], &mut point_grad);
-        gradient[0] += upstream * point_grad[0];
-        gradient[1] += upstream * point_grad[1];
-        index += 1;
+    {
+        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+        let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
+        debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
+        debug_assert_eq!(x_tail.len(), value_first_tail.len());
+
+        let mut point_grad = [Vf64::splat(0.0); 2];
+        let mut gradient_0 = Vf64::splat(0.0);
+        let mut gradient_1 = Vf64::splat(0.0);
+
+        for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
+            let x = Vf64::from_array(*x_chunk);
+            let upstream = Vf64::from_array(*value_first_chunk);
+            value_grad_simd_at(param, x, &mut point_grad);
+            gradient_0 += upstream * point_grad[0];
+            gradient_1 += upstream * point_grad[1];
+        }
+
+        gradient[0] += gradient_0.reduce_sum();
+        gradient[1] += gradient_1.reduce_sum();
+
+        let mut point_grad = [0.0; 2];
+        for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
+            value_grad_at(param, x, &mut point_grad);
+            gradient[0] += upstream * point_grad[0];
+            gradient[1] += upstream * point_grad[1];
+        }
     }
 }
 
@@ -71,24 +113,57 @@ pub(super) fn add_value_grad_raw_hessian(
     let offset = param[0];
     let scale = param[1];
 
-    let mut index = 0;
-    while index < sample_count {
-        let x = positive_x(x_values[index]);
-        let inv_x = 1.0 / x;
-        let model = offset + scale * inv_x;
-        if !model.is_finite() {
-            return None;
+    {
+        let offset = Vf64::splat(offset);
+        let scale = Vf64::splat(scale);
+        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+        let (value_second_chunks, value_second_tail) = value_second.as_chunks::<{ Vf64::LEN }>();
+        debug_assert_eq!(x_chunks.len(), value_second_chunks.len());
+        debug_assert_eq!(x_tail.len(), value_second_tail.len());
+
+        let mut h00 = Vf64::splat(0.0);
+        let mut h01 = Vf64::splat(0.0);
+        let mut h11 = Vf64::splat(0.0);
+        let zero = Vf64::splat(0.0);
+
+        for (x_chunk, value_second_chunk) in x_chunks.iter().zip(value_second_chunks.iter()) {
+            let x = positive_x_simd(Vf64::from_array(*x_chunk));
+            let inv_x = Vf64::splat(1.0) / x;
+            let model = offset + scale * inv_x;
+            if !model.is_finite().all() {
+                return None;
+            }
+
+            let weight = Vf64::from_array(*value_second_chunk);
+            if !weight.is_finite().all() || !weight.simd_ge(zero).all() {
+                return None;
+            }
+
+            h00 += weight;
+            h01 += weight * inv_x;
+            h11 += weight * inv_x * inv_x;
         }
 
-        let weight = value_second[index];
-        if !is_finite_non_negative(weight) {
-            return None;
-        }
+        hessian[[0, 0]] += h00.reduce_sum();
+        hessian[[0, 1]] += h01.reduce_sum();
+        hessian[[1, 1]] += h11.reduce_sum();
 
-        hessian[[0, 0]] += weight;
-        hessian[[0, 1]] += weight * inv_x;
-        hessian[[1, 1]] += weight * inv_x * inv_x;
-        index += 1;
+        for (&x, &weight) in x_tail.iter().zip(value_second_tail.iter()) {
+            let x = positive_x(x);
+            let inv_x = 1.0 / x;
+            let model = param[0] + param[1] * inv_x;
+            if !model.is_finite() {
+                return None;
+            }
+
+            if !is_finite_non_negative(weight) {
+                return None;
+            }
+
+            hessian[[0, 0]] += weight;
+            hessian[[0, 1]] += weight * inv_x;
+            hessian[[1, 1]] += weight * inv_x * inv_x;
+        }
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);

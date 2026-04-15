@@ -1,4 +1,3 @@
-#[cfg(feature = "portable-simd")]
 use super::simd;
 use super::{
     CurveProblem, CurveProblemPredictionLoss, DEFAULT_SPLINE_KNOTS, FitError,
@@ -1616,7 +1615,6 @@ fn fit_curve_with_optimizer_config_can_be_cancelled_via_progress_callback() {
     assert!(matches!(result, Err(FitError::Cancelled)));
 }
 
-#[cfg(feature = "portable-simd")]
 fn assert_close(actual: f64, expected: f64, abs_tolerance: f64, rel_tolerance: f64) {
     let delta = (actual - expected).abs();
     let scale = expected.abs().max(1.0);
@@ -1626,7 +1624,6 @@ fn assert_close(actual: f64, expected: f64, abs_tolerance: f64, rel_tolerance: f
     );
 }
 
-#[cfg(feature = "portable-simd")]
 fn test_xy_for_polynomial() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let param = vec![0.3, -0.2, 0.08, -0.005, 1.7, -4.0];
     let x_values = (0..1031)
@@ -1646,7 +1643,6 @@ fn test_xy_for_polynomial() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     (param, x_values, y_values)
 }
 
-#[cfg(feature = "portable-simd")]
 fn test_xy_for_inverse() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let param = vec![1.25, -0.7];
     let x_values = (0..1019)
@@ -1663,7 +1659,6 @@ fn test_xy_for_inverse() -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     (param, x_values, y_values)
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn simd_polynomial_cost_matches_scalar_reference_for_all_loss_metrics() {
     let (param, x_values, y_values) = test_xy_for_polynomial();
@@ -1674,7 +1669,6 @@ fn simd_polynomial_cost_matches_scalar_reference_for_all_loss_metrics() {
     }
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn simd_inverse_cost_matches_scalar_reference_for_all_loss_metrics() {
     let (param, x_values, y_values) = test_xy_for_inverse();
@@ -1685,7 +1679,6 @@ fn simd_inverse_cost_matches_scalar_reference_for_all_loss_metrics() {
     }
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn simd_polynomial_gradient_matches_scalar_reference_for_all_loss_metrics() {
     let (param, x_values, y_values) = test_xy_for_polynomial();
@@ -1714,7 +1707,6 @@ fn simd_polynomial_gradient_matches_scalar_reference_for_all_loss_metrics() {
     }
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn simd_inverse_gradient_matches_scalar_reference_for_all_loss_metrics() {
     let (param, x_values, y_values) = test_xy_for_inverse();
@@ -1743,7 +1735,6 @@ fn simd_inverse_gradient_matches_scalar_reference_for_all_loss_metrics() {
     }
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn polynomial_cost_with_quantization_uses_quantized_scalar_pipeline() {
     use argmin::core::CostFunction;
@@ -1761,7 +1752,6 @@ fn polynomial_cost_with_quantization_uses_quantized_scalar_pipeline() {
     assert_near(cost, 1.5129, 1e-12);
 }
 
-#[cfg(feature = "portable-simd")]
 #[test]
 fn simd_cost_returns_large_cost_for_non_finite_inputs() {
     let x_values = vec![0.1, 0.2, 0.3];

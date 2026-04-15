@@ -1,5 +1,8 @@
+use super::common::Vf64;
 use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian};
 use ndarray::Array2;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::num::SimdFloat;
 
 /// Вычисляет полином в форме Горнера:
 /// `f(x) = p0 * x^n + p1 * x^(n-1) + ... + pn`,
@@ -12,12 +15,37 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
         .fold(0.0, |acc, coefficient| acc * x + coefficient)
 }
 
+#[allow(dead_code)]
+#[inline]
+pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
+    param
+        .iter()
+        .copied()
+        .fold(Vf64::splat(0.0), |acc, coefficient| {
+            acc * x + Vf64::splat(coefficient)
+        })
+}
+
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
     debug_assert_eq!(grad.len(), param.len());
 
     let value = value_at(param, x);
     let mut basis = 1.0;
+    for grad_value in grad.iter_mut().rev() {
+        *grad_value = basis;
+        basis *= x;
+    }
+
+    value
+}
+
+#[inline]
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64]) -> Vf64 {
+    debug_assert_eq!(grad.len(), param.len());
+
+    let value = value_simd_at(param, x);
+    let mut basis = Vf64::splat(1.0);
     for grad_value in grad.iter_mut().rev() {
         *grad_value = basis;
         basis *= x;
@@ -35,16 +63,37 @@ pub(super) fn add_value_grad(
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
 
-    let mut point_grad = vec![0.0; gradient.len()];
-    let mut index = 0;
-    while index < x_values.len() {
-        let upstream = value_first[index];
-        value_grad_at(param, x_values[index], &mut point_grad);
+    {
+        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+        let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
+        debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
+        debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
-            *gradient_value += upstream * point_grad_value;
+        let mut accum = vec![Vf64::splat(0.0); gradient.len()];
+        let mut point_grad = vec![Vf64::splat(0.0); gradient.len()];
+
+        for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
+            let x = Vf64::from_array(*x_chunk);
+            let upstream = Vf64::from_array(*value_first_chunk);
+            value_grad_simd_at(param, x, &mut point_grad);
+
+            for (accum_value, point_grad_value) in accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *accum_value += upstream * point_grad_value;
+            }
         }
-        index += 1;
+
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(accum.iter().copied()) {
+            *gradient_value += accum_value.reduce_sum();
+        }
+
+        let mut point_grad = vec![0.0; gradient.len()];
+        for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
+            value_grad_at(param, x, &mut point_grad);
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
+        }
     }
 }
 
@@ -60,43 +109,98 @@ pub(super) fn add_value_grad_raw_hessian(
     }
 
     let sample_count = x_values.len();
+    if sample_count == 0 {
+        return Some(Array2::zeros((dimension, dimension)));
+    }
     let sample_scale = 1.0 / sample_count as f64;
     let mut hessian = Array2::zeros((dimension, dimension));
     let mut basis = vec![0.0; dimension];
 
-    let mut index = 0;
-    while index < sample_count {
-        let x = x_values[index];
-        let model = value_at(param, x);
-        if !model.is_finite() {
-            return None;
+    {
+        let mut basis_simd = vec![Vf64::splat(0.0); dimension];
+        let upper_len = dimension * (dimension + 1) / 2;
+        let mut upper = vec![Vf64::splat(0.0); upper_len];
+        let zero = Vf64::splat(0.0);
+        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+        let (value_second_chunks, value_second_tail) = value_second.as_chunks::<{ Vf64::LEN }>();
+        debug_assert_eq!(x_chunks.len(), value_second_chunks.len());
+        debug_assert_eq!(x_tail.len(), value_second_tail.len());
+
+        for (x_chunk, value_second_chunk) in x_chunks.iter().zip(value_second_chunks.iter()) {
+            let x = Vf64::from_array(*x_chunk);
+            let model = value_simd_at(param, x);
+            if !model.is_finite().all() {
+                return None;
+            }
+
+            let weight = Vf64::from_array(*value_second_chunk);
+            if !weight.is_finite().all() || !weight.simd_ge(zero).all() {
+                return None;
+            }
+
+            let mut basis_index = dimension;
+            let mut power = Vf64::splat(1.0);
+            while basis_index > 0 {
+                basis_index -= 1;
+                basis_simd[basis_index] = power;
+                power *= x;
+            }
+
+            let mut upper_index = 0;
+            let mut row = 0;
+            while row < dimension {
+                let basis_row = basis_simd[row];
+                let mut column = row;
+                while column < dimension {
+                    upper[upper_index] += weight * basis_row * basis_simd[column];
+                    upper_index += 1;
+                    column += 1;
+                }
+                row += 1;
+            }
         }
 
-        let weight = value_second[index];
-        if !is_finite_non_negative(weight) {
-            return None;
-        }
-
-        let mut basis_index = dimension;
-        let mut power = 1.0;
-        while basis_index > 0 {
-            basis_index -= 1;
-            basis[basis_index] = power;
-            power *= x;
-        }
-
+        let mut upper_index = 0;
         let mut row = 0;
         while row < dimension {
-            let basis_row = basis[row];
             let mut column = row;
             while column < dimension {
-                hessian[[row, column]] += weight * basis_row * basis[column];
+                hessian[[row, column]] += upper[upper_index].reduce_sum();
+                upper_index += 1;
                 column += 1;
             }
             row += 1;
         }
 
-        index += 1;
+        for (&x, &weight) in x_tail.iter().zip(value_second_tail.iter()) {
+            let model = value_at(param, x);
+            if !model.is_finite() {
+                return None;
+            }
+
+            if !is_finite_non_negative(weight) {
+                return None;
+            }
+
+            let mut basis_index = dimension;
+            let mut power = 1.0;
+            while basis_index > 0 {
+                basis_index -= 1;
+                basis[basis_index] = power;
+                power *= x;
+            }
+
+            let mut row = 0;
+            while row < dimension {
+                let basis_row = basis[row];
+                let mut column = row;
+                while column < dimension {
+                    hessian[[row, column]] += weight * basis_row * basis[column];
+                    column += 1;
+                }
+                row += 1;
+            }
+        }
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);

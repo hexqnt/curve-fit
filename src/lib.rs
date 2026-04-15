@@ -1,4 +1,4 @@
-#![cfg_attr(feature = "portable-simd", feature(portable_simd))]
+#![feature(portable_simd)]
 #![forbid(unsafe_code)]
 //! Публичный API библиотеки для подгонки параметрических кривых и сплайнов.
 

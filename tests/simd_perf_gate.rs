@@ -1,5 +1,3 @@
-#![cfg(feature = "portable-simd")]
-
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 

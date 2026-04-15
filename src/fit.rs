@@ -45,7 +45,6 @@ pub use spline::{
     fit_natural_cubic_spline_with_config, fit_natural_cubic_spline_with_optimizer_config,
 };
 
-#[cfg(feature = "portable-simd")]
 #[doc(hidden)]
 pub mod simd_bench {
     use super::{OptimizationLossMetric, simd};

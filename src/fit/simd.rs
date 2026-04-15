@@ -1,22 +1,15 @@
 use super::{LARGE_COST, OptimizationLossMetric, positive_x};
 
-#[cfg(feature = "portable-simd")]
 const MAX_POLYNOMIAL_PARAMS: usize = 10;
 
-#[cfg(feature = "portable-simd")]
 #[cfg(not(target_arch = "wasm32"))]
 type Vf64 = std::simd::f64x8;
-#[cfg(feature = "portable-simd")]
 #[cfg(target_arch = "wasm32")]
 type Vf64 = std::simd::f64x2;
 
-#[cfg(feature = "portable-simd")]
 use std::simd::Select;
-#[cfg(feature = "portable-simd")]
 use std::simd::StdFloat;
-#[cfg(feature = "portable-simd")]
 use std::simd::cmp::SimdPartialOrd;
-#[cfg(feature = "portable-simd")]
 use std::simd::num::SimdFloat;
 
 pub(super) fn polynomial_cost(
@@ -25,14 +18,7 @@ pub(super) fn polynomial_cost(
     y_values: &[f64],
     loss_metric: OptimizationLossMetric,
 ) -> f64 {
-    #[cfg(feature = "portable-simd")]
-    {
-        polynomial_cost_simd(param, x_values, y_values, loss_metric)
-    }
-    #[cfg(not(feature = "portable-simd"))]
-    {
-        polynomial_cost_scalar(param, x_values, y_values, loss_metric)
-    }
+    polynomial_cost_simd(param, x_values, y_values, loss_metric)
 }
 
 pub(super) fn inverse_cost(
@@ -41,14 +27,7 @@ pub(super) fn inverse_cost(
     y_values: &[f64],
     loss_metric: OptimizationLossMetric,
 ) -> f64 {
-    #[cfg(feature = "portable-simd")]
-    {
-        inverse_cost_simd(param, x_values, y_values, loss_metric)
-    }
-    #[cfg(not(feature = "portable-simd"))]
-    {
-        inverse_cost_scalar(param, x_values, y_values, loss_metric)
-    }
+    inverse_cost_simd(param, x_values, y_values, loss_metric)
 }
 
 pub(super) fn accumulate_polynomial_gradient(
@@ -58,14 +37,7 @@ pub(super) fn accumulate_polynomial_gradient(
     loss_metric: OptimizationLossMetric,
     gradient: &mut [f64],
 ) {
-    #[cfg(feature = "portable-simd")]
-    {
-        accumulate_polynomial_gradient_simd(x_values, y_values, param, loss_metric, gradient);
-    }
-    #[cfg(not(feature = "portable-simd"))]
-    {
-        accumulate_polynomial_gradient_scalar(x_values, y_values, param, loss_metric, gradient);
-    }
+    accumulate_polynomial_gradient_simd(x_values, y_values, param, loss_metric, gradient);
 }
 
 pub(super) fn accumulate_inverse_gradient(
@@ -75,14 +47,7 @@ pub(super) fn accumulate_inverse_gradient(
     loss_metric: OptimizationLossMetric,
     gradient: &mut [f64],
 ) {
-    #[cfg(feature = "portable-simd")]
-    {
-        accumulate_inverse_gradient_simd(x_values, y_values, param, loss_metric, gradient);
-    }
-    #[cfg(not(feature = "portable-simd"))]
-    {
-        accumulate_inverse_gradient_scalar(x_values, y_values, param, loss_metric, gradient);
-    }
+    accumulate_inverse_gradient_simd(x_values, y_values, param, loss_metric, gradient);
 }
 
 pub(super) fn polynomial_cost_scalar(
@@ -205,7 +170,6 @@ pub(super) fn accumulate_inverse_gradient_scalar(
     }
 }
 
-#[cfg(feature = "portable-simd")]
 fn value_from_residual_simd(loss_metric: OptimizationLossMetric, residual: Vf64) -> Vf64 {
     match loss_metric {
         OptimizationLossMetric::Mse => residual * residual,
@@ -217,7 +181,6 @@ fn value_from_residual_simd(loss_metric: OptimizationLossMetric, residual: Vf64)
     }
 }
 
-#[cfg(feature = "portable-simd")]
 fn residual_derivative_simd(loss_metric: OptimizationLossMetric, residual: Vf64) -> Vf64 {
     match loss_metric {
         OptimizationLossMetric::Mse => Vf64::splat(2.0) * residual,
@@ -235,7 +198,6 @@ fn residual_derivative_simd(loss_metric: OptimizationLossMetric, residual: Vf64)
     }
 }
 
-#[cfg(feature = "portable-simd")]
 pub(super) fn polynomial_cost_simd(
     param: &[f64],
     x_values: &[f64],
@@ -293,7 +255,6 @@ pub(super) fn polynomial_cost_simd(
     }
 }
 
-#[cfg(feature = "portable-simd")]
 pub(super) fn inverse_cost_simd(
     param: &[f64],
     x_values: &[f64],
@@ -344,7 +305,6 @@ pub(super) fn inverse_cost_simd(
     }
 }
 
-#[cfg(feature = "portable-simd")]
 pub(super) fn accumulate_polynomial_gradient_simd(
     x_values: &[f64],
     y_values: &[f64],
@@ -398,7 +358,6 @@ pub(super) fn accumulate_polynomial_gradient_simd(
     }
 }
 
-#[cfg(feature = "portable-simd")]
 pub(super) fn accumulate_inverse_gradient_simd(
     x_values: &[f64],
     y_values: &[f64],
