@@ -138,6 +138,8 @@ const MAX_POLYNOMIAL_PARAMS: usize = 10;
 const STEEPEST_DESCENT_GRAD_TOL: f64 = 1e-12;
 const HESSIAN_FD_REL_STEP: f64 = 1e-4;
 const HESSIAN_FD_MIN_STEP: f64 = 1e-6;
+// Пробуем базовый шаг, затем уменьшаем/увеличиваем его, чтобы переживать локальные NaN/Inf.
+const FD_STEP_RETRY_FACTORS: [f64; 5] = [1.0, 0.5, 2.0, 0.25, 4.0];
 pub(crate) const HESSIAN_DIAGONAL_JITTER: f64 = models::HESSIAN_DIAGONAL_JITTER;
 
 fn positive_x(value: f64) -> f64 {
@@ -151,6 +153,24 @@ fn softplus(value: f64) -> f64 {
 
 fn gradient_l2_norm(values: &[f64]) -> f64 {
     values.iter().map(|value| value * value).sum::<f64>().sqrt()
+}
+
+#[inline]
+fn finite_central_difference(value_plus: f64, value_minus: f64, step: f64) -> Option<f64> {
+    if !value_plus.is_finite() || !value_minus.is_finite() {
+        return None;
+    }
+    let derivative = (value_plus - value_minus) / (2.0 * step);
+    if derivative.is_finite() {
+        Some(derivative)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn finite_array1(values: &Array1<f64>) -> bool {
+    values.iter().all(|value| value.is_finite())
 }
 
 fn vec_to_array1(values: &[f64]) -> Array1<f64> {
@@ -194,20 +214,48 @@ where
     let dimension = param_slice.len();
     let mut hessian = Array2::zeros((dimension, dimension));
     let mut probe = param.clone();
+    let mut column_values = vec![0.0; dimension];
 
     for column in 0..dimension {
-        let step =
+        let base_step =
             ((param_slice[column].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
-        probe[column] = param[column] + step;
-        let grad_plus = problem.gradient(&probe)?;
-        probe[column] = param[column] - step;
-        let grad_minus = problem.gradient(&probe)?;
-        probe[column] = param[column];
+        let mut computed = false;
+        for factor in FD_STEP_RETRY_FACTORS {
+            let step = base_step * factor;
+            probe[column] = param[column] + step;
+            let grad_plus = problem.gradient(&probe)?;
+            probe[column] = param[column] - step;
+            let grad_minus = problem.gradient(&probe)?;
+            probe[column] = param[column];
 
-        let denom = 2.0 * step;
-        for row in 0..dimension {
-            let value = (grad_plus[row] - grad_minus[row]) / denom;
-            hessian[[row, column]] = if value.is_finite() { value } else { 0.0 };
+            if !finite_array1(&grad_plus) || !finite_array1(&grad_minus) {
+                continue;
+            }
+
+            let denom = 2.0 * step;
+            let mut column_is_finite = true;
+            for row in 0..dimension {
+                let value = (grad_plus[row] - grad_minus[row]) / denom;
+                if !value.is_finite() {
+                    column_is_finite = false;
+                    break;
+                }
+                column_values[row] = value;
+            }
+
+            if column_is_finite {
+                for row in 0..dimension {
+                    hessian[[row, column]] = column_values[row];
+                }
+                computed = true;
+                break;
+            }
+        }
+
+        if !computed {
+            for row in 0..dimension {
+                hessian[[row, column]] = 0.0;
+            }
         }
     }
 
@@ -2023,19 +2071,18 @@ impl Gradient for SplineProblem {
         let mut gradient = Array1::zeros(param_slice.len());
         for (index, gradient_value) in gradient.iter_mut().enumerate() {
             // Численный градиент по центральной схеме конечной разности.
-            let step =
+            let base_step =
                 ((param_slice[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
-            probe[index] = param_slice[index] + step;
-            let cost_plus = self.evaluate_objective(array1_as_slice(&probe));
-            probe[index] = param_slice[index] - step;
-            let cost_minus = self.evaluate_objective(array1_as_slice(&probe));
-            probe[index] = param_slice[index];
-            let derivative = (cost_plus - cost_minus) / (2.0 * step);
-            *gradient_value = if derivative.is_finite() {
-                derivative
-            } else {
-                LARGE_COST
-            };
+            let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
+                let step = base_step * factor;
+                probe[index] = param_slice[index] + step;
+                let cost_plus = self.evaluate_objective(array1_as_slice(&probe));
+                probe[index] = param_slice[index] - step;
+                let cost_minus = self.evaluate_objective(array1_as_slice(&probe));
+                probe[index] = param_slice[index];
+                finite_central_difference(cost_plus, cost_minus, step)
+            });
+            *gradient_value = derivative.unwrap_or(LARGE_COST);
         }
         Ok(gradient)
     }

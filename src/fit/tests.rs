@@ -1,24 +1,26 @@
 use super::simd;
 use super::{
     CurveProblem, CurveProblemPredictionLoss, DEFAULT_SPLINE_KNOTS, FitError,
-    IncrementalSplineFitRunner, IncrementalSplineFitStep, MetricQuantization,
-    MetricQuantizationDecimalPlaces, OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy,
-    SplineExtrapolation, SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy,
-    approximate_spline_knots, build_spline_initial_curve_from_knot_y,
-    build_spline_result_from_knot_y, calculate_iteration_metrics,
-    calculate_iteration_metrics_with_quantization, calculate_metrics, evaluate_linear_spline,
-    expanded_spline_curve_x_bounds, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
-    fit_curve_with_optimizer_config, fit_curve_with_progress,
-    fit_curve_with_progress_and_optimizer_config,
+    HESSIAN_DIAGONAL_JITTER, HESSIAN_FD_MIN_STEP, HESSIAN_FD_REL_STEP, IncrementalSplineFitRunner,
+    IncrementalSplineFitStep, MetricQuantization, MetricQuantizationDecimalPlaces,
+    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
+    SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy, approximate_spline_knots,
+    build_spline_initial_curve_from_knot_y, build_spline_result_from_knot_y,
+    calculate_iteration_metrics, calculate_iteration_metrics_with_quantization, calculate_metrics,
+    evaluate_linear_spline, expanded_spline_curve_x_bounds, fit_akima_spline,
+    fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
+    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
     fit_linear_spline_with_config, fit_monotone_cubic_spline, fit_natural_cubic_spline,
-    sorted_points_with_duplicate_policy,
+    numerical_hessian_from_gradient, sorted_points_with_duplicate_policy,
 };
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, InputError, LbfgsConfig, NelderMeadConfig,
     NewtonCgConfig, OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 use crate::models::{self, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss};
+use argmin::core::Gradient;
+use ndarray::Array1;
 
 #[derive(Clone, Copy)]
 struct MsePredictionLoss;
@@ -63,6 +65,115 @@ fn quantization(decimal_places: u8) -> MetricQuantization {
         MetricQuantizationDecimalPlaces::try_new(decimal_places)
             .expect("test decimal places must be valid"),
     )
+}
+
+struct RetryGradientProblem {
+    center: f64,
+    invalid_step: f64,
+}
+
+struct AlwaysInvalidGradientProblem;
+
+impl Gradient for RetryGradientProblem {
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        let delta = (param[0] - self.center).abs();
+        if (delta - self.invalid_step).abs() <= 1e-14 {
+            return Ok(Array1::from_vec(vec![f64::NAN]));
+        }
+        Ok(Array1::from_vec(vec![2.0 * param[0]]))
+    }
+}
+
+impl Gradient for AlwaysInvalidGradientProblem {
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        Ok(Array1::from_vec(vec![f64::NAN; param.len()]))
+    }
+}
+
+#[test]
+fn central_diff_gradient_retries_step_when_primary_step_is_invalid() {
+    let param = [1.0_f64];
+    let rel_step = 1e-3;
+    let min_step = 1e-3;
+    let base_step = ((param[0].abs() + 1.0) * rel_step).max(min_step);
+    let mut gradient = [0.0];
+    models::central_diff_gradient_from_value(
+        &param,
+        rel_step,
+        min_step,
+        |probe| {
+            let delta = (probe[0] - param[0]).abs();
+            if (delta - base_step).abs() <= 1e-14 {
+                f64::NAN
+            } else {
+                probe[0] * probe[0]
+            }
+        },
+        &mut gradient,
+    );
+
+    assert_near(gradient[0], 2.0, 1e-10);
+}
+
+#[test]
+fn central_diff_hessian_retries_step_when_primary_step_is_invalid() {
+    let param = [1.0_f64];
+    let rel_step = 1e-3;
+    let min_step = 1e-3;
+    let base_step = ((param[0].abs() + 1.0) * rel_step).max(min_step);
+    let hessian = models::central_diff_hessian_from_gradient(
+        &param,
+        rel_step,
+        min_step,
+        |probe, gradient_out| {
+            let delta = (probe[0] - param[0]).abs();
+            gradient_out[0] = if (delta - base_step).abs() <= 1e-14 {
+                f64::NAN
+            } else {
+                2.0 * probe[0]
+            };
+        },
+    );
+
+    assert_near(hessian[[0, 0]], 2.0, 1e-10);
+}
+
+#[test]
+fn fit_numerical_hessian_retries_step_when_primary_step_is_invalid() {
+    let param = Array1::from_vec(vec![1.0_f64]);
+    let base_step = ((param[0].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
+    let problem = RetryGradientProblem {
+        center: param[0],
+        invalid_step: base_step,
+    };
+    let hessian =
+        numerical_hessian_from_gradient(&problem, &param).expect("hessian must be computed");
+
+    assert_near(hessian[[0, 0]], 2.0 + HESSIAN_DIAGONAL_JITTER, 1e-10);
+}
+
+#[test]
+fn central_diff_gradient_falls_back_to_zero_when_all_retry_steps_invalid() {
+    let param = [1.0_f64];
+    let mut gradient = [123.0];
+    models::central_diff_gradient_from_value(&param, 1e-3, 1e-3, |_probe| f64::NAN, &mut gradient);
+
+    assert_eq!(gradient[0], 0.0);
+}
+
+#[test]
+fn fit_numerical_hessian_falls_back_to_diagonal_jitter_when_all_retry_steps_invalid() {
+    let param = Array1::from_vec(vec![1.0_f64]);
+    let hessian = numerical_hessian_from_gradient(&AlwaysInvalidGradientProblem, &param)
+        .expect("hessian must be computed even with invalid gradients");
+
+    assert_near(hessian[[0, 0]], HESSIAN_DIAGONAL_JITTER, 1e-15);
 }
 
 #[test]

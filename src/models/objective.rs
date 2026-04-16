@@ -172,9 +172,30 @@ where
     }
 }
 
+// Пробуем базовый шаг, затем уменьшаем/увеличиваем его, чтобы переживать локальные NaN/Inf.
+const FD_STEP_RETRY_FACTORS: [f64; 5] = [1.0, 0.5, 2.0, 0.25, 4.0];
+
 #[inline]
 fn fd_step(value: f64, rel_step: f64, min_step: f64) -> f64 {
     ((value.abs() + 1.0) * rel_step).max(min_step)
+}
+
+#[inline]
+fn finite_central_difference(value_plus: f64, value_minus: f64, step: f64) -> Option<f64> {
+    if !value_plus.is_finite() || !value_minus.is_finite() {
+        return None;
+    }
+    let derivative = (value_plus - value_minus) / (2.0 * step);
+    if derivative.is_finite() {
+        Some(derivative)
+    } else {
+        None
+    }
+}
+
+#[inline]
+fn finite_slice(values: &[f64]) -> bool {
+    values.iter().all(|value| value.is_finite())
 }
 
 pub(crate) fn central_diff_gradient_from_value<F>(
@@ -190,14 +211,17 @@ pub(crate) fn central_diff_gradient_from_value<F>(
     let mut probe = param.to_vec();
     let mut index = 0;
     while index < param.len() {
-        let step = fd_step(param[index], rel_step, min_step);
-        probe[index] = param[index] + step;
-        let value_plus = value_at(&probe);
-        probe[index] = param[index] - step;
-        let value_minus = value_at(&probe);
-        probe[index] = param[index];
-        let value = (value_plus - value_minus) / (2.0 * step);
-        gradient[index] = if value.is_finite() { value } else { 0.0 };
+        let base_step = fd_step(param[index], rel_step, min_step);
+        let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
+            let step = base_step * factor;
+            probe[index] = param[index] + step;
+            let value_plus = value_at(&probe);
+            probe[index] = param[index] - step;
+            let value_minus = value_at(&probe);
+            probe[index] = param[index];
+            finite_central_difference(value_plus, value_minus, step)
+        });
+        gradient[index] = derivative.unwrap_or(0.0);
         index += 1;
     }
 }
@@ -216,22 +240,54 @@ where
     let mut probe = param.to_vec();
     let mut grad_plus = vec![0.0; dimension];
     let mut grad_minus = vec![0.0; dimension];
+    let mut column_values = vec![0.0; dimension];
 
     let mut column = 0;
     while column < dimension {
-        let step = fd_step(param[column], rel_step, min_step);
-        probe[column] = param[column] + step;
-        gradient_at(&probe, &mut grad_plus);
-        probe[column] = param[column] - step;
-        gradient_at(&probe, &mut grad_minus);
-        probe[column] = param[column];
+        let base_step = fd_step(param[column], rel_step, min_step);
+        let mut computed = false;
+        for factor in FD_STEP_RETRY_FACTORS {
+            let step = base_step * factor;
+            probe[column] = param[column] + step;
+            gradient_at(&probe, &mut grad_plus);
+            probe[column] = param[column] - step;
+            gradient_at(&probe, &mut grad_minus);
+            probe[column] = param[column];
 
-        let denom = 2.0 * step;
-        let mut row = 0;
-        while row < dimension {
-            let value = (grad_plus[row] - grad_minus[row]) / denom;
-            hessian[[row, column]] = if value.is_finite() { value } else { 0.0 };
-            row += 1;
+            if !finite_slice(&grad_plus) || !finite_slice(&grad_minus) {
+                continue;
+            }
+
+            let denom = 2.0 * step;
+            let mut row = 0;
+            let mut column_is_finite = true;
+            while row < dimension {
+                let value = (grad_plus[row] - grad_minus[row]) / denom;
+                if !value.is_finite() {
+                    column_is_finite = false;
+                    break;
+                }
+                column_values[row] = value;
+                row += 1;
+            }
+
+            if column_is_finite {
+                let mut row = 0;
+                while row < dimension {
+                    hessian[[row, column]] = column_values[row];
+                    row += 1;
+                }
+                computed = true;
+                break;
+            }
+        }
+
+        if !computed {
+            let mut row = 0;
+            while row < dimension {
+                hessian[[row, column]] = 0.0;
+                row += 1;
+            }
         }
         column += 1;
     }
