@@ -315,6 +315,52 @@ impl CurveFitApp {
         }
     }
 
+    pub(super) fn can_move_points_to_positive_xy(&mut self) -> bool {
+        matches!(
+            &self.points_cache_with_policy(false).parsed_points,
+            Ok(points) if !points.is_empty()
+        )
+    }
+
+    pub(super) fn move_points_to_positive_xy(&mut self) {
+        let points = match &self.points_cache_with_policy(true).parsed_points {
+            Ok(points) if !points.is_empty() => points,
+            Ok(_) => return,
+            Err(error) => {
+                self.status = Some(StatusMessage::Error(format!(
+                    "{POINTS_PARSE_ERROR_PREFIX}{error}"
+                )));
+                return;
+            }
+        };
+
+        let mut min_x = points[0].x();
+        let mut min_y = points[0].y();
+        for point in points.iter().skip(1) {
+            min_x = min_x.min(point.x());
+            min_y = min_y.min(point.y());
+        }
+
+        let dx = (POINTS_POSITIVE_AXIS_EPS - min_x).max(0.0);
+        let dy = (POINTS_POSITIVE_AXIS_EPS - min_y).max(0.0);
+
+        let shifted = match points
+            .iter()
+            .map(|point| Point::try_new(point.x() + dx, point.y() + dy))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(points) => points,
+            Err(error) => {
+                self.status = Some(StatusMessage::Error(format!(
+                    "Failed to move points to positive x/y: {error}"
+                )));
+                return;
+            }
+        };
+
+        self.write_points_text(&shifted, true);
+    }
+
     pub(super) fn fill_points_with_residuals(&mut self) {
         if self.residual_plot_points.is_empty() {
             return;

@@ -113,6 +113,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         );
     }
     let can_fill_with_residuals = can_edit_points && !app.residual_plot_points.is_empty();
+    let can_move_points_to_positive_xy = can_edit_points && app.can_move_points_to_positive_xy();
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
@@ -156,6 +157,20 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                         .clicked()
                     {
                         app.fill_points_with_residuals();
+                        ui.close();
+                    }
+                    if ui
+                        .add_enabled(
+                            can_move_points_to_positive_xy,
+                            egui::Button::new(tr(
+                                language,
+                                "Move to positive x/y",
+                                "Перенести в +X/+Y",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        app.move_points_to_positive_xy();
                         ui.close();
                     }
                 });

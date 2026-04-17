@@ -109,6 +109,7 @@ const RIGHT_PANEL_MIN_WIDTH: f32 = 280.0;
 const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
+const POINTS_POSITIVE_AXIS_EPS: f64 = 1e-6;
 const UI_CORNER_RADIUS: u8 = 6;
 const PANEL_INNER_MARGIN_X: i8 = 10;
 const PANEL_INNER_MARGIN_Y: i8 = 8;
