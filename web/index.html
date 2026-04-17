@@ -7,7 +7,8 @@
   <meta name="description"
     content="Curve fitting training app for exploring models and spline approximation by points. Интерактивное приложение для подбора кривых и сплайн-аппроксимации по точкам." />
   <meta name="robots" content="index,follow" />
-  <meta name="theme-color" content="#f4f6f8" />
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f6f8" />
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#12181e" />
   <link rel="canonical" href="https://curve-fit.hexq.ru/" />
   <link data-trunk rel="copy-file" href="favicon.svg" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" sizes="any" />
@@ -48,6 +49,25 @@
   </script>
   <title>curve-fit</title>
   <style>
+    :root {
+      color-scheme: light dark;
+      --app-bg: #f4f6f8;
+      --app-loader-text: #2d3a45;
+      --app-loader-spinner: #d0d7de;
+      --app-loader-spinner-top: #4f6f8a;
+      --app-loader-error: #8b1e1e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --app-bg: #12181e;
+        --app-loader-text: #dce3ea;
+        --app-loader-spinner: #32404d;
+        --app-loader-spinner-top: #86b5de;
+        --app-loader-error: #ff9a9a;
+      }
+    }
+
     html,
     body {
       margin: 0;
@@ -60,7 +80,7 @@
         "Noto Sans",
         "Noto Sans Symbols 2",
         sans-serif;
-      background: #f4f6f8;
+      background: var(--app-bg);
     }
 
     #curve_fit_canvas {
@@ -76,7 +96,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #f4f6f8;
+      background: var(--app-bg);
       transition: opacity 0.2s ease, visibility 0.2s ease;
     }
 
@@ -85,14 +105,14 @@
       flex-direction: column;
       align-items: center;
       gap: 0.875rem;
-      color: #2d3a45;
+      color: var(--app-loader-text);
     }
 
     #app_loader_spinner {
       width: 2.25rem;
       height: 2.25rem;
-      border: 0.22rem solid #d0d7de;
-      border-top-color: #4f6f8a;
+      border: 0.22rem solid var(--app-loader-spinner);
+      border-top-color: var(--app-loader-spinner-top);
       border-radius: 50%;
       animation: app-loader-spin 0.75s linear infinite;
     }
@@ -103,7 +123,7 @@
     }
 
     .app-loader-error #app_loader_status {
-      color: #8b1e1e;
+      color: var(--app-loader-error);
     }
 
     @keyframes app-loader-spin {
