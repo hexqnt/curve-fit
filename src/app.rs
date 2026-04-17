@@ -669,6 +669,32 @@ impl ActiveOptimizerViewMut<'_> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ActiveOptimizerSnapshot {
+    Lbfgs(LbfgsInputState),
+    NelderMead(NelderMeadInputState),
+    SteepestDescent(SteepestDescentInputState),
+    NewtonCg(NewtonCgInputState),
+    Sgd(SgdInputState),
+    Adam(AdamInputState),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RightPanelFitSnapshot {
+    selected_model: ModelChoice,
+    polynomial_degree: usize,
+    parameter_inputs: Vec<String>,
+    spline_knots: usize,
+    spline_knot_strategy: SplineKnotStrategy,
+    spline_extrapolation: SplineExtrapolation,
+    spline_duplicate_x_policy: SplineDuplicateXPolicy,
+    spline_initial_knot_y_inputs: Vec<String>,
+    optimization_loss_metric: OptimizationLossMetric,
+    metric_quantization_enabled: bool,
+    metric_quantization_decimal_places: u8,
+    optimizer: ActiveOptimizerSnapshot,
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 enum FitWorkerMessage {
@@ -760,6 +786,9 @@ pub struct CurveFitApp {
     spline_extrapolation: SplineExtrapolation,
     spline_duplicate_x_policy: SplineDuplicateXPolicy,
     spline_initial_knot_y_inputs: Vec<String>,
+    auto_refit_enabled: bool,
+    auto_refit_pending_rerun: bool,
+    last_right_panel_fit_snapshot: Option<RightPanelFitSnapshot>,
     fit_in_progress: bool,
     fit_loss_metric: OptimizationLossMetric,
     fit_metric_quantization: MetricQuantization,
@@ -874,6 +903,79 @@ impl CurveFitApp {
 
     fn optimizer_config(&self) -> Result<OptimizerConfig, String> {
         self.active_optimizer_view().config()
+    }
+
+    fn capture_active_optimizer_snapshot(&self) -> ActiveOptimizerSnapshot {
+        match self.optimizer_method {
+            OptimizerMethod::Lbfgs => ActiveOptimizerSnapshot::Lbfgs(self.lbfgs_inputs.clone()),
+            OptimizerMethod::NelderMead => {
+                ActiveOptimizerSnapshot::NelderMead(self.nelder_mead_inputs.clone())
+            }
+            OptimizerMethod::SteepestDescent => {
+                ActiveOptimizerSnapshot::SteepestDescent(self.steepest_descent_inputs.clone())
+            }
+            OptimizerMethod::NewtonCg => {
+                ActiveOptimizerSnapshot::NewtonCg(self.newton_cg_inputs.clone())
+            }
+            OptimizerMethod::Sgd => ActiveOptimizerSnapshot::Sgd(self.sgd_inputs.clone()),
+            OptimizerMethod::Adam => ActiveOptimizerSnapshot::Adam(self.adam_inputs.clone()),
+        }
+    }
+
+    fn capture_right_panel_fit_snapshot(&self) -> RightPanelFitSnapshot {
+        RightPanelFitSnapshot {
+            selected_model: self.selected_model,
+            polynomial_degree: self.polynomial_degree,
+            parameter_inputs: self.parameter_inputs.clone(),
+            spline_knots: self.spline_knots,
+            spline_knot_strategy: self.spline_knot_strategy,
+            spline_extrapolation: self.spline_extrapolation,
+            spline_duplicate_x_policy: self.spline_duplicate_x_policy,
+            spline_initial_knot_y_inputs: self.spline_initial_knot_y_inputs.clone(),
+            optimization_loss_metric: self.optimization_loss_metric,
+            metric_quantization_enabled: self.metric_quantization_enabled,
+            metric_quantization_decimal_places: self.metric_quantization_decimal_places,
+            optimizer: self.capture_active_optimizer_snapshot(),
+        }
+    }
+
+    fn track_right_panel_fit_changes_and_maybe_refit(&mut self) {
+        let snapshot = self.capture_right_panel_fit_snapshot();
+        let Some(last_snapshot) = self.last_right_panel_fit_snapshot.as_mut() else {
+            self.last_right_panel_fit_snapshot = Some(snapshot);
+            return;
+        };
+
+        if *last_snapshot == snapshot {
+            return;
+        }
+
+        *last_snapshot = snapshot;
+
+        if !self.auto_refit_enabled {
+            return;
+        }
+
+        if self.fit_in_progress {
+            self.auto_refit_pending_rerun = true;
+            return;
+        }
+
+        self.run_fit();
+    }
+
+    fn maybe_run_pending_auto_refit(&mut self) {
+        if !self.auto_refit_enabled {
+            self.auto_refit_pending_rerun = false;
+            return;
+        }
+
+        if !self.auto_refit_pending_rerun || self.fit_in_progress {
+            return;
+        }
+
+        self.auto_refit_pending_rerun = false;
+        self.run_fit();
     }
 
     fn auto_spline_samples(points_len: usize, knots: usize) -> usize {
@@ -1384,6 +1486,9 @@ impl Default for CurveFitApp {
             spline_extrapolation: SplineExtrapolation::default(),
             spline_duplicate_x_policy: SplineDuplicateXPolicy::default(),
             spline_initial_knot_y_inputs: Vec::new(),
+            auto_refit_enabled: false,
+            auto_refit_pending_rerun: false,
+            last_right_panel_fit_snapshot: None,
             replay: ReplayState::default(),
             fit_in_progress: false,
             fit_loss_metric: OptimizationLossMetric::default(),
@@ -1419,6 +1524,7 @@ impl eframe::App for CurveFitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Self::apply_visual_style(ctx);
         self.poll_fit_worker(ctx);
+        self.maybe_run_pending_auto_refit();
         self.tick_replay(ctx);
         self.poll_points_clipboard_import(ctx);
         self.maybe_refresh_points_cache_after_debounce();
@@ -1529,6 +1635,7 @@ impl eframe::App for CurveFitApp {
                         },
                     );
                 });
+            self.track_right_panel_fit_changes_and_maybe_refit();
         }
 
         self.ui_formula_window(&ctx);

@@ -634,6 +634,9 @@ impl CurveFitApp {
             return;
         }
 
+        self.last_right_panel_fit_snapshot = Some(self.capture_right_panel_fit_snapshot());
+        self.auto_refit_pending_rerun = false;
+
         let points = match self.parse_points_strict() {
             Ok(points) => points,
             Err(error) => {

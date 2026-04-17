@@ -148,6 +148,9 @@ fn optimization_metric_defaults_to_mse() {
     assert_eq!(app.optimization_loss_metric, OptimizationLossMetric::Mse);
     assert_eq!(app.fit_loss_metric, OptimizationLossMetric::Mse);
     assert!(!app.metric_quantization_enabled);
+    assert!(!app.auto_refit_enabled);
+    assert!(!app.auto_refit_pending_rerun);
+    assert!(app.last_right_panel_fit_snapshot.is_none());
     assert_eq!(
         app.metric_quantization_decimal_places,
         super::DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES
@@ -1039,6 +1042,102 @@ fn wait_fit_completion(app: &mut CurveFitApp) {
         std::thread::sleep(Duration::from_millis(1));
     }
     panic!("fit did not complete in time");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn auto_refit_first_snapshot_only_initializes_baseline() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_enabled = true;
+
+    assert!(app.last_right_panel_fit_snapshot.is_none());
+    app.track_right_panel_fit_changes_and_maybe_refit();
+    assert!(app.last_right_panel_fit_snapshot.is_some());
+    assert!(!app.fit_in_progress);
+    assert!(!app.auto_refit_pending_rerun);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn auto_refit_runs_fit_when_right_panel_settings_change_in_idle() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_enabled = true;
+    app.track_right_panel_fit_changes_and_maybe_refit();
+
+    app.optimization_loss_metric = OptimizationLossMetric::Mae;
+    app.track_right_panel_fit_changes_and_maybe_refit();
+
+    assert!(app.fit_in_progress);
+    wait_fit_completion(&mut app);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn auto_refit_queues_rerun_when_settings_change_during_fit() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_enabled = true;
+    app.track_right_panel_fit_changes_and_maybe_refit();
+    app.run_fit();
+    assert!(app.fit_in_progress);
+
+    app.metric_quantization_enabled = true;
+    app.metric_quantization_decimal_places = 2;
+    app.track_right_panel_fit_changes_and_maybe_refit();
+
+    assert!(app.fit_in_progress);
+    assert!(app.auto_refit_pending_rerun);
+    assert!(!matches!(app.status, Some(StatusMessage::FittingStopping)));
+    wait_fit_completion(&mut app);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn auto_refit_pending_rerun_starts_after_fit_transitions_to_idle() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_enabled = true;
+    app.track_right_panel_fit_changes_and_maybe_refit();
+    app.run_fit();
+    assert!(app.fit_in_progress);
+
+    app.parameter_inputs[0] = "0.1".to_string();
+    app.track_right_panel_fit_changes_and_maybe_refit();
+    assert!(app.auto_refit_pending_rerun);
+
+    wait_fit_completion(&mut app);
+    assert!(!app.fit_in_progress);
+    assert!(app.auto_refit_pending_rerun);
+
+    app.maybe_run_pending_auto_refit();
+    assert!(app.fit_in_progress);
+    assert!(!app.auto_refit_pending_rerun);
+    wait_fit_completion(&mut app);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn disabling_auto_refit_clears_pending_rerun_without_starting_fit() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_enabled = true;
+    app.auto_refit_pending_rerun = true;
+
+    app.auto_refit_enabled = false;
+    app.maybe_run_pending_auto_refit();
+
+    assert!(!app.auto_refit_pending_rerun);
+    assert!(!app.fit_in_progress);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn run_fit_clears_pending_auto_refit_rerun_flag() {
+    let mut app = make_linear_fit_app();
+    app.auto_refit_pending_rerun = true;
+
+    app.run_fit();
+
+    assert!(app.fit_in_progress);
+    assert!(!app.auto_refit_pending_rerun);
+    wait_fit_completion(&mut app);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

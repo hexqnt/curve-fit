@@ -376,7 +376,7 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui_fit_action_button(app, ui, false);
+    ui_fit_action_button(app, ui, false, true);
     if app.fit_in_progress
         && let Some(iteration) = app.fit_preview_iteration
     {
@@ -388,10 +388,15 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 }
 
 pub(super) fn ui_optimizer_action_button_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
-    ui_fit_action_button(app, ui, true);
+    ui_fit_action_button(app, ui, true, false);
 }
 
-fn ui_fit_action_button(app: &mut CurveFitApp, ui: &mut egui::Ui, compact: bool) {
+fn ui_fit_action_button(
+    app: &mut CurveFitApp,
+    ui: &mut egui::Ui,
+    compact: bool,
+    show_auto_refit_toggle: bool,
+) {
     let (fill, stroke, text_color) = CurveFitApp::action_button_style(ui, app.fit_in_progress);
     let (icon, text) = if app.fit_in_progress {
         (
@@ -405,24 +410,40 @@ fn ui_fit_action_button(app: &mut CurveFitApp, ui: &mut egui::Ui, compact: bool)
         )
     };
 
-    let min_size = if compact {
-        egui::vec2(COMPACT_FIT_BUTTON_WIDTH, COMPACT_FIT_BUTTON_HEIGHT)
-    } else {
-        egui::vec2(ui.available_width(), FULL_FIT_BUTTON_HEIGHT)
-    };
-    let action_button =
-        egui::Button::image_and_text(icon, egui::RichText::new(text).strong().color(text_color))
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if show_auto_refit_toggle {
+                let auto_refit_response = CurveFitApp::toggle_switch_labeled(
+                    ui,
+                    &mut app.auto_refit_enabled,
+                    tr(app.ui_language, "Auto-refit", "Авто-рефит"),
+                );
+                let _ =
+                    CurveFitApp::info_hover(auto_refit_response, auto_refit_hint(app.ui_language));
+            }
+
+            let min_size = if compact {
+                egui::vec2(COMPACT_FIT_BUTTON_WIDTH, COMPACT_FIT_BUTTON_HEIGHT)
+            } else {
+                egui::vec2(ui.available_width(), FULL_FIT_BUTTON_HEIGHT)
+            };
+            let action_button = egui::Button::image_and_text(
+                icon,
+                egui::RichText::new(text).strong().color(text_color),
+            )
             .min_size(min_size)
             .fill(fill)
             .stroke(stroke)
             .corner_radius(egui::CornerRadius::same(UI_CORNER_RADIUS + 1));
-    if ui.add(action_button).clicked() {
-        if app.fit_in_progress {
-            app.request_stop_fit();
-        } else {
-            app.run_fit();
-        }
-    }
+            if ui.add(action_button).clicked() {
+                if app.fit_in_progress {
+                    app.request_stop_fit();
+                } else {
+                    app.run_fit();
+                }
+            }
+        });
+    });
 }
 
 fn optimizer_mode_hint(language: UiLanguage, mode: OptimizerUiMode) -> &'static str {
@@ -438,4 +459,12 @@ fn optimizer_mode_hint(language: UiLanguage, mode: OptimizerUiMode) -> &'static 
             "Продвинутый режим\n- Параметры решателя настраиваются напрямую бегунками\n- Любое ручное изменение переводит пресет в Custom\n- Используйте, если сходимость медленная или нестабильная",
         ),
     }
+}
+
+fn auto_refit_hint(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Auto-refit\n- Re-runs fit when right-panel fit settings change\n- If fit is already running, one rerun is queued after completion\n- Applies to model/initial parameters, optimization metric, and optimizer settings",
+        "Авто-рефит\n- Повторно запускает фит при изменении fit-настроек в правой панели\n- Если фит уже выполняется, один перезапуск ставится в очередь после завершения\n- Применяется к модели/начальным параметрам, метрике оптимизации и настройкам оптимизатора",
+    )
 }
