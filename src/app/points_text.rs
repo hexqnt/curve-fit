@@ -52,6 +52,150 @@ fn parse_point_line(line_number: usize, raw_line: &str) -> Result<Option<Point>,
     Ok(Some(point))
 }
 
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+fn is_number_start_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || matches!(byte, b'+' | b'-' | b'.' | b',')
+}
+
+fn is_digit_after_disallowed_prefix(bytes: &[u8], index: usize) -> bool {
+    if index == 0 || !bytes[index].is_ascii_digit() {
+        return false;
+    }
+
+    matches!(bytes[index - 1], b'+' | b'-' | b'.' | b',')
+}
+
+fn parse_numeric_token_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut index = start;
+    if matches!(bytes[index], b'+' | b'-') {
+        index += 1;
+        if index >= bytes.len() {
+            return None;
+        }
+    }
+
+    let integer_start = index;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        index += 1;
+    }
+    let has_integer = index > integer_start;
+
+    let mut has_fraction = false;
+    if index < bytes.len() && matches!(bytes[index], b'.' | b',') {
+        index += 1;
+        let fraction_start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        has_fraction = index > fraction_start;
+    }
+
+    if !has_integer && !has_fraction {
+        return None;
+    }
+
+    if index < bytes.len() && matches!(bytes[index], b'e' | b'E') {
+        let exponent_marker_index = index;
+        index += 1;
+        if index < bytes.len() && matches!(bytes[index], b'+' | b'-') {
+            index += 1;
+        }
+        let exponent_start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        if index == exponent_start {
+            // Экспонента без цифр не считается частью токена.
+            index = exponent_marker_index;
+        }
+    }
+
+    Some(index)
+}
+
+fn clipboard_numeric_tokens(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let mut tokens = Vec::with_capacity(4);
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let current = bytes[index];
+        if !is_number_start_byte(current) {
+            index += 1;
+            continue;
+        }
+
+        if is_digit_after_disallowed_prefix(bytes, index) {
+            index += 1;
+            continue;
+        }
+
+        let previous_is_word = index > 0 && is_word_byte(bytes[index - 1]);
+        if previous_is_word {
+            index += 1;
+            continue;
+        }
+
+        let Some(end) = parse_numeric_token_end(bytes, index) else {
+            index += 1;
+            continue;
+        };
+        if end <= index {
+            index += 1;
+            continue;
+        }
+
+        tokens.push(&line[index..end]);
+        index = end;
+    }
+
+    tokens
+}
+
+/// Парсит произвольный текст из буфера обмена в список точек `(x, y)`.
+///
+/// Правила:
+/// - строки без числовых токенов пропускаются;
+/// - строка с 1 числом или 3+ числами считается ошибкой;
+/// - строка с ровно 2 числами конвертируется в точку.
+pub(super) fn parse_points_from_clipboard_text(text: &str) -> Result<Vec<Point>, String> {
+    let mut points = Vec::new();
+
+    for (line_index, raw_line) in text.lines().enumerate() {
+        let line_number = line_index + 1;
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let numeric_tokens = clipboard_numeric_tokens(line);
+        match numeric_tokens.len() {
+            0 => continue,
+            2 => {
+                let x = parse_f64(&format!("line {line_number} x"), numeric_tokens[0])?;
+                let y = parse_f64(&format!("line {line_number} y"), numeric_tokens[1])?;
+                let point =
+                    Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))?;
+                points.push(point);
+            }
+            count => {
+                return Err(format!(
+                    "Line {line_number}: expected exactly two numeric values, got {count}"
+                ));
+            }
+        }
+    }
+
+    if points.is_empty() {
+        return Err("No valid points found in clipboard text".to_string());
+    }
+
+    Ok(points)
+}
+
 /// Парсит многострочный ввод точек и подготавливает данные для графика.
 ///
 /// При наличии ошибок возвращает первую ошибку парсинга,
@@ -102,4 +246,95 @@ pub(super) fn points_to_text(points: &[Point]) -> String {
             .expect("writing points to String must succeed");
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "expected {expected}, got {actual}, tolerance {tolerance}"
+        );
+    }
+
+    #[test]
+    fn clipboard_parser_accepts_mixed_delimiters() {
+        let text = "0 1\n2\t3\n4;5\n6|7\n8/9";
+        let points = parse_points_from_clipboard_text(text).expect("clipboard text must parse");
+        assert_eq!(points.len(), 5);
+        assert_approx_eq(points[0].x(), 0.0, 1e-12);
+        assert_approx_eq(points[0].y(), 1.0, 1e-12);
+        assert_approx_eq(points[4].x(), 8.0, 1e-12);
+        assert_approx_eq(points[4].y(), 9.0, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_parser_supports_decimal_comma_and_scientific_notation() {
+        let text = "1,23e-3;4.5E+1\n-2,5\t6,0e2";
+        let points = parse_points_from_clipboard_text(text).expect("clipboard text must parse");
+        assert_eq!(points.len(), 2);
+        assert_approx_eq(points[0].x(), 1.23e-3, 1e-15);
+        assert_approx_eq(points[0].y(), 45.0, 1e-12);
+        assert_approx_eq(points[1].x(), -2.5, 1e-12);
+        assert_approx_eq(points[1].y(), 600.0, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_parser_allows_extra_non_numeric_columns() {
+        let text = "sample_a alpha x=1.5 beta y=2,75 note";
+        let points = parse_points_from_clipboard_text(text).expect("clipboard text must parse");
+        assert_eq!(points.len(), 1);
+        assert_approx_eq(points[0].x(), 1.5, 1e-12);
+        assert_approx_eq(points[0].y(), 2.75, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_parser_skips_lines_without_numbers() {
+        let text = "name;value\nheader row\n1;2";
+        let points = parse_points_from_clipboard_text(text).expect("clipboard text must parse");
+        assert_eq!(points.len(), 1);
+        assert_approx_eq(points[0].x(), 1.0, 1e-12);
+        assert_approx_eq(points[0].y(), 2.0, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_parser_ignores_embedded_numbers_inside_labels() {
+        let text = "row-1 v1.2 label\nx=3 y=4";
+        let points = parse_points_from_clipboard_text(text).expect("clipboard text must parse");
+        assert_eq!(points.len(), 1);
+        assert_approx_eq(points[0].x(), 3.0, 1e-12);
+        assert_approx_eq(points[0].y(), 4.0, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_parser_fails_on_single_numeric_value_per_data_line() {
+        let error = parse_points_from_clipboard_text("row id=42")
+            .expect_err("line with one numeric value must fail");
+        assert!(
+            error.contains("Line 1: expected exactly two numeric values, got 1"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn clipboard_parser_fails_on_three_or_more_numeric_values() {
+        let error = parse_points_from_clipboard_text("1 2 3")
+            .expect_err("line with three numeric values must fail");
+        assert!(
+            error.contains("Line 1: expected exactly two numeric values, got 3"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn clipboard_parser_fails_when_no_points_are_found() {
+        let error = parse_points_from_clipboard_text(" \n\t\n")
+            .expect_err("empty clipboard payload must fail");
+        assert!(
+            error.contains("No valid points found in clipboard text"),
+            "unexpected error: {error}"
+        );
+    }
 }

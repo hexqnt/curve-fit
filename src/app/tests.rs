@@ -1373,6 +1373,54 @@ fn fill_points_with_residuals_is_noop_when_residuals_are_absent() {
 }
 
 #[test]
+fn clipboard_import_replaces_points_text_pushes_undo_and_clears_redo() {
+    let previous_text = "0 1\n1 2\n";
+    let mut app = CurveFitApp {
+        points: super::PointsEditorState {
+            text: previous_text.to_string(),
+            redo_stack: vec!["stale redo entry".to_string()],
+            ..Default::default()
+        },
+        status: Some(StatusMessage::Error(format!(
+            "{}previous error",
+            super::CLIPBOARD_IMPORT_ERROR_PREFIX
+        ))),
+        ..Default::default()
+    };
+
+    app.handle_points_clipboard_import_result(Ok("10\t20\n30;40".to_string()));
+
+    assert_eq!(
+        app.points.text,
+        "10.00000000 20.00000000\n30.00000000 40.00000000\n"
+    );
+    assert_eq!(app.points.undo_stack, vec![previous_text.to_string()]);
+    assert!(app.points.redo_stack.is_empty());
+    assert!(matches!(app.status, Some(StatusMessage::Ready)));
+}
+
+#[test]
+fn clipboard_import_error_keeps_existing_points_text() {
+    let previous_text = "0 1\n1 2\n";
+    let mut app = CurveFitApp {
+        points: super::PointsEditorState {
+            text: previous_text.to_string(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    app.handle_points_clipboard_import_result(Ok("1 2 3".to_string()));
+
+    assert_eq!(app.points.text, previous_text);
+    assert!(app.points.undo_stack.is_empty());
+    assert!(matches!(
+        app.status.as_ref(),
+        Some(StatusMessage::Error(message)) if message.starts_with(super::CLIPBOARD_IMPORT_ERROR_PREFIX)
+    ));
+}
+
+#[test]
 fn move_points_to_positive_xy_rebases_minimums_and_preserves_offsets() {
     let original = [(-2.0, -1.0), (0.0, 3.0), (5.0, -4.0)];
     let mut app = CurveFitApp {

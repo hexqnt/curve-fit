@@ -12,6 +12,7 @@ use egui_plot::{
     Points as PlotPointsItem, VLine,
 };
 
+mod clipboard_import;
 mod diagnostics;
 mod fit_worker;
 mod formula;
@@ -32,13 +33,14 @@ use self::formula::model_formula_info;
 #[cfg(not(target_arch = "wasm32"))]
 use self::formula::{formula_svg_bytes, formula_svg_uri};
 use self::i18n::{
-    actions_icon_image, center_origin_icon_image, clear_icon_image, family_label, fit_icon_image,
-    fit_to_content_icon_image, github_mark_image, language_flag_image, model_choice_label,
-    open_formula_icon_image, optimization_loss_metric_label, origin_bottom_left_icon_image,
-    panels_icon_image, param_init_method_disabled_label, param_init_method_label,
-    param_init_method_name_en, redo_icon_image, replay_pause_icon_image, replay_play_icon_image,
-    reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
-    stop_icon_image, tool_icon_image, tr, undo_icon_image, view_icon_image,
+    actions_icon_image, center_origin_icon_image, clear_icon_image, clipboard_import_icon_image,
+    family_label, fit_icon_image, fit_to_content_icon_image, github_mark_image,
+    language_flag_image, model_choice_label, open_formula_icon_image,
+    optimization_loss_metric_label, origin_bottom_left_icon_image, panels_icon_image,
+    param_init_method_disabled_label, param_init_method_label, param_init_method_name_en,
+    redo_icon_image, replay_pause_icon_image, replay_play_icon_image, reset_icon_image,
+    spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label, stop_icon_image,
+    tool_icon_image, tr, undo_icon_image, view_icon_image,
 };
 use self::normalization::ParametricNormalization;
 use self::optimizer::{
@@ -54,7 +56,9 @@ use self::param_init::{
 };
 use self::plot_utils::{fit_bounds_for_content, plot_domain};
 use self::points_state::{ParsedPointsCache, PointsEditorState};
-use self::points_text::{parse_f64, parse_points_text_cache, points_to_text};
+use self::points_text::{
+    parse_f64, parse_points_from_clipboard_text, parse_points_text_cache, points_to_text,
+};
 use self::replay::ReplayState;
 #[cfg(test)]
 use self::replay::{ReplayFrame, ReplayFramePayload};
@@ -86,6 +90,8 @@ use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
 
 const PARAMETRIC_PLOT_SAMPLES: usize = 200;
 const C1_MIN: f64 = 1e-8;
@@ -109,6 +115,9 @@ const RIGHT_PANEL_MIN_WIDTH: f32 = 280.0;
 const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
+const CLIPBOARD_IMPORT_ERROR_PREFIX: &str = "Clipboard import error: ";
+#[cfg(not(target_arch = "wasm32"))]
+const CLIPBOARD_IMPORT_PASTE_TIMEOUT_MS: u64 = 1_500;
 const POINTS_POSITIVE_AXIS_EPS: f64 = 1e-6;
 const UI_CORNER_RADIUS: u8 = 6;
 const PANEL_INNER_MARGIN_X: i8 = 10;
@@ -701,6 +710,14 @@ enum WasmFitJob {
 /// Состояние и UI-логика интерактивного приложения для подгонки кривых.
 pub struct CurveFitApp {
     points: PointsEditorState,
+    #[cfg(not(target_arch = "wasm32"))]
+    clipboard_import_request_pending: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    clipboard_import_requested_at: Option<Instant>,
+    #[cfg(target_arch = "wasm32")]
+    clipboard_import_web_in_flight: bool,
+    #[cfg(target_arch = "wasm32")]
+    clipboard_import_web_result: Rc<RefCell<Option<Result<String, String>>>>,
     selected_model: ModelChoice,
     polynomial_degree: usize,
     parameter_inputs: Vec<String>,
@@ -1316,6 +1333,14 @@ impl Default for CurveFitApp {
 
         Self {
             points: PointsEditorState::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            clipboard_import_request_pending: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            clipboard_import_requested_at: None,
+            #[cfg(target_arch = "wasm32")]
+            clipboard_import_web_in_flight: false,
+            #[cfg(target_arch = "wasm32")]
+            clipboard_import_web_result: Rc::new(RefCell::new(None)),
             selected_model,
             polynomial_degree,
             parameter_inputs: params_to_input_strings(&selected_family.default_params()),
@@ -1395,6 +1420,7 @@ impl eframe::App for CurveFitApp {
         Self::apply_visual_style(ctx);
         self.poll_fit_worker(ctx);
         self.tick_replay(ctx);
+        self.poll_points_clipboard_import(ctx);
         self.maybe_refresh_points_cache_after_debounce();
 
         if !self.fit_in_progress {
