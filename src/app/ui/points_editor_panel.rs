@@ -412,11 +412,11 @@ fn with_toolbar_hover_style(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut eg
         if dark_mode {
             widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(44, 64, 79);
             widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 148, 177));
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(96, 148, 177));
         } else {
             widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(196, 220, 232);
             widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(105, 160, 186));
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(105, 160, 186));
         }
         add_contents(ui);
     });

@@ -1232,23 +1232,24 @@ impl CurveFitApp {
                 visuals.faint_bg_color = egui::Color32::from_rgb(24, 30, 38);
                 visuals.extreme_bg_color = egui::Color32::from_rgb(8, 11, 16);
                 visuals.code_bg_color = egui::Color32::from_rgb(10, 20, 28);
-                visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_rgb(52, 70, 85));
+                visuals.window_stroke =
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(52, 70, 85));
                 visuals.selection.bg_fill = egui::Color32::from_rgb(22, 88, 120);
                 visuals.selection.stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(152, 226, 255));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(152, 226, 255));
                 visuals.hyperlink_color = egui::Color32::from_rgb(94, 204, 255);
                 visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(28, 35, 44);
                 visuals.widgets.inactive.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(52, 70, 85));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(52, 70, 85));
                 visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(34, 49, 61);
                 visuals.widgets.hovered.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 113, 138));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(70, 113, 138));
                 visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(27, 84, 108);
                 visuals.widgets.active.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(86, 171, 211));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(86, 171, 211));
                 visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(33, 57, 73);
                 visuals.widgets.open.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(72, 122, 150));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(72, 122, 150));
             } else {
                 visuals.panel_fill = egui::Color32::from_rgb(239, 245, 249);
                 visuals.window_fill = egui::Color32::from_rgb(246, 250, 252);
@@ -1256,23 +1257,23 @@ impl CurveFitApp {
                 visuals.extreme_bg_color = egui::Color32::from_rgb(251, 253, 255);
                 visuals.code_bg_color = egui::Color32::from_rgb(235, 245, 250);
                 visuals.window_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(165, 188, 201));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(165, 188, 201));
                 visuals.selection.bg_fill = egui::Color32::from_rgb(150, 214, 235);
                 visuals.selection.stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(20, 76, 96));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(20, 76, 96));
                 visuals.hyperlink_color = egui::Color32::from_rgb(0, 118, 163);
                 visuals.widgets.inactive.weak_bg_fill = egui::Color32::from_rgb(220, 234, 241);
                 visuals.widgets.inactive.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(163, 189, 203));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(163, 189, 203));
                 visuals.widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(208, 227, 237);
                 visuals.widgets.hovered.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(128, 170, 192));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(128, 170, 192));
                 visuals.widgets.active.weak_bg_fill = egui::Color32::from_rgb(183, 220, 236);
                 visuals.widgets.active.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(87, 151, 182));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(87, 151, 182));
                 visuals.widgets.open.weak_bg_fill = egui::Color32::from_rgb(198, 224, 236);
                 visuals.widgets.open.bg_stroke =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(103, 160, 188));
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(103, 160, 188));
             }
         });
     }
@@ -1285,7 +1286,7 @@ impl CurveFitApp {
             ))
             .fill(style.visuals.panel_fill)
             .stroke(egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 style.visuals.widgets.noninteractive.bg_stroke.color,
             ))
     }
@@ -1295,7 +1296,7 @@ impl CurveFitApp {
             .inner_margin(egui::Margin::symmetric(PANEL_INNER_MARGIN_X, 6))
             .fill(style.visuals.panel_fill)
             .stroke(egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 style.visuals.widgets.noninteractive.bg_stroke.color,
             ))
     }

@@ -134,26 +134,26 @@ fn ui_loss_diagnostics(
                                 PlotPoints::from_iter(loss_points.iter().copied()),
                             )
                             .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_LOSS))
-                            .width(1.9)
+                            .width(1.9_f32)
                             .color(loss_color),
                         );
                         if app.fit_loss_metric != OptimizationLossMetric::Mse {
                             plot_ui.line(
                                 Line::new("MSE", PlotPoints::from_iter(mse_points.iter().copied()))
                                     .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MSE))
-                                    .width(1.5),
+                                    .width(1.5_f32),
                             );
                         }
                         plot_ui.line(
                             Line::new("RMSE", PlotPoints::from_iter(rmse_points.iter().copied()))
                                 .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_RMSE))
-                                .width(1.5),
+                                .width(1.5_f32),
                         );
                         if app.fit_loss_metric != OptimizationLossMetric::Mae {
                             plot_ui.line(
                                 Line::new("MAE", PlotPoints::from_iter(mae_points.iter().copied()))
                                     .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAE))
-                                    .width(1.5),
+                                    .width(1.5_f32),
                             );
                         }
                         if app.fit_loss_metric != OptimizationLossMetric::SoftL1 {
@@ -163,13 +163,13 @@ fn ui_loss_diagnostics(
                                     PlotPoints::from_iter(soft_l1_points.iter().copied()),
                                 )
                                 .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_SOFT_L1))
-                                .width(1.5),
+                                .width(1.5_f32),
                             );
                         }
                         plot_ui.line(
                             Line::new("|R2|", PlotPoints::from_iter(r2_abs_points.iter().copied()))
                                 .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_R2_ABS))
-                                .width(1.5),
+                                .width(1.5_f32),
                         );
                         plot_ui.line(
                             Line::new(
@@ -177,7 +177,7 @@ fn ui_loss_diagnostics(
                                 PlotPoints::from_iter(max_abs_error_points.iter().copied()),
                             )
                             .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAX_ABS))
-                            .width(1.5),
+                            .width(1.5_f32),
                         );
                         if let Some(selected_iteration_x) = selected_iteration_x {
                             plot_ui.vline(
@@ -185,7 +185,7 @@ fn ui_loss_diagnostics(
                                     .id(egui::Id::new(
                                         DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_LOSS,
                                     ))
-                                    .width(1.0)
+                                    .width(1.0_f32)
                                     .color(selected_iteration_marker_color)
                                     .style(LineStyle::dashed_dense())
                                     .allow_hover(false),
@@ -228,7 +228,7 @@ fn ui_loss_diagnostics(
                                     name.clone(),
                                     PlotPoints::from_iter(series.iter().copied()),
                                 )
-                                .width(1.7),
+                                .width(1.7_f32),
                             );
                         }
                         if let Some(selected_iteration_x) = selected_iteration_x {
@@ -237,7 +237,7 @@ fn ui_loss_diagnostics(
                                     .id(egui::Id::new(
                                         DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_PARAMS,
                                     ))
-                                    .width(1.0)
+                                    .width(1.0_f32)
                                     .color(selected_iteration_marker_color)
                                     .style(LineStyle::dashed_dense())
                                     .allow_hover(false),
@@ -305,7 +305,7 @@ fn ui_residuals_diagnostics(
                             tr(language, "Zero", "Ноль"),
                             PlotPoints::from_iter(zero_line),
                         )
-                        .width(1.2)
+                        .width(1.2_f32)
                         .color(zero_color),
                     );
                     plot_ui.points(
@@ -313,7 +313,7 @@ fn ui_residuals_diagnostics(
                             tr(language, "Residuals", "Остатки"),
                             residual_points.as_slice(),
                         )
-                        .radius(2.3)
+                        .radius(2.3_f32)
                         .color(residual_color),
                     );
                 });

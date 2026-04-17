@@ -61,7 +61,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
         .fill(ui.visuals().extreme_bg_color)
         .stroke(egui::Stroke::new(
-            1.0,
+            1.0_f32,
             ui.visuals().widgets.noninteractive.bg_stroke.color,
         ))
         .show(ui, |ui| {

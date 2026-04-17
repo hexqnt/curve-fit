@@ -42,7 +42,7 @@ impl CurveFitApp {
             .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
             .fill(ui.visuals().faint_bg_color)
             .stroke(egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 ui.visuals().widgets.noninteractive.bg_stroke.color,
             ))
     }
@@ -135,26 +135,26 @@ impl CurveFitApp {
             if ui.visuals().dark_mode {
                 (
                     egui::Color32::from_rgb(120, 58, 49),
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(199, 99, 82)),
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(199, 99, 82)),
                     egui::Color32::from_rgb(255, 238, 232),
                 )
             } else {
                 (
                     egui::Color32::from_rgb(235, 208, 198),
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(194, 106, 85)),
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(194, 106, 85)),
                     egui::Color32::from_rgb(94, 37, 23),
                 )
             }
         } else if ui.visuals().dark_mode {
             (
                 egui::Color32::from_rgb(20, 94, 128),
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(98, 199, 232)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(98, 199, 232)),
                 egui::Color32::from_rgb(227, 247, 255),
             )
         } else {
             (
                 egui::Color32::from_rgb(182, 224, 241),
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(68, 146, 178)),
+                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(68, 146, 178)),
                 egui::Color32::from_rgb(13, 67, 86),
             )
         }

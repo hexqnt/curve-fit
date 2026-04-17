@@ -297,20 +297,20 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
             if !points_slice.is_empty() {
                 plot_ui.points(
                     PlotPointsItem::new(tr(language, "Samples", "Точки"), points_slice)
-                        .radius(2.8)
+                        .radius(2.8_f32)
                         .color(samples_color),
                 );
             }
             if let Some(fitted) = spline_curve_slice {
                 plot_ui.line(
                     Line::new(fitted_line_name.clone(), fitted)
-                        .width(2.2)
+                        .width(2.2_f32)
                         .color(fitted_color),
                 );
             } else if let Some(fitted) = sampled_curve.as_deref() {
                 plot_ui.line(
                     Line::new(fitted_line_name.clone(), fitted)
-                        .width(2.2)
+                        .width(2.2_f32)
                         .color(fitted_color),
                 );
             }
