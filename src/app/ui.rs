@@ -329,7 +329,7 @@ impl CurveFitApp {
         diagnostics_panel::ui_iteration_diagnostics(self, ui);
     }
 
-    pub(super) fn ui_result(&self, ui: &mut egui::Ui) {
+    pub(super) fn ui_result(&mut self, ui: &mut egui::Ui) {
         result_panel::ui_result(self, ui);
     }
 }

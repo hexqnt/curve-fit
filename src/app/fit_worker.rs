@@ -137,6 +137,7 @@ impl CurveFitApp {
                 Ok(FitWorkerMessage::Stopped) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.active_fit_points = None;
                     self.finalize_replay_after_fit_stopped();
                     if !self.discard_fit_worker_updates {
@@ -151,6 +152,10 @@ impl CurveFitApp {
                     self.fit_in_progress = false;
                     let fit_points = self.active_fit_points.take();
                     if !self.discard_fit_worker_updates {
+                        let point_count = fit_points
+                            .as_ref()
+                            .map(Points::len)
+                            .unwrap_or(self.residual_plot_points.len());
                         if let Some(points) = fit_points.as_ref() {
                             self.update_parametric_result_metrics(points, &result.params);
                             let metrics = calculate_iteration_metrics_with_quantization(
@@ -170,11 +175,13 @@ impl CurveFitApp {
                             result.params.clone(),
                         );
                         self.finalize_replay_after_fit_completion();
-                        self.fit_result = Some(result);
                         self.complete_fit_timer_successfully();
+                        self.store_parametric_fit_export_record(&result, point_count);
+                        self.fit_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
                     } else {
                         self.reset_fit_timer();
+                        self.clear_fit_export_state();
                         self.set_fit_stopped_status_if_fitting();
                     }
                     keep_receiver = false;
@@ -183,6 +190,7 @@ impl CurveFitApp {
                 Ok(FitWorkerMessage::SplineFinished { result, metrics }) => {
                     self.fit_in_progress = false;
                     if !self.discard_fit_worker_updates {
+                        let point_count = result.residuals.len();
                         let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
                         let spline_plot_curve =
                             Self::plot_points_from_pairs(result.curve.iter().copied());
@@ -194,11 +202,13 @@ impl CurveFitApp {
                         );
                         self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
                         self.finalize_replay_after_fit_completion();
-                        self.spline_result = Some(result);
                         self.complete_fit_timer_successfully();
+                        self.store_spline_fit_export_record(&result, point_count);
+                        self.spline_result = Some(result);
                         self.status = Some(StatusMessage::FitCompleted);
                     } else {
                         self.reset_fit_timer();
+                        self.clear_fit_export_state();
                         self.set_fit_stopped_status_if_fitting();
                     }
                     self.active_fit_points = None;
@@ -208,6 +218,7 @@ impl CurveFitApp {
                 Ok(FitWorkerMessage::Failed(error)) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.active_fit_points = None;
                     if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::Error(error));
@@ -221,6 +232,7 @@ impl CurveFitApp {
                 Err(TryRecvError::Disconnected) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.active_fit_points = None;
                     if !self.discard_fit_worker_updates {
                         self.status = Some(StatusMessage::Error(
@@ -323,6 +335,7 @@ impl CurveFitApp {
                             Err(error) => {
                                 self.fit_in_progress = false;
                                 self.reset_fit_timer();
+                                self.clear_fit_export_state();
                                 self.status = Some(StatusMessage::Error(error));
                                 self.active_fit_points = None;
                                 break;
@@ -354,6 +367,7 @@ impl CurveFitApp {
                             Ok(params) => params,
                             Err(error) => {
                                 self.reset_fit_timer();
+                                self.clear_fit_export_state();
                                 self.status = Some(StatusMessage::Error(error));
                                 self.active_fit_points = None;
                                 break;
@@ -361,6 +375,10 @@ impl CurveFitApp {
                         };
                     }
                     let fit_points = self.active_fit_points.take();
+                    let point_count = fit_points
+                        .as_ref()
+                        .map(Points::len)
+                        .unwrap_or(self.residual_plot_points.len());
                     if let Some(points) = fit_points.as_ref() {
                         let (mse, rmse) = calculate_metrics_with_quantization(
                             points,
@@ -384,14 +402,16 @@ impl CurveFitApp {
                     }
                     self.upsert_parametric_replay_frame(result.iterations, result.params.clone());
                     self.finalize_replay_after_fit_completion();
-                    self.fit_result = Some(result);
                     self.complete_fit_timer_successfully();
+                    self.store_parametric_fit_export_record(&result, point_count);
+                    self.fit_result = Some(result);
                     self.status = Some(StatusMessage::FitCompleted);
                     break;
                 }
                 Ok(IncrementalFitStep::Cancelled) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
@@ -400,6 +420,7 @@ impl CurveFitApp {
                 Err(error) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.status = Some(StatusMessage::Error(error.to_string()));
                     self.active_fit_points = None;
                     break;
@@ -426,6 +447,7 @@ impl CurveFitApp {
                 }
                 Ok(IncrementalSplineFitStep::Finished { result, metrics }) => {
                     self.fit_in_progress = false;
+                    let point_count = result.residuals.len();
                     let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
                     let spline_plot_curve =
                         Self::plot_points_from_pairs(result.curve.iter().copied());
@@ -434,8 +456,9 @@ impl CurveFitApp {
                         .append_spline(result.iterations, metrics, &knot_y);
                     self.upsert_spline_replay_frame(result.iterations, spline_plot_curve);
                     self.finalize_replay_after_fit_completion();
-                    self.spline_result = Some(result);
                     self.complete_fit_timer_successfully();
+                    self.store_spline_fit_export_record(&result, point_count);
+                    self.spline_result = Some(result);
                     self.status = Some(StatusMessage::FitCompleted);
                     self.active_fit_points = None;
                     break;
@@ -443,6 +466,7 @@ impl CurveFitApp {
                 Ok(IncrementalSplineFitStep::Cancelled) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.finalize_replay_after_fit_stopped();
                     self.status = Some(StatusMessage::FitStopped);
                     self.active_fit_points = None;
@@ -451,6 +475,7 @@ impl CurveFitApp {
                 Err(error) => {
                     self.fit_in_progress = false;
                     self.reset_fit_timer();
+                    self.clear_fit_export_state();
                     self.status = Some(StatusMessage::Error(error.to_string()));
                     self.active_fit_points = None;
                     break;
@@ -634,6 +659,7 @@ impl CurveFitApp {
             return;
         }
 
+        self.fit_optimizer_method = self.optimizer_method;
         self.last_right_panel_fit_snapshot = Some(self.capture_right_panel_fit_snapshot());
         self.auto_refit_pending_rerun = false;
 

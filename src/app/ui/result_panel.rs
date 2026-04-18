@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn ui_result(app: &CurveFitApp, ui: &mut egui::Ui) {
+pub(super) fn ui_result(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     if app.fit_in_progress {
         ui.label(tr(
@@ -27,6 +27,30 @@ pub(super) fn ui_result(app: &CurveFitApp, ui: &mut egui::Ui) {
             }
         }
         return;
+    }
+
+    if app.has_fit_export_record() {
+        ui.horizontal_wrapped(|ui| {
+            let copy_response = CurveFitApp::info_hover(
+                ui.button(tr(language, "Copy JSON", "Скопировать JSON")),
+                result_json_copy_tooltip(language),
+            );
+            if copy_response.clicked() {
+                app.copy_fit_export_json(ui.ctx());
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let save_response = CurveFitApp::info_hover(
+                    ui.button(tr(language, "Save JSON", "Сохранить JSON")),
+                    result_json_save_tooltip(language),
+                );
+                if save_response.clicked() {
+                    app.request_fit_export_save_json();
+                }
+            }
+        });
+        ui.add_space(2.0);
     }
 
     let metrics = app.result_metrics.unwrap_or_else(|| {
@@ -181,4 +205,21 @@ pub(super) fn ui_result(app: &CurveFitApp, ui: &mut egui::Ui) {
             "Нажмите Fit, чтобы увидеть результат оптимизации.",
         ));
     }
+}
+
+fn result_json_copy_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Copy JSON\n- Copies serialized fit result to clipboard\n- Includes model info, input summary, metrics, convergence and parameters",
+        "Скопировать JSON\n- Копирует сериализованный результат фита в буфер обмена\n- Содержит модель, сводку по входу, метрики, сходимость и параметры",
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn result_json_save_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Save JSON\n- Opens file dialog and saves serialized fit result as .json",
+        "Сохранить JSON\n- Открывает диалог и сохраняет сериализованный результат фита в .json",
+    )
 }

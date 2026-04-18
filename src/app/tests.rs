@@ -4,7 +4,9 @@ use super::{
     data_based_params_for_family,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
-use crate::fit::{IterationMetricSnapshot, MetricQuantization, OptimizationLossMetric};
+use crate::fit::{
+    IterationMetricSnapshot, MetricQuantization, OptimizationLossMetric, SplineResult,
+};
 use eframe::egui;
 use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
@@ -187,6 +189,210 @@ fn update_parametric_metrics_applies_quantization_and_keeps_raw_residual_plot() 
     assert_approx_eq(app.residual_plot_points[0].y, -1.225, 1e-12);
     assert_approx_eq(app.residual_plot_points[1].x, 1.0, 1e-12);
     assert_approx_eq(app.residual_plot_points[1].y, 1.225, 1e-12);
+}
+
+#[test]
+fn fit_export_parametric_record_includes_expected_payload() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Polynomial,
+        polynomial_degree: 1,
+        fit_loss_metric: OptimizationLossMetric::SoftL1,
+        fit_metric_quantization: metric_quantization(3),
+        fit_optimizer_method: OptimizerMethod::Adam,
+        last_fit_duration: Some(std::time::Duration::from_millis(184)),
+        result_metrics: Some(super::ExtendedMetrics {
+            mse: 0.01,
+            rmse: 0.1,
+            mae: 0.08,
+            r2: 0.99,
+            max_abs_error: 0.2,
+        }),
+        ..Default::default()
+    };
+    let result = FitResult {
+        family: CurveFamily::Linear,
+        params: CurveParams::Linear { a: 2.0, b: 1.0 },
+        mse: 0.01,
+        rmse: 0.1,
+        iterations: 42,
+    };
+
+    app.store_parametric_fit_export_record(&result, 2);
+    let json = app
+        .build_fit_export_json_pretty()
+        .expect("fit export JSON must be built");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("fit export JSON must be valid");
+
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(
+            value["fitted_at"]
+                .as_str()
+                .expect("timestamp must be present"),
+        )
+        .is_ok(),
+        "fit timestamp must be valid RFC3339",
+    );
+    assert_eq!(value["model"]["selected"]["id"], "polynomial");
+    assert_eq!(value["model"]["selected"]["name"], "Polynomial");
+    assert_eq!(value["model"]["fitted"]["id"], "linear");
+    assert_eq!(value["model"]["fitted"]["name"], "Linear");
+    assert_eq!(value["point_count"], 2);
+    assert_eq!(value["optimizer"]["method"]["id"], "adam");
+    assert_eq!(value["optimizer"]["method"]["name"], "Adam");
+    assert_eq!(value["optimizer"]["loss_metric"]["id"], "soft_l1");
+    assert_eq!(value["optimizer"]["loss_metric"]["name"], "Soft L1");
+    assert_eq!(value["optimizer"]["metric_quantization_decimal_places"], 3);
+    assert_eq!(value["convergence"]["iterations"], 42);
+    assert_eq!(value["convergence"]["duration_ms"], 184);
+    assert_eq!(value["metrics"]["mse"], 0.01);
+    assert_eq!(value["metrics"]["rmse"], 0.1);
+    assert_eq!(value["metrics"]["mae"], 0.08);
+    assert_eq!(value["metrics"]["r2"], 0.99);
+    assert_eq!(value["metrics"]["max_abs_error"], 0.2);
+    assert_eq!(value["result"]["kind"], "parametric");
+    assert_eq!(value["result"]["parameter_count"], 2);
+    assert!(
+        value["result"]
+            .as_object()
+            .expect("result must be object")
+            .get("family")
+            .is_none(),
+        "resolved model should not be duplicated inside parametric result",
+    );
+    let params = value["result"]["parameters"]
+        .as_array()
+        .expect("parameters must be an array");
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0]["name"], "a");
+    assert_eq!(params[0]["value"], 2.0);
+    assert_eq!(params[1]["name"], "b");
+    assert_eq!(params[1]["value"], 1.0);
+}
+
+#[test]
+fn fit_export_spline_record_includes_expected_payload() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::LinearSpline,
+        fit_loss_metric: OptimizationLossMetric::Mae,
+        fit_optimizer_method: OptimizerMethod::Lbfgs,
+        ..Default::default()
+    };
+    let result = SplineResult {
+        knots: vec![[0.0, 1.0], [1.0, 3.0], [2.0, 5.0]],
+        curve: vec![[0.0, 1.0], [1.0, 3.0], [2.0, 5.0]],
+        mse: 0.01,
+        rmse: 0.1,
+        mae: 0.09,
+        r2: 0.96,
+        max_abs_error: 0.2,
+        residuals: vec![[0.0, 0.1], [1.0, -0.1]],
+        iterations: 9,
+    };
+
+    app.store_spline_fit_export_record(&result, 2);
+    let json = app
+        .build_fit_export_json_pretty()
+        .expect("fit export JSON must be built");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("fit export JSON must be valid");
+
+    assert_eq!(value["model"]["selected"]["id"], "linear_spline");
+    assert_eq!(value["model"]["selected"]["name"], "Linear Spline");
+    assert_eq!(value["model"]["fitted"]["id"], "linear_spline");
+    assert_eq!(value["model"]["fitted"]["name"], "Linear Spline");
+    assert_eq!(value["point_count"], 2);
+    assert_eq!(value["optimizer"]["method"]["id"], "lbfgs");
+    assert_eq!(value["optimizer"]["loss_metric"]["id"], "mae");
+    assert_eq!(
+        value["optimizer"]["loss_metric"]["name"],
+        "Mean Absolute Error"
+    );
+    assert!(
+        value["optimizer"]
+            .as_object()
+            .expect("optimizer must be object")
+            .get("metric_quantization_decimal_places")
+            .is_none(),
+        "disabled quantization should not be serialized",
+    );
+    assert_eq!(value["convergence"]["iterations"], 9);
+    assert!(
+        value["convergence"]
+            .as_object()
+            .expect("convergence must be object")
+            .get("duration_ms")
+            .is_none(),
+        "missing fit duration should not be serialized",
+    );
+    assert_eq!(value["result"]["kind"], "spline");
+    assert_eq!(value["result"]["knot_count"], 3);
+    assert!(
+        value["result"]
+            .as_object()
+            .expect("result must be object")
+            .get("spline")
+            .is_none(),
+        "resolved model should not be duplicated inside spline result",
+    );
+    let knots = value["result"]["knots"]
+        .as_array()
+        .expect("knots must be an array");
+    assert_eq!(knots.len(), 3);
+    assert_eq!(knots[0]["x"], 0.0);
+    assert_eq!(knots[0]["y"], 1.0);
+    assert_eq!(value["metrics"]["mae"], 0.09);
+}
+
+#[test]
+fn fit_export_json_errors_when_record_is_absent() {
+    let app = CurveFitApp::default();
+    let error = app
+        .build_fit_export_json_pretty()
+        .expect_err("export without result must fail");
+    assert!(error.contains("No fit export data is available"));
+}
+
+#[test]
+fn fit_export_parametric_without_extended_metrics_serializes_only_basic_metrics() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Power,
+        fit_loss_metric: OptimizationLossMetric::Mse,
+        fit_optimizer_method: OptimizerMethod::Lbfgs,
+        result_metrics: None,
+        ..Default::default()
+    };
+    let result = FitResult {
+        family: CurveFamily::Power,
+        params: CurveParams::Power { a: 2.5, b: 1.2 },
+        mse: 0.25,
+        rmse: 0.5,
+        iterations: 11,
+    };
+
+    app.store_parametric_fit_export_record(&result, 2);
+    let json = app
+        .build_fit_export_json_pretty()
+        .expect("fit export JSON must be built");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("fit export JSON must be valid");
+    let metrics = value["metrics"]
+        .as_object()
+        .expect("metrics must be object");
+    assert_eq!(value["metrics"]["mse"], 0.25);
+    assert_eq!(value["metrics"]["rmse"], 0.5);
+    assert!(
+        metrics.get("mae").is_none(),
+        "mae should be omitted when unavailable",
+    );
+    assert!(
+        metrics.get("r2").is_none(),
+        "r2 should be omitted when unavailable"
+    );
+    assert!(
+        metrics.get("max_abs_error").is_none(),
+        "max_abs_error should be omitted when unavailable",
+    );
 }
 
 #[test]

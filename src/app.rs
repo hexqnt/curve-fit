@@ -7,6 +7,8 @@ use std::time::Instant;
 use web_time::Instant;
 
 use eframe::egui;
+#[cfg(not(target_arch = "wasm32"))]
+use egui_file_dialog::FileDialog;
 use egui_plot::{
     Legend, Line, LineStyle, Plot, PlotBounds, PlotPoint, PlotPoints, PlotResponse,
     Points as PlotPointsItem, VLine,
@@ -25,6 +27,7 @@ mod plot_utils;
 mod points_state;
 mod points_text;
 mod replay;
+mod result_export;
 mod ui;
 
 use self::diagnostics::{IterationDiagnostics, diagnostics_plot_y_axis_width};
@@ -62,6 +65,7 @@ use self::points_text::{
 use self::replay::ReplayState;
 #[cfg(test)]
 use self::replay::{ReplayFrame, ReplayFramePayload};
+use self::result_export::FitExportRecord;
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,
     OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
@@ -792,6 +796,12 @@ pub struct CurveFitApp {
     fit_in_progress: bool,
     fit_loss_metric: OptimizationLossMetric,
     fit_metric_quantization: MetricQuantization,
+    fit_optimizer_method: OptimizerMethod,
+    fit_export_record: Option<FitExportRecord>,
+    #[cfg(not(target_arch = "wasm32"))]
+    fit_export_file_dialog: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    fit_export_pending_json: Option<String>,
     fit_preview_params: Option<CurveParams>,
     fit_preview_iteration: Option<u64>,
     fit_started_at: Option<Instant>,
@@ -1125,6 +1135,7 @@ impl CurveFitApp {
         self.reset_fit_timer();
         self.fit_result = None;
         self.spline_result = None;
+        self.clear_fit_export_state();
         self.active_fit_points = None;
         self.result_metrics = None;
         self.residual_plot_points.clear();
@@ -1493,6 +1504,16 @@ impl Default for CurveFitApp {
             fit_in_progress: false,
             fit_loss_metric: OptimizationLossMetric::default(),
             fit_metric_quantization: MetricQuantization::Disabled,
+            fit_optimizer_method: OptimizerMethod::default(),
+            fit_export_record: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            fit_export_file_dialog: FileDialog::new()
+                .title("Save fit result JSON")
+                .add_save_extension("JSON files", "json")
+                .default_save_extension("JSON files")
+                .default_file_name("fit-result.json"),
+            #[cfg(not(target_arch = "wasm32"))]
+            fit_export_pending_json: None,
             fit_preview_params: None,
             fit_preview_iteration: None,
             fit_started_at: None,
@@ -1527,6 +1548,8 @@ impl eframe::App for CurveFitApp {
         self.maybe_run_pending_auto_refit();
         self.tick_replay(ctx);
         self.poll_points_clipboard_import(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_fit_export_save_dialog(ctx);
         self.maybe_refresh_points_cache_after_debounce();
 
         if !self.fit_in_progress {
