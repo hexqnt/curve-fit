@@ -70,6 +70,8 @@ use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,
     OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::fit::FitError;
 use crate::fit::IterationMetricSnapshot;
 use crate::fit::OptimizationLossMetric;
 use crate::fit::{
@@ -79,16 +81,9 @@ use crate::fit::{
     calculate_iteration_metrics_with_quantization, calculate_metrics_with_quantization,
     default_spline_initial_knot_y, sample_curve,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::fit::{
-    FitError, fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization,
-};
-#[cfg(target_arch = "wasm32")]
 use crate::fit::{
     IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
 };
-#[cfg(not(target_arch = "wasm32"))]
-use crate::fit::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -699,25 +694,39 @@ struct RightPanelFitSnapshot {
     optimizer: ActiveOptimizerSnapshot,
 }
 
+#[derive(Debug)]
+struct ParametricIterationTraceEntry {
+    iteration: u64,
+    metrics: IterationMetricSnapshot,
+    params: CurveParams,
+}
+
+#[derive(Debug)]
+struct SplineIterationTraceEntry {
+    iteration: u64,
+    metrics: IterationMetricSnapshot,
+    knot_y: Vec<f64>,
+    curve: Vec<[f64; 2]>,
+}
+
+#[derive(Debug)]
+enum FitRunUiSeed {
+    Parametric { initial_params: CurveParams },
+    Spline { initial_curve: Vec<PlotPoint> },
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 enum FitWorkerMessage {
-    Iteration {
-        iteration: u64,
-        metrics: IterationMetricSnapshot,
-        params: CurveParams,
-    },
-    SplineIteration {
-        iteration: u64,
-        metrics: IterationMetricSnapshot,
-        knot_y: Vec<f64>,
-        curve: Vec<[f64; 2]>,
-    },
     Stopped,
-    Finished(FitResult),
+    Finished {
+        result: FitResult,
+        trace: Vec<ParametricIterationTraceEntry>,
+    },
     SplineFinished {
         result: SplineResult,
         metrics: IterationMetricSnapshot,
+        trace: Vec<SplineIterationTraceEntry>,
     },
     Failed(String),
 }
@@ -809,6 +818,7 @@ pub struct CurveFitApp {
     fit_result: Option<FitResult>,
     spline_result: Option<SplineResult>,
     active_fit_points: Option<Points>,
+    fit_run_ui_seed: Option<FitRunUiSeed>,
     result_metrics: Option<ExtendedMetrics>,
     residual_plot_points: Vec<PlotPoint>,
     spline_plot_curve: Option<Arc<[PlotPoint]>>,
@@ -1137,12 +1147,12 @@ impl CurveFitApp {
         self.spline_result = None;
         self.clear_fit_export_state();
         self.active_fit_points = None;
+        self.fit_run_ui_seed = None;
         self.result_metrics = None;
         self.residual_plot_points.clear();
         self.spline_plot_curve = None;
         self.sampled_curve_cache = None;
         self.iteration_diagnostics.clear();
-        self.panel.diagnostics_tab = DiagnosticsTab::Loss;
         self.panel.diagnostics_hide_non_loss_by_default_pending = true;
         self.clear_fit_preview();
         self.clear_replay_state();
@@ -1521,6 +1531,7 @@ impl Default for CurveFitApp {
             fit_result: None,
             spline_result: None,
             active_fit_points: None,
+            fit_run_ui_seed: None,
             result_metrics: None,
             residual_plot_points: Vec::new(),
             spline_plot_curve: None,

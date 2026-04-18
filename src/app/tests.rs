@@ -1078,7 +1078,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
     assert!(app.iteration_diagnostics.loss_points.is_empty());
-    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Residuals);
 }
 
 #[test]
@@ -1136,7 +1136,7 @@ fn apply_fitted_param_init_updates_inputs_and_clears_fit_state() {
     assert!(app.fit_preview_params.is_none());
     assert!(app.fit_preview_iteration.is_none());
     assert!(app.iteration_diagnostics.loss_points.is_empty());
-    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Residuals);
     assert!(matches!(app.status, Some(StatusMessage::Ready)));
 }
 
@@ -1210,7 +1210,7 @@ fn clear_fit_outputs_requests_cancellation_without_dropping_progress_state() {
     assert!(app.replay.frames.is_empty());
     assert!(app.replay.selected_index.is_none());
     assert!(!app.replay.autoplay);
-    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Loss);
+    assert_eq!(app.panel.diagnostics_tab, DiagnosticsTab::Residuals);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1464,7 +1464,121 @@ fn run_fit_with_auto_replay_enabled_does_not_seed_preview_before_completion() {
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn stopped_fit_with_auto_replay_disabled_selects_last_iteration() {
+fn finished_message_applies_buffered_parametric_trace_in_single_poll() {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let points = line_points();
+    let initial_params = CurveParams::Linear { a: 0.0, b: 0.0 };
+    let mut app = CurveFitApp {
+        fit_in_progress: true,
+        fit_worker_rx: Some(rx),
+        active_fit_points: Some(points.clone()),
+        fit_run_ui_seed: Some(super::FitRunUiSeed::Parametric {
+            initial_params: initial_params.clone(),
+        }),
+        status: Some(StatusMessage::FittingInProgress),
+        replay: super::ReplayState {
+            autoplay_on_fit: false,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    app.iteration_diagnostics.initialize(
+        &points,
+        &initial_params,
+        OptimizationLossMetric::Mse,
+        MetricQuantization::Disabled,
+    );
+    app.upsert_parametric_replay_frame(0, initial_params);
+    app.start_fit_timer();
+
+    let trace = vec![
+        super::ParametricIterationTraceEntry {
+            iteration: 1,
+            metrics: metrics_snapshot(2.0, 2.0, 1.4, 1.2, 1.1, 0.1, 2.0),
+            params: CurveParams::Linear { a: 0.4, b: 0.8 },
+        },
+        super::ParametricIterationTraceEntry {
+            iteration: 2,
+            metrics: metrics_snapshot(0.5, 0.5, 0.7, 0.6, 0.55, 0.7, 0.9),
+            params: CurveParams::Linear { a: 1.2, b: 0.5 },
+        },
+    ];
+    tx.send(super::FitWorkerMessage::Finished {
+        result: FitResult {
+            family: CurveFamily::Linear,
+            params: CurveParams::Linear { a: 2.0, b: 1.0 },
+            mse: 0.0,
+            rmse: 0.0,
+            iterations: 3,
+        },
+        trace,
+    })
+    .expect("worker message must be sent");
+    drop(tx);
+
+    assert_eq!(app.replay.frames.len(), 1);
+    assert_eq!(app.iteration_diagnostics.loss_points.len(), 1);
+
+    app.poll_fit_worker(&egui::Context::default());
+
+    assert!(!app.fit_in_progress);
+    assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
+    assert_eq!(app.replay.frames.len(), 4);
+    assert_eq!(app.iteration_diagnostics.loss_points.len(), 4);
+    assert_eq!(app.fit_preview_iteration, Some(3));
+    assert!(matches!(
+        app.fit_result,
+        Some(FitResult {
+            family: CurveFamily::Linear,
+            iterations: 3,
+            ..
+        })
+    ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn run_fit_keeps_replay_and_diagnostics_seeded_until_finish() {
+    let mut app = make_linear_fit_app();
+    app.optimizer_method = OptimizerMethod::Sgd;
+    app.sgd_inputs.max_iters = 5_000;
+    app.sgd_inputs.learning_rate = 1e-3;
+    app.replay.autoplay_on_fit = false;
+
+    app.run_fit();
+    assert!(app.fit_in_progress);
+
+    let seeded_replay_len = app.replay.frames.len();
+    let seeded_loss_len = app.iteration_diagnostics.loss_points.len();
+    let ctx = egui::Context::default();
+    let mut observed_in_progress_poll = false;
+
+    for _ in 0..200 {
+        if !app.fit_in_progress {
+            break;
+        }
+        app.poll_fit_worker(&ctx);
+        if app.fit_in_progress {
+            observed_in_progress_poll = true;
+            assert_eq!(app.replay.frames.len(), seeded_replay_len);
+            assert_eq!(app.iteration_diagnostics.loss_points.len(), seeded_loss_len);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    assert!(
+        observed_in_progress_poll,
+        "fit completed too quickly to observe in-progress polling"
+    );
+
+    wait_fit_completion(&mut app);
+    assert!(app.replay.frames.len() > seeded_replay_len);
+    assert!(app.iteration_diagnostics.loss_points.len() > seeded_loss_len);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn stopped_fit_clears_ui_outputs_and_sets_stopped_status() {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut app = CurveFitApp {
         fit_in_progress: true,
@@ -1502,12 +1616,13 @@ fn stopped_fit_with_auto_replay_disabled_selects_last_iteration() {
 
     assert!(!app.fit_in_progress);
     assert!(matches!(app.status, Some(StatusMessage::FitStopped)));
-    assert_eq!(app.replay.selected_index, Some(1));
-    assert_eq!(app.fit_preview_iteration, Some(11));
-    assert_eq!(
-        app.fit_preview_params,
-        Some(CurveParams::Linear { a: 3.0, b: -1.0 })
-    );
+    assert!(app.fit_result.is_none());
+    assert!(app.spline_result.is_none());
+    assert!(app.fit_preview_params.is_none());
+    assert!(app.fit_preview_iteration.is_none());
+    assert!(app.replay.frames.is_empty());
+    assert!(app.replay.selected_index.is_none());
+    assert!(app.iteration_diagnostics.loss_points.is_empty());
 }
 
 #[cfg(not(target_arch = "wasm32"))]

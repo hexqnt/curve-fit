@@ -12,6 +12,17 @@ pub(super) struct ReplayFrame {
     pub(super) payload: ReplayFramePayload,
 }
 
+pub(super) fn upsert_replay_frame_in(frames: &mut Vec<ReplayFrame>, frame: ReplayFrame) {
+    if let Some(last) = frames.last_mut()
+        && last.iteration == frame.iteration
+    {
+        *last = frame;
+        return;
+    }
+
+    frames.push(frame);
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ReplayState {
     pub(super) iteration_delay_seconds: f64,
@@ -43,6 +54,7 @@ impl CurveFitApp {
         self.replay.last_step_at = None;
     }
 
+    #[cfg(test)]
     pub(super) fn upsert_parametric_replay_frame(&mut self, iteration: u64, params: CurveParams) {
         self.upsert_replay_frame(ReplayFrame {
             iteration,
@@ -50,6 +62,7 @@ impl CurveFitApp {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn upsert_spline_replay_frame(&mut self, iteration: u64, curve: Vec<PlotPoint>) {
         self.upsert_replay_frame(ReplayFrame {
             iteration,
@@ -59,15 +72,9 @@ impl CurveFitApp {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn upsert_replay_frame(&mut self, frame: ReplayFrame) {
-        if let Some(last) = self.replay.frames.last_mut()
-            && last.iteration == frame.iteration
-        {
-            *last = frame;
-            return;
-        }
-
-        self.replay.frames.push(frame);
+        upsert_replay_frame_in(&mut self.replay.frames, frame);
     }
 
     pub(super) fn replay_iteration_bounds(&self) -> Option<(u64, u64)> {
@@ -163,6 +170,7 @@ impl CurveFitApp {
         self.select_replay_last_frame();
     }
 
+    #[cfg(test)]
     pub(super) fn finalize_replay_after_fit_stopped(&mut self) {
         self.pause_replay();
         if !self.replay.autoplay_on_fit {

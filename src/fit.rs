@@ -30,8 +30,6 @@ mod spline;
 
 #[cfg(all(not(target_arch = "wasm32"), test))]
 pub(crate) use curve::fit_curve_with_progress_and_optimizer_config_and_loss_metric;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use curve::fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_metric_quantization;
 pub use curve::{
     fit_curve, fit_curve_with_optimizer_config, fit_curve_with_progress,
     fit_curve_with_progress_and_optimizer_config,
