@@ -27,7 +27,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                     formula_window_hint,
                 );
                 if copy_response.clicked() {
-                    ui.ctx().copy_text(plain_formula.clone());
+                    app.copy_text_to_clipboard(ui.ctx(), plain_formula.clone());
                 }
             });
             ui.add_space(4.0);

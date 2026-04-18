@@ -93,6 +93,68 @@ impl CurveFitApp {
         }
     }
 
+    pub(super) fn copy_text_to_clipboard(&mut self, ctx: &egui::Context, text: String) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            ctx.copy_text(text);
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.clipboard_copy_web_in_flight {
+                return;
+            }
+
+            let promise = match start_write_text_to_web_clipboard(&text) {
+                Ok(promise) => promise,
+                Err(error) => {
+                    self.set_clipboard_copy_error(error);
+                    return;
+                }
+            };
+
+            let ctx = ctx.clone();
+            let result_slot = Rc::clone(&self.clipboard_copy_web_result);
+            self.clipboard_copy_web_in_flight = true;
+            self.clipboard_copy_web_result.borrow_mut().take();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = wasm_bindgen_futures::JsFuture::from(promise)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| {
+                        format!(
+                            "Failed to write clipboard text: {}",
+                            describe_web_clipboard_js_error(&error)
+                        )
+                    });
+                *result_slot.borrow_mut() = Some(result);
+                ctx.request_repaint();
+            });
+        }
+    }
+
+    pub(super) fn poll_clipboard_copy(&mut self, ctx: &egui::Context) {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = ctx;
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if !self.clipboard_copy_web_in_flight {
+                return;
+            }
+
+            let maybe_result = self.clipboard_copy_web_result.borrow_mut().take();
+            if let Some(result) = maybe_result {
+                self.clipboard_copy_web_in_flight = false;
+                if let Err(error) = result {
+                    self.set_clipboard_copy_error(error);
+                }
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+
     pub(super) fn handle_points_clipboard_import_result(&mut self, result: Result<String, String>) {
         let text = match result {
             Ok(text) => text,
@@ -135,6 +197,18 @@ impl CurveFitApp {
             )));
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn set_clipboard_copy_error(&mut self, message: impl AsRef<str>) {
+        let message = message.as_ref();
+        if message.starts_with(CLIPBOARD_COPY_ERROR_PREFIX) {
+            self.status = Some(StatusMessage::Error(message.to_owned()));
+        } else {
+            self.status = Some(StatusMessage::Error(format!(
+                "{CLIPBOARD_COPY_ERROR_PREFIX}{message}"
+            )));
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -155,13 +229,59 @@ fn take_requested_paste_event(ctx: &egui::Context) -> Option<String> {
 async fn read_text_from_web_clipboard() -> Result<String, String> {
     use wasm_bindgen_futures::JsFuture;
 
-    let window = web_sys::window().ok_or_else(|| "Window is unavailable".to_string())?;
+    let window = web_clipboard_window()?;
     let clipboard = window.navigator().clipboard();
     let text = JsFuture::from(clipboard.read_text())
         .await
-        .map_err(|error| format!("Failed to read clipboard text: {error:?}"))?
+        .map_err(|error| {
+            format!(
+                "Failed to read clipboard text: {}",
+                describe_web_clipboard_js_error(&error)
+            )
+        })?
         .as_string()
         .ok_or_else(|| "Clipboard did not return text content".to_string())?;
 
     Ok(text)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn start_write_text_to_web_clipboard(text: &str) -> Result<web_sys::js_sys::Promise, String> {
+    // Для web Clipboard API запись должна стартовать прямо в обработчике user gesture.
+    let window = web_clipboard_window()?;
+    let clipboard = window.navigator().clipboard();
+    Ok(clipboard.write_text(text))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_clipboard_window() -> Result<web_sys::Window, String> {
+    let window = web_sys::window().ok_or_else(|| "Window is unavailable".to_string())?;
+    if !window.is_secure_context() {
+        return Err(
+            "Clipboard API is unavailable in non-secure context (HTTPS or localhost required)"
+                .to_string(),
+        );
+    }
+    Ok(window)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn describe_web_clipboard_js_error(error: &wasm_bindgen::JsValue) -> String {
+    if let Some(message) = error.as_string() {
+        return message;
+    }
+
+    let message = web_sys::js_sys::Reflect::get(error, &wasm_bindgen::JsValue::from_str("message"))
+        .ok()
+        .and_then(|value| value.as_string());
+    let name = web_sys::js_sys::Reflect::get(error, &wasm_bindgen::JsValue::from_str("name"))
+        .ok()
+        .and_then(|value| value.as_string());
+
+    match (name, message) {
+        (Some(name), Some(message)) => format!("{name}: {message}"),
+        (None, Some(message)) => message,
+        (Some(name), None) => name,
+        (None, None) => format!("{error:?}"),
+    }
 }

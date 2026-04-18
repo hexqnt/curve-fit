@@ -115,6 +115,8 @@ const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
 const CLIPBOARD_IMPORT_ERROR_PREFIX: &str = "Clipboard import error: ";
+#[cfg(target_arch = "wasm32")]
+const CLIPBOARD_COPY_ERROR_PREFIX: &str = "Clipboard copy error: ";
 #[cfg(not(target_arch = "wasm32"))]
 const CLIPBOARD_IMPORT_PASTE_TIMEOUT_MS: u64 = 1_500;
 const POINTS_POSITIVE_AXIS_EPS: f64 = 1e-6;
@@ -757,6 +759,10 @@ pub struct CurveFitApp {
     clipboard_import_web_in_flight: bool,
     #[cfg(target_arch = "wasm32")]
     clipboard_import_web_result: Rc<RefCell<Option<Result<String, String>>>>,
+    #[cfg(target_arch = "wasm32")]
+    clipboard_copy_web_in_flight: bool,
+    #[cfg(target_arch = "wasm32")]
+    clipboard_copy_web_result: Rc<RefCell<Option<Result<(), String>>>>,
     selected_model: ModelChoice,
     polynomial_degree: usize,
     parameter_inputs: Vec<String>,
@@ -1464,6 +1470,10 @@ impl Default for CurveFitApp {
             clipboard_import_web_in_flight: false,
             #[cfg(target_arch = "wasm32")]
             clipboard_import_web_result: Rc::new(RefCell::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            clipboard_copy_web_in_flight: false,
+            #[cfg(target_arch = "wasm32")]
+            clipboard_copy_web_result: Rc::new(RefCell::new(None)),
             selected_model,
             polynomial_degree,
             parameter_inputs: params_to_input_strings(&selected_family.default_params()),
@@ -1559,6 +1569,7 @@ impl eframe::App for CurveFitApp {
         self.maybe_run_pending_auto_refit();
         self.tick_replay(ctx);
         self.poll_points_clipboard_import(ctx);
+        self.poll_clipboard_copy(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_fit_export_save_dialog(ctx);
         self.maybe_refresh_points_cache_after_debounce();

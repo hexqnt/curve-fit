@@ -109,7 +109,7 @@ impl CurveFitApp {
     pub(super) fn copy_fit_export_json(&mut self, ctx: &egui::Context) {
         match self.build_fit_export_json_pretty() {
             Ok(json) => {
-                ctx.copy_text(json);
+                self.copy_text_to_clipboard(ctx, json);
             }
             Err(error) => {
                 self.status = Some(StatusMessage::Error(error));
