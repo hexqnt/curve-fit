@@ -1,10 +1,13 @@
 use super::*;
+#[cfg(not(target_arch = "wasm32"))]
 use chrono::{SecondsFormat, Utc};
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::DialogState;
 use serde::Serialize;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
+#[cfg(target_arch = "wasm32")]
+use web_sys::js_sys::Date;
 
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct FitExportRecord {
@@ -244,9 +247,15 @@ impl CurveFitApp {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn now_utc_rfc3339_millis() -> String {
     chrono::DateTime::<Utc>::from(std::time::SystemTime::now())
         .to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn now_utc_rfc3339_millis() -> String {
+    Date::new_0().to_iso_string().into()
 }
 
 fn metric_quantization_decimal_places(metric_quantization: MetricQuantization) -> Option<u8> {
