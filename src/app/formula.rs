@@ -1,3 +1,5 @@
+//! Формулы моделей и пояснения, показываемые в карточке и отдельном окне формулы.
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::hash::{DefaultHasher, Hash, Hasher};
 

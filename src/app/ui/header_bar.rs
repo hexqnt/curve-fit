@@ -1,3 +1,5 @@
+//! Верхняя панель с управлением видом, replay и языком интерфейса.
+
 use super::*;
 
 pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {

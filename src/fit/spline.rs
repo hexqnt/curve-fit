@@ -1,3 +1,5 @@
+//! Публичные обертки для подгонки разных семейств сплайнов через единый API.
+
 use super::*;
 
 fn fit_spline_family_with_optimizer_config(
@@ -77,7 +79,7 @@ pub fn fit_linear_spline_with_config(
     points: &Points,
     config: SplineConfig,
 ) -> Result<SplineResult, FitError> {
-    let optimizer_config = OptimizerConfig::Lbfgs(spline_lbfgs_config());
+    let optimizer_config = OptimizerConfig::from(spline_lbfgs_config());
     fit_linear_spline_with_optimizer_config(points, config, &optimizer_config)
 }
 
@@ -116,7 +118,7 @@ pub fn fit_monotone_cubic_spline_with_config(
     points: &Points,
     config: SplineConfig,
 ) -> Result<SplineResult, FitError> {
-    let optimizer_config = OptimizerConfig::Lbfgs(spline_lbfgs_config());
+    let optimizer_config = OptimizerConfig::from(spline_lbfgs_config());
     fit_monotone_cubic_spline_with_optimizer_config(points, config, &optimizer_config)
 }
 
@@ -155,7 +157,7 @@ pub fn fit_natural_cubic_spline_with_config(
     points: &Points,
     config: SplineConfig,
 ) -> Result<SplineResult, FitError> {
-    let optimizer_config = OptimizerConfig::Lbfgs(spline_lbfgs_config());
+    let optimizer_config = OptimizerConfig::from(spline_lbfgs_config());
     fit_natural_cubic_spline_with_optimizer_config(points, config, &optimizer_config)
 }
 
@@ -194,7 +196,7 @@ pub fn fit_akima_spline_with_config(
     points: &Points,
     config: SplineConfig,
 ) -> Result<SplineResult, FitError> {
-    let optimizer_config = OptimizerConfig::Lbfgs(spline_lbfgs_config());
+    let optimizer_config = OptimizerConfig::from(spline_lbfgs_config());
     fit_akima_spline_with_optimizer_config(points, config, &optimizer_config)
 }
 

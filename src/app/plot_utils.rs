@@ -1,3 +1,5 @@
+//! Вспомогательные вычисления для диапазонов графика и автоподгонки вида.
+
 use egui_plot::{PlotBounds, PlotPoint};
 
 pub(super) fn plot_domain(points: &[PlotPoint]) -> (f64, f64) {

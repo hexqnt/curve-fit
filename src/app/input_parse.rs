@@ -1,5 +1,8 @@
+//! Парсинг пользовательских строк в типизированные начальные параметры и узлы сплайна.
+
 use super::*;
 
+/// Уже распарсенные и типизированные начальные параметры параметрической модели.
 #[derive(Debug, Clone)]
 pub(super) struct ParsedInitialParams(CurveParams);
 
@@ -29,6 +32,7 @@ impl ParsedInitialParams {
     }
 }
 
+/// Провалидированные начальные значения `y` для внутренних узлов сплайна.
 #[derive(Debug, Clone)]
 pub(super) struct ParsedSplineInitialKnotY {
     values: Vec<f64>,

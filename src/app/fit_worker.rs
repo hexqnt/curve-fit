@@ -1,7 +1,10 @@
+//! Координация фонового и wasm-раннера фитинга и перенос результатов обратно в UI.
+
 use super::replay::{ReplayFrame, ReplayFramePayload, upsert_replay_frame_in};
 use super::*;
 
 #[cfg(not(target_arch = "wasm32"))]
+/// Полный снимок входных данных, передаваемых в фоновый поток параметрического фитинга.
 struct ParametricFitWorkerInput {
     family: CurveFamily,
     optimization_points: Points,
@@ -195,6 +198,7 @@ impl CurveFitApp {
         let mut replay_frames = Vec::with_capacity(trace.len().saturating_add(2));
         if let (Some(points), Some(initial_params)) = (fit_points.as_ref(), initial_params.as_ref())
         {
+            // Для диагностики и replay сохраняем начальное состояние как итерацию 0.
             diagnostics.initialize(
                 points,
                 initial_params,
@@ -212,6 +216,7 @@ impl CurveFitApp {
         let mut result_metrics = None;
         let mut residual_plot_points = Vec::new();
         if let Some(points) = fit_points.as_ref() {
+            // Финальные метрики пересчитываем по тем точкам и параметрам, которые видит пользователь.
             let (metrics, snapshot_metrics, snapshot_residuals) =
                 self.parametric_metrics_and_residuals(points, &result.params);
             diagnostics.append(result.iterations, metrics, &result.params);
@@ -247,6 +252,7 @@ impl CurveFitApp {
         let mut diagnostics = IterationDiagnostics::default();
         let mut replay_frames = Vec::with_capacity(trace.len().saturating_add(2));
         if let Some(initial_curve) = initial_curve {
+            // Начальная кривая нужна, чтобы replay показывал эволюцию сплайна с нулевого шага.
             Self::upsert_buffered_spline_replay_frame(&mut replay_frames, 0, initial_curve);
         }
         Self::apply_spline_trace_to_buffers(trace, &mut diagnostics, &mut replay_frames);
@@ -787,9 +793,13 @@ impl CurveFitApp {
 
         let selected_model = self.resolved_model();
         if let Some(spline_family) = selected_model.spline_family() {
-            let spline_config = self
-                .spline_config_for_model(selected_model, points.len())
-                .expect("spline model must provide spline config");
+            let Some(spline_config) = self.spline_config_for_model(selected_model, points.len())
+            else {
+                self.status = Some(StatusMessage::Error(
+                    "Selected spline model has no spline configuration".to_string(),
+                ));
+                return;
+            };
             self.sync_spline_initial_knot_y_inputs(spline_config.knots);
             let initial_knot_y = match self.parse_spline_initial_knot_y(spline_config.knots) {
                 Ok(values) => values,

@@ -1,3 +1,5 @@
+//! Парсинг и сериализация текстового и clipboard-представления точек.
+
 use std::borrow::Cow;
 use std::fmt::Write as _;
 
@@ -117,6 +119,8 @@ fn parse_numeric_token_end(bytes: &[u8], start: usize) -> Option<usize> {
 }
 
 fn clipboard_numeric_tokens(line: &str) -> Vec<&str> {
+    // Сканируем строку по байтам без regex, чтобы дешевле отсеивать числа внутри
+    // идентификаторов вроде `row-1`, `v1.2` или `sample_3`.
     let bytes = line.as_bytes();
     let mut tokens = Vec::with_capacity(4);
     let mut index = 0;
@@ -251,6 +255,7 @@ pub(super) fn parse_points_text_cache(text: &str) -> ParsedPointsCache {
             }
             Ok(None) => {}
             Err(error) => {
+                // Сохраняем первую ошибку, но продолжаем разбор ради частичного preview на графике.
                 if parse_error.is_none() {
                     parse_error = Some(error);
                     parse_error_line = Some(line_index + 1);

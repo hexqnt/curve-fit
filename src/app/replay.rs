@@ -1,11 +1,15 @@
+//! Replay состояния оптимизации по сохраненным кадрам параметров или сплайновой кривой.
+
 use super::*;
 
+/// Полезная нагрузка кадра replay: параметры модели или уже сэмплированная кривая сплайна.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) enum ReplayFramePayload {
     Parametric { params: CurveParams },
     Spline { curve: Arc<[PlotPoint]> },
 }
 
+/// Один кадр replay для конкретной итерации оптимизации.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct ReplayFrame {
     pub(super) iteration: u64,
@@ -16,6 +20,7 @@ pub(super) fn upsert_replay_frame_in(frames: &mut Vec<ReplayFrame>, frame: Repla
     if let Some(last) = frames.last_mut()
         && last.iteration == frame.iteration
     {
+        // Одна и та же итерация может прийти повторно как более свежий снимок.
         *last = frame;
         return;
     }
@@ -23,6 +28,7 @@ pub(super) fn upsert_replay_frame_in(frames: &mut Vec<ReplayFrame>, frame: Repla
     frames.push(frame);
 }
 
+/// Состояние управления replay в UI: список кадров, выбор и автовоспроизведение.
 #[derive(Debug, Clone)]
 pub(super) struct ReplayState {
     pub(super) iteration_delay_seconds: f64,
@@ -124,6 +130,7 @@ impl CurveFitApp {
         match frames.binary_search_by_key(&iteration, |frame| frame.iteration) {
             Ok(index) => Some(index),
             Err(insert) => {
+                // `binary_search` возвращает позицию вставки; дальше выбираем ближайшего соседа.
                 if insert == 0 {
                     Some(0)
                 } else if insert >= frames.len() {

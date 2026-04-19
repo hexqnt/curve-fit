@@ -1,3 +1,5 @@
+//! Графики loss, параметров и остаточных ошибок по истории итераций.
+
 use super::*;
 
 pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui) {
@@ -115,7 +117,7 @@ fn ui_loss_diagnostics(
                     .legend(legend)
                     .link_axis("diagnostics_iter_x_link", [true, false])
                     // Не используем default_x_bounds: он фиксирует X после первого кадра.
-                    // При seeded-точке iteration=0 это «замораживает» ось около нуля.
+                    // При начальной точке iteration=0 это «замораживает» ось около нуля.
                     .include_x(iteration_x_min)
                     .include_x(iteration_x_max)
                     .auto_bounds([true, true])

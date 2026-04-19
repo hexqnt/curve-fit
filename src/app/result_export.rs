@@ -1,3 +1,5 @@
+//! Сериализация результата фитинга в JSON и интеграция с экспортом из интерфейса.
+
 use super::*;
 #[cfg(not(target_arch = "wasm32"))]
 use chrono::{SecondsFormat, Utc};
@@ -9,6 +11,7 @@ use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use web_sys::js_sys::Date;
 
+/// Сериализуемая сводка результата фитинга для буфера обмена и сохранения в файл.
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct FitExportRecord {
     fitted_at: String,

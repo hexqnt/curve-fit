@@ -1,3 +1,5 @@
+//! Эвристики и служебные функции для построения стартовых параметров моделей.
+
 use crate::domain::{CurveFamily, CurveParams, Points};
 
 const PARAM_INIT_SPAN_EPS: f64 = 1e-9;

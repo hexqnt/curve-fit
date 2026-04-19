@@ -1,3 +1,5 @@
+//! Импорт точек из буфера обмена для native- и wasm-режимов.
+
 use super::*;
 
 impl CurveFitApp {

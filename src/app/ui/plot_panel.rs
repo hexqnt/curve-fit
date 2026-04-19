@@ -1,3 +1,5 @@
+//! Центральный график, инструменты рисования точек и обработка пользовательских интеракций.
+
 use super::*;
 
 pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64, record_undo: bool) {

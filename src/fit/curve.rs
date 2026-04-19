@@ -1,3 +1,5 @@
+//! Публичные обертки для параметрической подгонки и API с колбэком прогресса.
+
 use super::*;
 
 /// Подгоняет параметрическую модель без колбэка прогресса.
@@ -7,7 +9,7 @@ pub fn fit_curve(
     initial_params: CurveParams,
     config: &LbfgsConfig,
 ) -> Result<FitResult, FitError> {
-    let optimizer_config = OptimizerConfig::Lbfgs(config.clone());
+    let optimizer_config = OptimizerConfig::from(config);
     fit_curve_with_optimizer_config(points, family, initial_params, &optimizer_config)
 }
 
@@ -41,7 +43,7 @@ pub fn fit_curve_with_progress<F>(
 where
     F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
 {
-    let optimizer_config = OptimizerConfig::Lbfgs(config.clone());
+    let optimizer_config = OptimizerConfig::from(config);
     fit_curve_with_progress_and_optimizer_config_and_loss_metric(
         points,
         family,
@@ -109,13 +111,6 @@ pub(crate) fn fit_curve_with_progress_and_optimizer_config_and_loss_metric_and_m
 where
     F: FnMut(u64, Option<CurveParams>) -> bool + 'static,
 {
-    if initial_params.family() != family {
-        return Err(FitError::InvalidInput(InputError::FamilyMismatch {
-            expected: family,
-            got: initial_params.family(),
-        }));
-    }
-    family.validate_points(points)?;
     let mut on_iteration = on_iteration;
     let mut runner =
         IncrementalFitRunner::new_with_optimizer_config_and_loss_metric_and_metric_quantization(

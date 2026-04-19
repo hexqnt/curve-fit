@@ -1,5 +1,8 @@
+//! Состояние текстового редактора точек, кэш парсинга и история undo/redo.
+
 use super::*;
 
+/// Кэш результата последнего парсинга текста точек и подготовленных данных для графика.
 #[derive(Debug, Clone)]
 pub(super) struct ParsedPointsCache {
     pub(super) parsed_points: Result<Vec<Point>, String>,
@@ -7,6 +10,7 @@ pub(super) struct ParsedPointsCache {
     pub(super) plot_points: Arc<[PlotPoint]>,
 }
 
+/// Локальное состояние текстового редактора точек, включая debounce и историю изменений.
 #[derive(Debug, Clone)]
 pub(super) struct PointsEditorState {
     pub(super) text: String,
@@ -59,16 +63,18 @@ impl CurveFitApp {
                 .unwrap_or(true)
         };
 
-        if should_parse {
+        if should_parse || self.points.cache.is_none() {
+            // Текст парсим ровно один раз на пакет правок, а дальше работаем из кэша.
             self.points.cache = Some(parse_points_text_cache(&self.points.text));
             self.points.cache_dirty = false;
             self.points.text_sync_pending = false;
             self.points.parse_debounce_deadline = None;
         }
-        self.points
-            .cache
-            .as_ref()
-            .expect("points cache must be initialized")
+        self.points.cache.get_or_insert_with(|| ParsedPointsCache {
+            parsed_points: Err("Internal error: points cache is unavailable".to_string()),
+            parse_error_line: None,
+            plot_points: Vec::<PlotPoint>::new().into(),
+        })
     }
 
     pub(super) fn points_cache(&mut self) -> &ParsedPointsCache {
@@ -139,6 +145,7 @@ impl CurveFitApp {
             return;
         }
 
+        // Лениво сериализуем точки обратно в текст только тогда, когда это реально нужно UI.
         let synced_text = self.points.cache.as_ref().and_then(|cache| {
             cache
                 .parsed_points
@@ -180,15 +187,14 @@ impl CurveFitApp {
         self.points.redo_stack.clear();
 
         let maybe_synced_text = {
-            let cache = self
-                .points
-                .cache
-                .as_mut()
-                .expect("points cache must be initialized");
-            let points = cache
-                .parsed_points
-                .as_mut()
-                .expect("parse error branch is handled above");
+            let Some(cache) = self.points.cache.as_mut() else {
+                return Err("Internal error: points cache is unavailable".to_string());
+            };
+            // Мутируем уже проверенные точки прямо в кэше, чтобы не гонять повторный parse/format.
+            let points = match cache.parsed_points.as_mut() {
+                Ok(points) => points,
+                Err(error) => return Err(error.clone()),
+            };
             edit(points);
             cache.parse_error_line = None;
             cache.plot_points = points

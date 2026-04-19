@@ -15,7 +15,7 @@ macro_rules! tabler_icon {
     };
 }
 
-/// Небольшой helper для выбора строки по текущему языку интерфейса.
+/// Небольшая утилита для выбора строки по текущему языку интерфейса.
 pub(super) fn tr(language: UiLanguage, en: &'static str, ru: &'static str) -> &'static str {
     match language {
         UiLanguage::English => en,

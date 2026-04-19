@@ -1,3 +1,5 @@
+//! Панель выбора оптимизатора, preset-ов и настроек запуска подгонки.
+
 use super::*;
 
 const COMPACT_FIT_BUTTON_WIDTH: f32 = 118.0;

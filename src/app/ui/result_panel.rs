@@ -1,3 +1,5 @@
+//! Отображение метрик, параметров и действий экспорта для готового результата.
+
 use super::*;
 
 pub(super) fn ui_result(app: &mut CurveFitApp, ui: &mut egui::Ui) {

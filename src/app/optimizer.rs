@@ -1,3 +1,5 @@
+//! UI-представление конфигураций оптимизаторов, preset-ов и их валидации после ввода.
+
 use crate::domain::{
     AdamConfig, LbfgsConfig, NelderMeadConfig, NewtonCgConfig, OptimizerMethod, SgdConfig,
     SteepestDescentConfig,
@@ -41,6 +43,7 @@ pub(super) fn optimizer_preset_label(
     }
 }
 
+/// Режим отображения настроек оптимизатора в UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum OptimizerUiMode {
     #[default]
@@ -48,6 +51,7 @@ pub(super) enum OptimizerUiMode {
     Advanced,
 }
 
+/// Готовые наборы настроек оптимизаторов для быстрого выбора.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum OptimizerPreset {
     Fast,

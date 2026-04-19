@@ -1,3 +1,5 @@
+//! Выбор модели, начальных параметров и просмотр формулы на правой панели.
+
 use super::*;
 
 const COLLAPSED_MODEL_SELECTOR_WIDTH: f32 = 170.0;
@@ -163,10 +165,12 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 }
             });
     } else {
-        let min_knots = app
-            .resolved_model()
-            .spline_min_knots()
-            .expect("non-parametric branch guarantees spline model");
+        let Some(min_knots) = app.resolved_model().spline_min_knots() else {
+            app.status = Some(StatusMessage::Error(
+                "Selected model has no spline configuration".to_string(),
+            ));
+            return;
+        };
         app.spline_knots = app.spline_knots.max(min_knots);
         app.sync_spline_initial_knot_y_inputs(app.spline_knots);
         let mut spline_method_to_apply = None;

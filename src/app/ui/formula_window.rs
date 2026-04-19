@@ -1,3 +1,5 @@
+//! Отдельное окно с полной формулой модели и сопроводительными примечаниями.
+
 use super::*;
 
 pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {

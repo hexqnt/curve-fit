@@ -1,3 +1,5 @@
+//! Импорт точек из CSV/XLSX и интеграция с файловым диалогом пользовательского интерфейса.
+
 #[cfg(not(target_arch = "wasm32"))]
 use super::points_text::parse_point_from_clipboard_like_fragments;
 use super::*;
