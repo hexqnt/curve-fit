@@ -95,9 +95,11 @@ use self::state::{FitRunUiSeed, ParametricIterationTraceEntry, SplineIterationTr
 use self::state::{WasmFitJob, WasmFitRunner};
 use self::status::StatusMessage;
 use self::types::{
-    ExtendedMetrics, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod, PlotTool,
-    SampledCurveCache, SprayBrush, UiLanguage, dialog_directory_from_path, params_to_input_strings,
+    ExtendedMetrics, ModelFormulaInfo, ParamInitMethod, PlotTool, SampledCurveCache, SprayBrush,
+    UiLanguage, params_to_input_strings,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use self::types::{FormulaSvgCache, dialog_directory_from_path};
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,
     OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
