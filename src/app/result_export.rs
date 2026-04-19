@@ -128,6 +128,13 @@ impl CurveFitApp {
         };
 
         self.fit_export_pending_json = Some(json);
+        if let Some(directory) = self
+            .fit_export_last_directory
+            .clone()
+            .filter(|directory| directory.is_dir())
+        {
+            self.fit_export_file_dialog.config_mut().initial_directory = directory;
+        }
         self.fit_export_file_dialog.config_mut().default_file_name = default_fit_export_file_name();
         self.fit_export_file_dialog.save_file();
     }
@@ -152,6 +159,8 @@ impl CurveFitApp {
                 "Failed to save fit JSON to '{}': {error}",
                 path.display()
             )));
+        } else {
+            self.fit_export_last_directory = dialog_directory_from_path(&path);
         }
     }
 

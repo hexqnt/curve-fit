@@ -1,4 +1,6 @@
 use std::f64::consts::TAU;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,6 +18,7 @@ use egui_plot::{
 
 mod clipboard_import;
 mod diagnostics;
+mod file_import;
 mod fit_worker;
 mod formula;
 mod i18n;
@@ -35,6 +38,8 @@ use self::formula::formula_plain_text;
 use self::formula::model_formula_info;
 #[cfg(not(target_arch = "wasm32"))]
 use self::formula::{formula_svg_bytes, formula_svg_uri};
+#[cfg(not(target_arch = "wasm32"))]
+use self::i18n::file_import_icon_image;
 use self::i18n::{
     actions_icon_image, center_origin_icon_image, clear_icon_image, clipboard_import_icon_image,
     family_label, fit_icon_image, fit_to_content_icon_image, github_mark_image,
@@ -115,6 +120,7 @@ const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
 const CLIPBOARD_IMPORT_ERROR_PREFIX: &str = "Clipboard import error: ";
+const FILE_IMPORT_ERROR_PREFIX: &str = "File import error: ";
 #[cfg(target_arch = "wasm32")]
 const CLIPBOARD_COPY_ERROR_PREFIX: &str = "Clipboard copy error: ";
 #[cfg(not(target_arch = "wasm32"))]
@@ -174,6 +180,14 @@ fn system_locale_tag() -> Option<String> {
 #[cfg(target_arch = "wasm32")]
 fn system_locale_tag() -> Option<String> {
     web_sys::window().and_then(|window| window.navigator().language())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dialog_directory_from_path(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+    path.parent().map(Path::to_path_buf)
 }
 
 fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
@@ -752,6 +766,10 @@ enum WasmFitJob {
 pub struct CurveFitApp {
     points: PointsEditorState,
     #[cfg(not(target_arch = "wasm32"))]
+    points_file_import_dialog: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    points_file_import_last_directory: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
     clipboard_import_request_pending: bool,
     #[cfg(not(target_arch = "wasm32"))]
     clipboard_import_requested_at: Option<Instant>,
@@ -815,6 +833,8 @@ pub struct CurveFitApp {
     fit_export_record: Option<FitExportRecord>,
     #[cfg(not(target_arch = "wasm32"))]
     fit_export_file_dialog: FileDialog,
+    #[cfg(not(target_arch = "wasm32"))]
+    fit_export_last_directory: Option<PathBuf>,
     #[cfg(not(target_arch = "wasm32"))]
     fit_export_pending_json: Option<String>,
     fit_preview_params: Option<CurveParams>,
@@ -1463,6 +1483,15 @@ impl Default for CurveFitApp {
         Self {
             points: PointsEditorState::default(),
             #[cfg(not(target_arch = "wasm32"))]
+            points_file_import_dialog: FileDialog::new()
+                .title("Import points from file")
+                .add_file_filter_extensions("Point files", vec!["csv", "CSV", "xlsx", "XLSX"])
+                .add_file_filter_extensions("CSV files", vec!["csv", "CSV"])
+                .add_file_filter_extensions("Excel files", vec!["xlsx", "XLSX"])
+                .default_file_filter("Point files"),
+            #[cfg(not(target_arch = "wasm32"))]
+            points_file_import_last_directory: None,
+            #[cfg(not(target_arch = "wasm32"))]
             clipboard_import_request_pending: false,
             #[cfg(not(target_arch = "wasm32"))]
             clipboard_import_requested_at: None,
@@ -1533,6 +1562,8 @@ impl Default for CurveFitApp {
                 .default_save_extension("JSON files")
                 .default_file_name("fit-result.json"),
             #[cfg(not(target_arch = "wasm32"))]
+            fit_export_last_directory: None,
+            #[cfg(not(target_arch = "wasm32"))]
             fit_export_pending_json: None,
             fit_preview_params: None,
             fit_preview_iteration: None,
@@ -1570,6 +1601,8 @@ impl eframe::App for CurveFitApp {
         self.tick_replay(ctx);
         self.poll_points_clipboard_import(ctx);
         self.poll_clipboard_copy(ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_points_file_import_dialog(ctx);
         #[cfg(not(target_arch = "wasm32"))]
         self.poll_fit_export_save_dialog(ctx);
         self.maybe_refresh_points_cache_after_debounce();

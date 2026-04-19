@@ -10,6 +10,8 @@ use crate::fit::{
 use eframe::egui;
 use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -44,6 +46,28 @@ fn parsed_point_pairs(app: &mut CurveFitApp) -> Vec<(f64, f64)> {
         .iter()
         .map(|point| (point.x(), point.y()))
         .collect::<Vec<_>>()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn write_temp_points_csv(contents: &[u8]) -> PathBuf {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time must be after UNIX_EPOCH")
+        .as_nanos();
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "curve-fit-dialog-memory-{}-{suffix}.csv",
+        std::process::id()
+    ));
+    std::fs::write(&path, contents).expect("temporary CSV test file must be writable");
+    path
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn cleanup_temp_file(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
 }
 
 fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
@@ -1838,6 +1862,78 @@ fn clipboard_import_error_keeps_existing_points_text() {
         app.status.as_ref(),
         Some(StatusMessage::Error(message)) if message.starts_with(super::CLIPBOARD_IMPORT_ERROR_PREFIX)
     ));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn points_file_import_remembers_last_directory_from_selected_file() {
+    let mut app = CurveFitApp::default();
+    let path = write_temp_points_csv(b"1;2\n3;4\n");
+    let expected_directory = path
+        .parent()
+        .expect("temporary test file must have parent directory")
+        .to_path_buf();
+
+    app.handle_points_file_import_path(&path);
+    cleanup_temp_file(&path);
+
+    assert_eq!(
+        app.points_file_import_last_directory,
+        Some(expected_directory)
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn points_file_import_dialog_uses_remembered_directory() {
+    let mut app = CurveFitApp::default();
+    let remembered_directory = std::env::temp_dir();
+    app.points_file_import_last_directory = Some(remembered_directory.clone());
+
+    app.request_points_file_import();
+
+    assert_eq!(
+        app.points_file_import_dialog.config_mut().initial_directory,
+        remembered_directory
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn fit_export_save_dialog_uses_remembered_directory() {
+    let mut app = CurveFitApp::default();
+    let remembered_directory = std::env::temp_dir();
+    let result = FitResult {
+        family: CurveFamily::Linear,
+        params: CurveParams::Linear { a: 2.0, b: 1.0 },
+        mse: 0.01,
+        rmse: 0.1,
+        iterations: 42,
+    };
+    app.store_parametric_fit_export_record(&result, 2);
+    app.fit_export_last_directory = Some(remembered_directory.clone());
+
+    app.request_fit_export_save_json();
+
+    assert_eq!(
+        app.fit_export_file_dialog.config_mut().initial_directory,
+        remembered_directory
+    );
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn dialog_directory_from_path_returns_parent_for_file_path() {
+    let mut output_path = std::env::temp_dir();
+    output_path.push("curve-fit-export.json");
+    let expected_directory = output_path
+        .parent()
+        .expect("temporary output path must have parent")
+        .to_path_buf();
+
+    let actual_directory = super::dialog_directory_from_path(&output_path);
+
+    assert_eq!(actual_directory, Some(expected_directory));
 }
 
 #[test]

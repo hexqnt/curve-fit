@@ -155,6 +155,54 @@ fn clipboard_numeric_tokens(line: &str) -> Vec<&str> {
     tokens
 }
 
+/// Парсит одну строку/запись в режиме `Clipboard-like`:
+/// - `0` числовых токенов -> строка пропускается;
+/// - `2` числовых токена -> создается точка `(x, y)`;
+/// - `1` или `3+` токенов -> ошибка.
+pub(super) fn parse_point_from_clipboard_like_fragments<I, S>(
+    line_number: usize,
+    fragments: I,
+) -> Result<Option<Point>, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut numeric_count = 0usize;
+    let mut first_token = None::<String>;
+    let mut second_token = None::<String>;
+
+    for fragment in fragments {
+        for token in clipboard_numeric_tokens(fragment.as_ref()) {
+            numeric_count += 1;
+            if numeric_count == 1 {
+                first_token = Some(token.to_string());
+            } else if numeric_count == 2 {
+                second_token = Some(token.to_string());
+            }
+        }
+    }
+
+    match numeric_count {
+        0 => Ok(None),
+        2 => {
+            let x_raw = first_token
+                .as_deref()
+                .expect("first numeric token must exist for count=2");
+            let y_raw = second_token
+                .as_deref()
+                .expect("second numeric token must exist for count=2");
+            let x = parse_f64(&format!("line {line_number} x"), x_raw)?;
+            let y = parse_f64(&format!("line {line_number} y"), y_raw)?;
+            let point =
+                Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))?;
+            Ok(Some(point))
+        }
+        count => Err(format!(
+            "Line {line_number}: expected exactly two numeric values, got {count}"
+        )),
+    }
+}
+
 /// Парсит произвольный текст из буфера обмена в список точек `(x, y)`.
 ///
 /// Правила:
@@ -171,21 +219,10 @@ pub(super) fn parse_points_from_clipboard_text(text: &str) -> Result<Vec<Point>,
             continue;
         }
 
-        let numeric_tokens = clipboard_numeric_tokens(line);
-        match numeric_tokens.len() {
-            0 => continue,
-            2 => {
-                let x = parse_f64(&format!("line {line_number} x"), numeric_tokens[0])?;
-                let y = parse_f64(&format!("line {line_number} y"), numeric_tokens[1])?;
-                let point =
-                    Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))?;
-                points.push(point);
-            }
-            count => {
-                return Err(format!(
-                    "Line {line_number}: expected exactly two numeric values, got {count}"
-                ));
-            }
+        if let Some(point) =
+            parse_point_from_clipboard_like_fragments(line_number, std::iter::once(line))?
+        {
+            points.push(point);
         }
     }
 
@@ -256,6 +293,44 @@ mod tests {
         assert!(
             (actual - expected).abs() <= tolerance,
             "expected {expected}, got {actual}, tolerance {tolerance}"
+        );
+    }
+
+    #[test]
+    fn clipboard_like_row_parser_parses_two_values() {
+        let point =
+            parse_point_from_clipboard_like_fragments(5, ["meta", "x=1.5", "note", "y=2,75"])
+                .expect("row must parse")
+                .expect("row must produce a point");
+
+        assert_approx_eq(point.x(), 1.5, 1e-12);
+        assert_approx_eq(point.y(), 2.75, 1e-12);
+    }
+
+    #[test]
+    fn clipboard_like_row_parser_skips_rows_without_numbers() {
+        let point = parse_point_from_clipboard_like_fragments(3, ["header", "label", "unit"])
+            .expect("row without numbers must be skipped");
+        assert!(point.is_none());
+    }
+
+    #[test]
+    fn clipboard_like_row_parser_fails_on_single_value() {
+        let error = parse_point_from_clipboard_like_fragments(2, ["id=42"])
+            .expect_err("row with one numeric value must fail");
+        assert!(
+            error.contains("Line 2: expected exactly two numeric values, got 1"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn clipboard_like_row_parser_fails_on_three_values() {
+        let error = parse_point_from_clipboard_like_fragments(7, ["1", "2", "3"])
+            .expect_err("row with three numeric values must fail");
+        assert!(
+            error.contains("Line 7: expected exactly two numeric values, got 3"),
+            "unexpected error: {error}"
         );
     }
 

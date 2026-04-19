@@ -115,6 +115,8 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let can_fill_with_residuals = can_edit_points && !app.residual_plot_points.is_empty();
     let can_move_points_to_positive_xy = can_edit_points && app.can_move_points_to_positive_xy();
     let can_import_from_clipboard = can_edit_points && !app.clipboard_import_in_progress();
+    #[cfg(not(target_arch = "wasm32"))]
+    let can_import_from_file = can_edit_points && !app.points_file_import_in_progress();
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
@@ -139,6 +141,18 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             if toolbar_hover_tooltip(import_response, clipboard_import_tooltip(language)).clicked()
             {
                 app.request_points_clipboard_import(ui.ctx());
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let import_file_response = ui.add_enabled(
+                    can_import_from_file,
+                    toolbar_icon_button(file_import_icon_image(icon_tint)),
+                );
+                if toolbar_hover_tooltip(import_file_response, file_import_tooltip(language))
+                    .clicked()
+                {
+                    app.request_points_file_import();
+                }
             }
             let clear_response = ui.add_enabled(
                 can_edit_points,
@@ -418,6 +432,15 @@ fn clipboard_import_tooltip(language: UiLanguage) -> &'static str {
         language,
         "Paste from clipboard\n- Replaces current input points\n- Supports decimal dot/comma and scientific notation\n- Skips non-data lines without numeric values\n- Fails if any data line has 1 or 3+ numeric values",
         "Вставить из буфера обмена\n- Полностью заменяет текущие входные точки\n- Поддерживает десятичную точку/запятую и научный формат\n- Пропускает служебные строки без чисел\n- Возвращает ошибку, если в строке данных 1 или 3+ чисел",
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn file_import_tooltip(language: UiLanguage) -> &'static str {
+    tr(
+        language,
+        "Import from file\n- Replaces current input points\n- Supports .csv and .xlsx files\n- Uses robust two-numeric-values-per-row parsing",
+        "Импорт из файла\n- Полностью заменяет текущие входные точки\n- Поддерживает файлы .csv и .xlsx\n- Использует робастный парсинг с двумя числовыми значениями в строке",
     )
 }
 

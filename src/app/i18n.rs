@@ -84,6 +84,10 @@ pub(super) fn clipboard_import_icon_image(tint: egui::Color32) -> egui::Image<'s
     tabler_icon!("../../assets/icons/tabler/clipboard-text.svg", tint)
 }
 
+pub(super) fn file_import_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/file-import.svg", tint)
+}
+
 pub(super) fn reset_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/restore.svg", tint)
 }
