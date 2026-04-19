@@ -1,64 +1,165 @@
-//! Формулы моделей и пояснения, показываемые в карточке и отдельном окне формулы.
+//! Формулы моделей и SVG-рендер через RaTeX для карточки и отдельного окна.
 
-#[cfg(not(target_arch = "wasm32"))]
 use std::hash::{DefaultHasher, Hash, Hasher};
+
+use ratex_layout::{LayoutOptions, layout, to_display_list};
+use ratex_parser::parse;
+use ratex_svg::{SvgOptions, render_to_svg};
+use ratex_types::color::Color as RatexColor;
+use ratex_types::display_item::DisplayList;
 
 use super::i18n::tr;
 use super::{ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
 
-fn model_formula_full(model: ModelChoice, polynomial_degree: usize) -> String {
+// Держим размер формулы на уровне основного текста интерфейса.
+const FORMULA_FONT_SIZE: f64 = 22.0;
+const FORMULA_INNER_PADDING: f64 = 10.0;
+const FORMULA_STROKE_WIDTH: f64 = 1.5;
+const FORMULA_FRAME_PADDING_X: f64 = 16.0;
+const FORMULA_FRAME_PADDING_Y: f64 = 14.0;
+const FORMULA_MIN_WIDTH: f64 = 380.0;
+const FORMULA_MIN_HEIGHT: f64 = 68.0;
+const FORMULA_BORDER_RADIUS: f64 = 10.0;
+
+#[derive(Debug, Clone)]
+struct FormulaSource {
+    render_latex: String,
+    plain_text: String,
+}
+
+impl FormulaSource {
+    fn single(render_latex: &str) -> Self {
+        Self {
+            render_latex: render_latex.to_string(),
+            plain_text: latex_to_plain_text(render_latex),
+        }
+    }
+
+    fn explicit(render_latex: &str, plain_text: &str) -> Self {
+        Self {
+            render_latex: render_latex.to_string(),
+            plain_text: plain_text.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FormulaSvgTheme {
+    background: &'static str,
+    border: &'static str,
+    text: RatexColor,
+}
+
+impl FormulaSvgTheme {
+    fn new(dark_mode: bool) -> Self {
+        if dark_mode {
+            Self {
+                background: "#0f172a",
+                border: "#334155",
+                text: ratex_rgb(0xF8, 0xFA, 0xFC),
+            }
+        } else {
+            Self {
+                background: "#ffffff",
+                border: "#cbd5e1",
+                text: ratex_rgb(0x11, 0x18, 0x27),
+            }
+        }
+    }
+}
+
+fn model_formula_source(model: ModelChoice, polynomial_degree: usize) -> FormulaSource {
     match model {
-        ModelChoice::Polynomial => polynomial_formula_full(polynomial_degree),
-        ModelChoice::Arrhenius => r"y = A·exp(\frac{B}{x})".to_string(),
-        ModelChoice::Inverse => r"y = A + \frac{B}{x}".to_string(),
-        ModelChoice::Logistic => r"y = \frac{A}{1 + exp(-B·(x - C))}".to_string(),
-        ModelChoice::Gompertz => r"y = A·exp(-exp(-B·(x - C)))".to_string(),
-        ModelChoice::BiExponential => {
-            r"y = a_{1}·exp(-k_{1}·x) + a_{2}·exp(-k_{2}·x) + c".to_string()
+        ModelChoice::Polynomial => {
+            let render_latex = polynomial_formula_full(polynomial_degree);
+            FormulaSource {
+                plain_text: latex_to_plain_text(&render_latex),
+                render_latex,
+            }
         }
-        ModelChoice::DampedSinusoid => r"y = A·exp(-k·x)·sin(\omega·x + \phi) + c".to_string(),
-        ModelChoice::Lorentzian => r"y = C + \frac{A}{1 + (\frac{x - x_0}{\gamma})^{2}}".to_string(),
-        ModelChoice::NaturalLog => r"y = A·ln(\frac{x}{B})".to_string(),
-        ModelChoice::FourPl => r"y = d + \frac{a - d}{1 + (\frac{x}{c})^{b}}".to_string(),
-        ModelChoice::FivePl => r"y = d + \frac{a - d}{(1 + (\frac{x}{c})^{b})^{m}}".to_string(),
-        ModelChoice::MichaelisMenten => r"y = \frac{V_{max}·x}{K_{m} + x}".to_string(),
-        ModelChoice::ExponentialBasic => r"y = a + b·exp(-c·x)".to_string(),
-        ModelChoice::ExponentialLinear => r"y = a·exp(b·x) + c·x + d".to_string(),
-        ModelChoice::ExponentialHalfLife => r"y = a + \frac{b}{2^{\frac{x}{c}}}".to_string(),
+        ModelChoice::Arrhenius => FormulaSource::single(r"y = A \cdot \exp(\frac{B}{x})"),
+        ModelChoice::Inverse => FormulaSource::single(r"y = A + \frac{B}{x}"),
+        ModelChoice::Logistic => FormulaSource::single(r"y = \frac{A}{1 + \exp(-B \cdot (x - C))}"),
+        ModelChoice::Gompertz => {
+            FormulaSource::single(r"y = A \cdot \exp(-\exp(-B \cdot (x - C)))")
+        }
+        ModelChoice::BiExponential => FormulaSource::single(
+            r"y = a_{1} \cdot \exp(-k_{1} \cdot x) + a_{2} \cdot \exp(-k_{2} \cdot x) + c",
+        ),
+        ModelChoice::DampedSinusoid => FormulaSource::single(
+            r"y = A \cdot \exp(-k \cdot x) \cdot \sin(\omega \cdot x + \phi) + c",
+        ),
+        ModelChoice::Lorentzian => {
+            FormulaSource::single(r"y = C + \frac{A}{1 + (\frac{x - x_0}{\gamma})^{2}}")
+        }
+        ModelChoice::NaturalLog => FormulaSource::single(r"y = A \cdot \ln(\frac{x}{B})"),
+        ModelChoice::FourPl => {
+            FormulaSource::single(r"y = d + \frac{a - d}{1 + (\frac{x}{c})^{b}}")
+        }
+        ModelChoice::FivePl => {
+            FormulaSource::single(r"y = d + \frac{a - d}{(1 + (\frac{x}{c})^{b})^{m}}")
+        }
+        ModelChoice::MichaelisMenten => {
+            FormulaSource::single(r"y = \frac{V_{\text{max}} \cdot x}{K_{m} + x}")
+        }
+        ModelChoice::ExponentialBasic => FormulaSource::single(r"y = a + b \cdot \exp(-c \cdot x)"),
+        ModelChoice::ExponentialLinear => {
+            FormulaSource::single(r"y = a \cdot \exp(b \cdot x) + c \cdot x + d")
+        }
+        ModelChoice::ExponentialHalfLife => {
+            FormulaSource::single(r"y = a + \frac{b}{2^{\frac{x}{c}}}")
+        }
         ModelChoice::FallingExponential => {
-            r"y = Y_{0} - \frac{V_{0}}{K}·(1 - exp(-K·x))".to_string()
+            FormulaSource::single(r"y = Y_{0} - \frac{V_{0}}{K} \cdot (1 - \exp(-K \cdot x))")
         }
-        ModelChoice::HyperbolicTangent => r"y = a·tanh(b·(x - c)) + d".to_string(),
-        ModelChoice::ArctangentStep => r"y = a·atan(b·(x - c)) + d".to_string(),
-        ModelChoice::Softplus => r"y = a·ln(1 + exp(b·(x - c))) + d".to_string(),
-        ModelChoice::Power => r"y = a·x^{b}".to_string(),
-        ModelChoice::Gaussian => r"y = a·exp(-\frac{(x - b)^{2}}{2·c^{2}})".to_string(),
-        ModelChoice::Rational11 => r"y = d + \frac{a·x + b}{1 + c·x}".to_string(),
-        ModelChoice::Rational22 => {
-            r"y = \frac{a·x^{2} + b·x + c}{1 + d·x + e·x^{2}}".to_string()
+        ModelChoice::HyperbolicTangent => {
+            FormulaSource::single(r"y = a \cdot \tanh(b \cdot (x - c)) + d")
         }
-        ModelChoice::Emg => {
-            r"y = c + \frac{a}{2·\tau}·exp(\frac{\sigma^{2}}{2·\tau^{2}} - \frac{x - \mu}{\tau})·erfc(\frac{1}{\sqrt{2}}(\frac{\sigma}{|\tau|} - \frac{x - \mu}{\sigma}))".to_string()
+        ModelChoice::ArctangentStep => {
+            FormulaSource::single(r"y = a \cdot \arctan(b \cdot (x - c)) + d")
         }
-        ModelChoice::PseudoVoigt => {
-            r"y = c + a·(\eta·G(x; x_0, \sigma) + (1-\eta)·L(x; x_0, \gamma)), \eta = sigmoid(\eta_{raw})
-G(x; x_0, \sigma) = exp(-\frac{(x - x_0)^{2}}{2·\sigma^{2}})
-L(x; x_0, \gamma) = \frac{1}{1 + (\frac{x - x_0}{\gamma})^{2}}"
-                .to_string()
+        ModelChoice::Softplus => {
+            FormulaSource::single(r"y = a \cdot \ln(1 + \exp(b \cdot (x - c))) + d")
         }
-        ModelChoice::LinearSpline => {
-            r"y(x) = y_{i} + \frac{y_{i+1} - y_{i}}{x_{i+1} - x_{i}}·(x - x_{i})".to_string()
+        ModelChoice::Power => FormulaSource::single(r"y = a \cdot x^{b}"),
+        ModelChoice::Gaussian => {
+            FormulaSource::single(r"y = a \cdot \exp(-\frac{(x - b)^{2}}{2 \cdot c^{2}})")
         }
-        ModelChoice::MonotoneCubicSpline => {
-            r"y(x) = Hermite(y_{i}, y_{i+1}, m_{i}, m_{i+1}), m_{i} by Fritsch-Carlson".to_string()
+        ModelChoice::Rational11 => {
+            FormulaSource::single(r"y = d + \frac{a \cdot x + b}{1 + c \cdot x}")
         }
-        ModelChoice::NaturalCubicSpline => {
-            r"y(x) = cubic spline, S''(x_{0}) = S''(x_{n}) = 0".to_string()
-        }
-        ModelChoice::AkimaSpline => {
-            r"y(x) = Hermite(y_{i}, y_{i+1}, m_{i}, m_{i+1}), \quad m_i \text{by Akima weights}"
-                .to_string()
-        }
+        ModelChoice::Rational22 => FormulaSource::single(
+            r"y = \frac{a \cdot x^{2} + b \cdot x + c}{1 + d \cdot x + e \cdot x^{2}}",
+        ),
+        ModelChoice::Emg => FormulaSource::single(
+            r"y = c + \frac{a}{2 \cdot \tau} \cdot \exp(\frac{\sigma^{2}}{2 \cdot \tau^{2}} - \frac{x - \mu}{\tau}) \cdot \text{erfc}(\frac{1}{\sqrt{2}}(\frac{\sigma}{|\tau|} - \frac{x - \mu}{\sigma}))",
+        ),
+        ModelChoice::PseudoVoigt => FormulaSource::explicit(
+            r"\begin{aligned}
+y &= c + a \cdot (\eta \cdot G(x; x_0, \sigma) + (1-\eta) \cdot L(x; x_0, \gamma)) \\ 
+\eta &= \text{sigmoid}(\eta_{\text{raw}}) \\
+G(x; x_0, \sigma) &= \exp(-\frac{(x - x_0)^{2}}{2 \cdot \sigma^{2}}) \\
+L(x; x_0, \gamma) &= \frac{1}{1 + (\frac{x - x_0}{\gamma})^{2}}
+\end{aligned}",
+            "y = c + a·(η·G(x; x_0, σ) + (1-η)·L(x; x_0, γ)), η = sigmoid(η_raw)\n\
+G(x; x_0, σ) = exp(-((x - x_0)^2)∕(2·σ^2))\n\
+L(x; x_0, γ) = 1∕(1 + ((x - x_0)∕γ)^2)",
+        ),
+        ModelChoice::LinearSpline => FormulaSource::single(
+            r"y(x) = y_{i} + \frac{y_{i+1} - y_{i}}{x_{i+1} - x_{i}} \cdot (x - x_{i})",
+        ),
+        ModelChoice::MonotoneCubicSpline => FormulaSource::single(
+            r"y(x) = \text{Hermite}(y_{i}, y_{i+1}, m_{i}, m_{i+1}), m_{i} \text{ by Fritsch-Carlson}",
+        ),
+        ModelChoice::NaturalCubicSpline => FormulaSource::single(
+            r"\begin{aligned}
+            y(x) &= \text{cubic spline}, \\
+            S''(x_{0}) &= S''(x_{n}) = 0
+            \end{aligned}",
+        ),
+        ModelChoice::AkimaSpline => FormulaSource::single(
+            r"y(x) = \text{Hermite}(y_{i}, y_{i+1}, m_{i}, m_{i+1}), m_{i} \text{ by Akima weights}",
+        ),
     }
 }
 
@@ -67,7 +168,7 @@ pub(super) fn model_formula_info(
     model: ModelChoice,
     polynomial_degree: usize,
 ) -> ModelFormulaInfo {
-    let full_formula = model_formula_full(model, polynomial_degree);
+    let formula = model_formula_source(model, polynomial_degree);
     let min_points = model_min_points(model, polynomial_degree);
     let mut notes = format!(
         "{}: {min_points}",
@@ -83,7 +184,8 @@ pub(super) fn model_formula_info(
     notes.push_str(model_ml_note(language, model));
 
     ModelFormulaInfo {
-        full_formula,
+        render_latex: formula.render_latex,
+        plain_text: formula.plain_text,
         notes,
     }
 }
@@ -246,8 +348,8 @@ fn polynomial_formula_full(degree: usize) -> String {
         let power = degree - index;
         let term = match power {
             0 => symbol.to_string(),
-            1 => format!("{symbol}·x"),
-            _ => format!("{symbol}·x^{{{power}}}"),
+            1 => format!(r"{symbol} \cdot x"),
+            _ => format!(r"{symbol} \cdot x^{{{power}}}"),
         };
         terms.push(term);
     }
@@ -258,7 +360,6 @@ fn polynomial_parameter_symbols() -> [char; 10] {
     ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
     let mut hasher = DefaultHasher::new();
     formula.hash(&mut hasher);
@@ -266,162 +367,82 @@ pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
     format!("bytes://formula_model_{}.svg", hasher.finish())
 }
 
-/// Возвращает человекочитаемое текстовое представление формулы.
-///
-/// Используется как fallback для платформ, где SVG-текст может рендериться нестабильно.
-pub(super) fn formula_plain_text(formula: &str) -> String {
-    latex_group_to_text(formula)
-}
-
-/// Строит SVG-рендер формулы для показа в UI.
-///
-/// Здесь intentionally используется небольшой ручной парсер,
-/// чтобы не тянуть тяжёлые зависимости ради ограниченного подмножества LaTeX.
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Vec<u8> {
-    let lines = formula.lines().collect::<Vec<_>>();
-    let line_count = lines.len().max(1);
-    let line_spans = lines
-        .iter()
-        .map(|line| parse_formula_spans(line))
-        .collect::<Vec<_>>();
-    let max_visible_chars = line_spans
-        .iter()
-        .map(|spans| {
-            spans
-                .iter()
-                .map(|span| span.text.chars().count())
-                .sum::<usize>()
-        })
-        .max()
-        .unwrap_or(24);
-    let width = ((max_visible_chars.max(24) as u32) * 14 + 48).clamp(380, 2100);
-    let height = ((line_count as u32) * 30 + 22).clamp(68, 720);
-    let rect_width = width - 2;
-    let rect_height = height - 2;
-    let (background, border, text) = if dark_mode {
-        ("#0f172a", "#334155", "#f8fafc")
-    } else {
-        ("#ffffff", "#cbd5e1", "#111827")
+/// Строит SVG-рендер формулы с самодостаточными контурами глифов.
+pub(super) fn formula_svg_bytes(formula: &str, dark_mode: bool) -> Result<Vec<u8>, String> {
+    let theme = FormulaSvgTheme::new(dark_mode);
+    let display_list = render_formula_display_list(formula, theme.text)?;
+    let svg_options = SvgOptions {
+        font_size: FORMULA_FONT_SIZE,
+        padding: FORMULA_INNER_PADDING,
+        stroke_width: FORMULA_STROKE_WIDTH,
+        embed_glyphs: true,
+        font_dir: String::new(),
     };
-    let mut text_markup = String::new();
-    for (index, spans) in line_spans.iter().enumerate() {
-        let tspan_markup = formula_spans_to_svg(spans);
-        let y = 32 + (index as u32) * 30;
-        text_markup.push_str(&format!(
-            r#"<text x="16" y="{y}" font-family="Cambria Math, STIX Two Math, DejaVu Serif, serif" font-size="24" fill="{text}">{tspan_markup}</text>"#
-        ));
-    }
+    let inner_svg = render_to_svg(&display_list, &svg_options);
+    let inner_body = extract_svg_body(&inner_svg)
+        .ok_or_else(|| "Failed to extract inner SVG body from RaTeX output".to_string())?;
 
-    format!(
+    let inner_width = display_list.width * svg_options.font_size + 2.0 * svg_options.padding;
+    let inner_height = (display_list.height + display_list.depth) * svg_options.font_size
+        + 2.0 * svg_options.padding;
+    let width = (inner_width + 2.0 * FORMULA_FRAME_PADDING_X).max(FORMULA_MIN_WIDTH);
+    let height = (inner_height + 2.0 * FORMULA_FRAME_PADDING_Y).max(FORMULA_MIN_HEIGHT);
+    let rect_width = width - 2.0;
+    let rect_height = height - 2.0;
+
+    Ok(format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-<rect x="1" y="1" width="{rect_width}" height="{rect_height}" rx="10" fill="{background}" stroke="{border}" stroke-width="1.4"/>
-{text_markup}
-</svg>"#
+<rect x="1" y="1" width="{rect_width}" height="{rect_height}" rx="{border_radius}" fill="{background}" stroke="{border}" stroke-width="1.4"/>
+<g transform="translate({content_x} {content_y})">
+{inner_body}
+</g>
+</svg>"#,
+        width = svg_number(width),
+        height = svg_number(height),
+        rect_width = svg_number(rect_width),
+        rect_height = svg_number(rect_height),
+        border_radius = svg_number(FORMULA_BORDER_RADIUS),
+        background = theme.background,
+        border = theme.border,
+        content_x = svg_number(FORMULA_FRAME_PADDING_X),
+        content_y = svg_number(FORMULA_FRAME_PADDING_Y),
     )
-    .into_bytes()
+    .into_bytes())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FormulaSpanKind {
-    Normal,
-    Superscript,
-    Subscript,
-    FractionNumerator,
-    FractionSlash,
-    FractionDenominator,
+fn render_formula_display_list(
+    formula: &str,
+    text_color: RatexColor,
+) -> Result<DisplayList, String> {
+    let ast = parse(formula).map_err(|error| format!("Failed to parse formula: {error}"))?;
+    let layout_options = LayoutOptions::default().with_color(text_color);
+    let layout_box = layout(&ast, &layout_options);
+    Ok(to_display_list(&layout_box))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone)]
-struct FormulaSpan {
-    kind: FormulaSpanKind,
-    text: String,
+fn extract_svg_body(svg: &str) -> Option<&str> {
+    let start = svg.find('>')? + 1;
+    let end = svg.rfind("</svg>")?;
+    Some(&svg[start..end])
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn parse_formula_spans(formula: &str) -> Vec<FormulaSpan> {
-    let mut spans = Vec::new();
-    let mut normal = String::new();
-    let mut chars = formula.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '\\' {
-            if try_consume_keyword(&mut chars, "frac") && matches!(chars.next(), Some('{')) {
-                if !normal.is_empty() {
-                    spans.push(FormulaSpan {
-                        kind: FormulaSpanKind::Normal,
-                        text: latex_group_to_text(&std::mem::take(&mut normal)),
-                    });
-                }
-                let numerator = read_braced_group(&mut chars);
-                if matches!(chars.next(), Some('{')) {
-                    let denominator = read_braced_group(&mut chars);
-                    spans.push(FormulaSpan {
-                        kind: FormulaSpanKind::FractionNumerator,
-                        text: latex_group_to_text(&numerator),
-                    });
-                    spans.push(FormulaSpan {
-                        kind: FormulaSpanKind::FractionSlash,
-                        text: "∕".to_string(),
-                    });
-                    spans.push(FormulaSpan {
-                        kind: FormulaSpanKind::FractionDenominator,
-                        text: latex_group_to_text(&denominator),
-                    });
-                    continue;
-                }
-                normal.push_str("\\frac{");
-                normal.push_str(&numerator);
-                continue;
-            }
-            normal.push(ch);
-            continue;
-        }
-        if (ch == '^' || ch == '_') && matches!(chars.peek(), Some('{')) {
-            if !normal.is_empty() {
-                spans.push(FormulaSpan {
-                    kind: FormulaSpanKind::Normal,
-                    text: latex_group_to_text(&std::mem::take(&mut normal)),
-                });
-            }
-            chars.next();
-            let content = read_braced_group(&mut chars);
-            spans.push(FormulaSpan {
-                kind: if ch == '^' {
-                    FormulaSpanKind::Superscript
-                } else {
-                    FormulaSpanKind::Subscript
-                },
-                text: latex_group_to_text(&content),
-            });
-        } else {
-            normal.push(ch);
-        }
+fn svg_number(value: f64) -> String {
+    let formatted = format!("{value:.6}");
+    let formatted = formatted.trim_end_matches('0');
+    let formatted = formatted.trim_end_matches('.');
+    if formatted.is_empty() || formatted == "-" {
+        "0".to_string()
+    } else {
+        formatted.to_string()
     }
-
-    if !normal.is_empty() {
-        spans.push(FormulaSpan {
-            kind: FormulaSpanKind::Normal,
-            text: latex_group_to_text(&normal),
-        });
-    }
-    spans
 }
 
-fn try_consume_keyword(
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-    keyword: &str,
-) -> bool {
-    let mut probe = chars.clone();
-    for expected in keyword.chars() {
-        if probe.next() != Some(expected) {
-            return false;
-        }
-    }
-    *chars = probe;
-    true
+fn ratex_rgb(r: u8, g: u8, b: u8) -> RatexColor {
+    RatexColor::rgb(
+        f32::from(r) / 255.0,
+        f32::from(g) / 255.0,
+        f32::from(b) / 255.0,
+    )
 }
 
 fn read_braced_group(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
@@ -501,18 +522,28 @@ fn latex_symbol(command: &str) -> Option<&'static str> {
         "leq" => Some("≤"),
         "geq" => Some("≥"),
         "infty" => Some("∞"),
+        "exp" => Some("exp"),
+        "ln" => Some("ln"),
+        "sin" => Some("sin"),
+        "tanh" => Some("tanh"),
+        "arctan" => Some("arctan"),
         _ => None,
     }
 }
 
-fn latex_group_to_text(text: &str) -> String {
+fn latex_to_plain_text(text: &str) -> String {
     let mut output = String::new();
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\\' {
             let command = read_latex_command(&mut chars);
             if command.is_empty() {
-                output.push(ch);
+                if chars.peek() == Some(&'\\') {
+                    chars.next();
+                    output.push('\n');
+                } else {
+                    output.push(ch);
+                }
                 continue;
             }
             match command.as_str() {
@@ -522,11 +553,11 @@ fn latex_group_to_text(text: &str) -> String {
                         if matches!(chars.next(), Some('{')) {
                             let denominator = read_braced_group(&mut chars);
                             output.push('(');
-                            output.push_str(&latex_group_to_text(&numerator));
+                            output.push_str(&latex_to_plain_text(&numerator));
                             output.push(')');
                             output.push('∕');
                             output.push('(');
-                            output.push_str(&latex_group_to_text(&denominator));
+                            output.push_str(&latex_to_plain_text(&denominator));
                             output.push(')');
                             continue;
                         }
@@ -540,7 +571,7 @@ fn latex_group_to_text(text: &str) -> String {
                 "text" => {
                     if matches!(chars.next(), Some('{')) {
                         let content = read_braced_group(&mut chars);
-                        output.push_str(&latex_group_to_text(&content));
+                        output.push_str(&latex_to_plain_text(&content));
                     } else {
                         output.push_str("\\text");
                     }
@@ -550,7 +581,7 @@ fn latex_group_to_text(text: &str) -> String {
                         let radicand = read_braced_group(&mut chars);
                         output.push('√');
                         output.push('(');
-                        output.push_str(&latex_group_to_text(&radicand));
+                        output.push_str(&latex_to_plain_text(&radicand));
                         output.push(')');
                     } else {
                         output.push('√');
@@ -571,7 +602,10 @@ fn latex_group_to_text(text: &str) -> String {
             chars.next();
             let group = read_braced_group(&mut chars);
             output.push(ch);
-            output.push_str(&latex_group_to_text(&group));
+            output.push_str(&latex_to_plain_text(&group));
+            continue;
+        }
+        if ch == '&' {
             continue;
         }
         output.push(ch);
@@ -579,38 +613,90 @@ fn latex_group_to_text(text: &str) -> String {
     output
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn formula_spans_to_svg(spans: &[FormulaSpan]) -> String {
-    let mut markup = String::new();
-    for span in spans {
-        let escaped = escape_svg_text(&span.text);
-        let tspan = match span.kind {
-            FormulaSpanKind::Normal => format!("<tspan>{escaped}</tspan>"),
-            FormulaSpanKind::Superscript | FormulaSpanKind::FractionNumerator => {
-                format!("<tspan baseline-shift=\"super\" font-size=\"66%\">{escaped}</tspan>")
-            }
-            FormulaSpanKind::FractionSlash => format!("<tspan font-size=\"88%\">{escaped}</tspan>"),
-            FormulaSpanKind::Subscript | FormulaSpanKind::FractionDenominator => {
-                format!("<tspan baseline-shift=\"sub\" font-size=\"66%\">{escaped}</tspan>")
-            }
-        };
-        markup.push_str(&tspan);
-    }
-    markup
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[cfg(not(target_arch = "wasm32"))]
-fn escape_svg_text(text: &str) -> String {
-    let mut output = String::with_capacity(text.len());
-    for ch in text.chars() {
-        match ch {
-            '&' => output.push_str("&amp;"),
-            '<' => output.push_str("&lt;"),
-            '>' => output.push_str("&gt;"),
-            '"' => output.push_str("&quot;"),
-            '\'' => output.push_str("&apos;"),
-            _ => output.push(ch),
+    #[test]
+    fn every_model_formula_renders_as_svg() {
+        for model in ModelChoice::ALL {
+            let degrees = if model.is_polynomial() {
+                [1_usize, 9].as_slice()
+            } else {
+                [1_usize].as_slice()
+            };
+            for &degree in degrees {
+                let formula = model_formula_info(UiLanguage::English, model, degree);
+                let svg = String::from_utf8(
+                    formula_svg_bytes(&formula.render_latex, false).unwrap_or_else(|error| {
+                        panic!("{model:?} degree {degree} failed: {error}")
+                    }),
+                )
+                .expect("SVG must be valid UTF-8");
+
+                assert!(
+                    svg.starts_with("<svg"),
+                    "{model:?} degree {degree} must render SVG root"
+                );
+                assert!(
+                    svg.contains("<path"),
+                    "{model:?} degree {degree} must contain path glyphs"
+                );
+            }
         }
     }
-    output
+
+    #[test]
+    fn every_model_plain_text_stays_readable() {
+        for model in ModelChoice::ALL {
+            let degrees = if model.is_polynomial() {
+                [1_usize, 9].as_slice()
+            } else {
+                [1_usize].as_slice()
+            };
+            for &degree in degrees {
+                let formula = model_formula_info(UiLanguage::English, model, degree);
+                let plain_text = formula.plain_text.trim();
+
+                assert!(
+                    !plain_text.is_empty(),
+                    "{model:?} degree {degree} plain text must not be empty"
+                );
+                assert!(
+                    !plain_text.contains('\\'),
+                    "{model:?} degree {degree} plain text must not leak LaTeX commands: {plain_text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn basic_formula_svg_renders_valid_svg() {
+        let svg = String::from_utf8(
+            formula_svg_bytes(r"y = \frac{a}{x + 1}", false).expect("formula SVG must render"),
+        )
+        .expect("SVG must be valid UTF-8");
+
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.contains("<rect"));
+        assert!(svg.contains("<path"));
+    }
+
+    #[test]
+    fn pseudo_voigt_render_formula_stays_multiline() {
+        let formula = model_formula_info(UiLanguage::English, ModelChoice::PseudoVoigt, 1);
+        let display_list = render_formula_display_list(&formula.render_latex, RatexColor::BLACK)
+            .expect("pseudo-Voigt display list must build from aligned LaTeX");
+
+        assert!(display_list.height + display_list.depth > 3.0);
+    }
+
+    #[test]
+    fn pseudo_voigt_plain_text_is_human_readable() {
+        let formula = model_formula_info(UiLanguage::English, ModelChoice::PseudoVoigt, 1);
+
+        assert!(formula.plain_text.contains('\n'));
+        assert!(formula.plain_text.contains("η"));
+        assert!(!formula.plain_text.contains(r"\begin"));
+    }
 }

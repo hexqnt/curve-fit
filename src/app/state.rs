@@ -300,7 +300,6 @@ pub struct CurveFitApp {
     pub(super) result_metrics: Option<ExtendedMetrics>,
     pub(super) residual_plot_points: Vec<PlotPoint>,
     pub(super) spline_plot_curve: Option<Arc<[PlotPoint]>>,
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) formula_svg_cache: Option<FormulaSvgCache>,
     pub(super) sampled_curve_cache: Option<SampledCurveCache>,
     pub(super) iteration_diagnostics: IterationDiagnostics,
@@ -555,28 +554,37 @@ impl CurveFitApp {
         )
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn cached_formula_svg(
         &mut self,
         formula: &str,
         dark_mode: bool,
-    ) -> (String, Arc<[u8]>) {
+    ) -> Result<(String, Arc<[u8]>), String> {
         if let Some(cache) = &self.formula_svg_cache
             && cache.formula == formula
             && cache.dark_mode == dark_mode
         {
-            return (cache.uri.clone(), Arc::clone(&cache.bytes));
+            return cache
+                .render_result
+                .as_ref()
+                .map(|bytes| (cache.uri.clone(), Arc::clone(bytes)))
+                .map_err(|error| error.clone());
         }
 
         let uri = formula_svg_uri(formula, dark_mode);
-        let bytes: Arc<[u8]> = formula_svg_bytes(formula, dark_mode).into();
+        let render_result = match formula_svg_bytes(formula, dark_mode) {
+            Ok(bytes) => Ok(Arc::<[u8]>::from(bytes)),
+            Err(error) => {
+                eprintln!("Failed to render formula SVG: {error}");
+                Err(error)
+            }
+        };
         self.formula_svg_cache = Some(FormulaSvgCache {
             formula: formula.to_string(),
             dark_mode,
             uri: uri.clone(),
-            bytes: Arc::clone(&bytes),
+            render_result: render_result.clone(),
         });
-        (uri, bytes)
+        render_result.map(|bytes| (uri, bytes))
     }
 
     pub(super) fn cached_sampled_curve(

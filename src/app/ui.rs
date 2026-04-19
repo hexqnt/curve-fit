@@ -1,7 +1,6 @@
 //! Общие UI-хелперы и разбиение интерфейса по специализированным панелям.
 
 use super::*;
-use std::borrow::Cow;
 
 mod diagnostics_panel;
 mod family_params;
@@ -344,22 +343,6 @@ fn paint_enlarged_collapsing_icon(ui: &mut egui::Ui, openness: f32, response: &e
     .translate(egui::vec2(-0.5 * COLLAPSING_HEADER_TEXT_OFFSET_X, 0.0));
     let enlarged_response = response.clone().with_new_rect(enlarged_rect);
     egui::containers::collapsing_header::paint_default_icon(ui, openness, &enlarged_response);
-}
-
-fn formula_preview_text(formula: &str, max_chars: usize) -> Cow<'_, str> {
-    if max_chars <= 3 {
-        return Cow::Borrowed("...");
-    }
-
-    let total_chars = formula.chars().count();
-    if total_chars <= max_chars {
-        return Cow::Borrowed(formula);
-    }
-
-    let mut preview = String::with_capacity(max_chars + 3);
-    preview.extend(formula.chars().take(max_chars - 3));
-    preview.push_str("...");
-    Cow::Owned(preview)
 }
 
 fn diagnostics_hidden_non_loss_series_ids() -> [egui::Id; 6] {

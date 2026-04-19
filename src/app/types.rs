@@ -109,18 +109,18 @@ impl ParamInitMethod {
 /// Полная формула модели и сопутствующие заметки для UI.
 #[derive(Debug, Clone)]
 pub(super) struct ModelFormulaInfo {
-    pub(super) full_formula: String,
+    pub(super) render_latex: String,
+    pub(super) plain_text: String,
     pub(super) notes: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// Кэш уже отрендеренной SVG-формулы, зависящий от темы и текста формулы.
 #[derive(Debug, Clone)]
 pub(super) struct FormulaSvgCache {
     pub(super) formula: String,
     pub(super) dark_mode: bool,
     pub(super) uri: String,
-    pub(super) bytes: Arc<[u8]>,
+    pub(super) render_result: Result<Arc<[u8]>, String>,
 }
 
 /// Кэш уже сэмплированной параметрической кривой для текущего диапазона `x`.

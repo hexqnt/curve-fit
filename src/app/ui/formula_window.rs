@@ -9,7 +9,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
 
     let language = app.ui_language;
     let formula_info = model_formula_info(language, app.selected_model, app.polynomial_degree);
-    let plain_formula = formula_plain_text(&formula_info.full_formula);
+    let plain_formula = formula_info.plain_text.clone();
     let mut is_open = app.panel.show_formula_window;
     egui::Window::new(tr(language, "Model Formula", "Формула модели"))
         .open(&mut is_open)
@@ -33,29 +33,19 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                 }
             });
             ui.add_space(4.0);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let dark_mode = ui.visuals().dark_mode;
-                let (svg_uri, svg_bytes) =
-                    app.cached_formula_svg(&formula_info.full_formula, dark_mode);
-                egui::ScrollArea::horizontal()
-                    .id_salt("formula_window_scroll")
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Image::from_bytes(svg_uri, svg_bytes).fit_to_original_size(1.0),
-                        );
-                    });
-            }
-            #[cfg(target_arch = "wasm32")]
-            {
-                egui::ScrollArea::horizontal()
-                    .id_salt("formula_window_scroll")
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
+            let dark_mode = ui.visuals().dark_mode;
+            let svg_result = app.cached_formula_svg(&formula_info.render_latex, dark_mode);
+            egui::ScrollArea::horizontal()
+                .id_salt("formula_window_scroll")
+                .auto_shrink([false, true])
+                .show(ui, |ui| match svg_result {
+                    Ok((svg_uri, svg_bytes)) => {
+                        ui.add(egui::Image::from_bytes(svg_uri, svg_bytes).fit_to_original_size(1.0));
+                    }
+                    Err(_) => {
                         ui.monospace(plain_formula.as_str());
-                    });
-            }
+                    }
+                });
             ui.add_space(4.0);
             ui.label(egui::RichText::new(formula_info.notes).small());
         });

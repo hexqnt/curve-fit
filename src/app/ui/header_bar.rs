@@ -77,6 +77,24 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 );
 
                 ui.separator();
+                let formula_button = egui::Button::image_and_text(
+                    open_formula_icon_image(icon_tint),
+                    tr(language, "Formula", "Формула"),
+                )
+                .selected(app.panel.show_formula_window);
+                let formula_response = CurveFitApp::info_hover(
+                    ui.add(formula_button),
+                    tr(
+                        language,
+                        "Toggle model formula window",
+                        "Показать или скрыть окно формулы модели",
+                    ),
+                );
+                if formula_response.clicked() {
+                    app.panel.show_formula_window = !app.panel.show_formula_window;
+                }
+
+                ui.separator();
                 let (min_iteration, max_iteration) =
                     app.replay_iteration_bounds().unwrap_or((0, 0));
                 let mut selected_iteration =

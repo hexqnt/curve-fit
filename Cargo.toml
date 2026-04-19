@@ -25,6 +25,10 @@ egui_extras = { version = "0.34.1", default-features = false, features = [
 ] }
 egui_plot = "0.35.0"
 ndarray = "0.16.1"
+ratex-layout = "0.1.2"
+ratex-parser = "0.1.2"
+ratex-svg = { version = "0.1.2", features = ["embed-fonts"] }
+ratex-types = "0.1.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 stochastic_optimizers = "0.3.0"

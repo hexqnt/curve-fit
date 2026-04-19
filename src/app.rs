@@ -45,9 +45,7 @@ mod result_export;
 mod ui;
 
 use self::diagnostics::{IterationDiagnostics, diagnostics_plot_y_axis_width};
-use self::formula::formula_plain_text;
 use self::formula::model_formula_info;
-#[cfg(not(target_arch = "wasm32"))]
 use self::formula::{formula_svg_bytes, formula_svg_uri};
 #[cfg(not(target_arch = "wasm32"))]
 use self::i18n::file_import_icon_image;
@@ -94,12 +92,12 @@ use self::state::{FitRunUiSeed, ParametricIterationTraceEntry, SplineIterationTr
 #[cfg(target_arch = "wasm32")]
 use self::state::{WasmFitJob, WasmFitRunner};
 use self::status::StatusMessage;
-use self::types::{
-    ExtendedMetrics, ModelFormulaInfo, ParamInitMethod, PlotTool, SampledCurveCache, SprayBrush,
-    UiLanguage, params_to_input_strings,
-};
 #[cfg(not(target_arch = "wasm32"))]
-use self::types::{FormulaSvgCache, dialog_directory_from_path};
+use self::types::dialog_directory_from_path;
+use self::types::{
+    ExtendedMetrics, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod, PlotTool,
+    SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
+};
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,
     OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,

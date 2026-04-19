@@ -1,4 +1,4 @@
-//! Выбор модели, начальных параметров и просмотр формулы на правой панели.
+//! Выбор модели и начальных параметров на правой панели.
 
 use super::*;
 
@@ -14,7 +14,6 @@ enum ModelSelectorMode {
 pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let can_edit_params = !app.fit_in_progress;
-    let icon_tint = ui.visuals().text_color();
 
     let mut params_need_sync = ui_model_selector(app, ui, can_edit_params, ModelSelectorMode::Full);
 
@@ -37,53 +36,6 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         app.sync_parameter_inputs();
         app.clear_fit_outputs();
     }
-
-    let formula_info = model_formula_info(language, app.selected_model, app.polynomial_degree);
-    let plain_formula = formula_plain_text(&formula_info.full_formula);
-    let formula_preview = formula_preview_text(&plain_formula, 78);
-    let formula_help = format!(
-        "{}\n{}\n{}\n{}\n{}",
-        tr(language, "Model formula", "Формула модели"),
-        tr(
-            language,
-            "- This card shows a shortened preview",
-            "- В этой карточке показывается сокращенное превью",
-        ),
-        tr(
-            language,
-            "- Use the fx button to open the full formula in a separate window",
-            "- Используйте кнопку fx, чтобы открыть полную формулу в отдельном окне",
-        ),
-        tr(language, "Model notes:", "Примечания по модели:",),
-        formula_info.notes
-    );
-    ui.add_space(2.0);
-    egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(10, 8))
-        .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
-        .fill(ui.visuals().extreme_bg_color)
-        .stroke(egui::Stroke::new(
-            1.0_f32,
-            ui.visuals().widgets.noninteractive.bg_stroke.color,
-        ))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let formula_label_response = ui.label(
-                    egui::RichText::new(tr(language, "Model Formula", "Формула модели")).strong(),
-                );
-                let _ = CurveFitApp::info_hover(formula_label_response, formula_help.as_str());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::image(open_formula_icon_image(icon_tint)))
-                        .on_hover_text(tr(language, "Open formula", "Открыть формулу"))
-                        .clicked()
-                    {
-                        app.panel.show_formula_window = true;
-                    }
-                });
-            });
-            ui.monospace(formula_preview.as_ref());
-        });
 
     if let Some(family) = app.resolved_model().parametric_family() {
         let mut method_to_apply = None;

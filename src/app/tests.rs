@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 // Все import-ы специально поднимаются в этот модуль,
 // чтобы подмодули `app/tests/*` брали их через `use super::*;`.
 mod fit_lifecycle;
+mod formula_rendering;
 mod import_export;
 mod init_optimizer;
 mod points_editing;

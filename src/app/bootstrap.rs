@@ -121,7 +121,6 @@ impl Default for CurveFitApp {
             result_metrics: None,
             residual_plot_points: Vec::new(),
             spline_plot_curve: None,
-            #[cfg(not(target_arch = "wasm32"))]
             formula_svg_cache: None,
             sampled_curve_cache: None,
             iteration_diagnostics: IterationDiagnostics::default(),
