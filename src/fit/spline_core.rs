@@ -318,11 +318,6 @@ impl SplineProblem {
         }
     }
 
-    #[inline]
-    fn residual(&self, predicted: f64, observed: f64) -> f64 {
-        self.residual_quantizer.residual(predicted, observed)
-    }
-
     fn evaluate_objective(&self, knot_y: &[f64]) -> f64 {
         if knot_y.len() != self.knot_x.len() {
             return LARGE_COST;
@@ -335,17 +330,30 @@ impl SplineProblem {
         };
 
         let mut objective_sum = 0.0;
+        let mut max_abs_residual = 0.0_f64;
         for point in self.points.as_slice() {
-            let residual = self.residual(evaluator.evaluate(point.x()), point.y());
+            let prediction = self
+                .residual_quantizer
+                .quantize_value(evaluator.evaluate(point.x()));
+            let observed = self.residual_quantizer.quantize_value(point.y());
+            let residual = prediction - observed;
             if !residual.is_finite() {
                 return LARGE_COST;
             }
-            objective_sum += self.loss_metric.value_from_residual(residual);
-            if !objective_sum.is_finite() {
-                return LARGE_COST;
+            if self.loss_metric == OptimizationLossMetric::Chebyshev {
+                max_abs_residual = max_abs_residual.max(residual.abs());
+            } else {
+                objective_sum += self.loss_metric.value_from_prediction(prediction, observed);
+                if !objective_sum.is_finite() {
+                    return LARGE_COST;
+                }
             }
         }
-        objective_sum / self.points.len() as f64
+        if self.loss_metric == OptimizationLossMetric::Chebyshev {
+            max_abs_residual
+        } else {
+            objective_sum / self.points.len() as f64
+        }
     }
 }
 
@@ -916,6 +924,8 @@ pub(super) fn build_spline_result_from_knot_y(
             OptimizationLossMetric::Mse => metrics.mse,
             OptimizationLossMetric::Mae => metrics.mae,
             OptimizationLossMetric::SoftL1 => metrics.soft_l1,
+            OptimizationLossMetric::Chebyshev => metrics.max_abs_error,
+            OptimizationLossMetric::Msle => metrics.msle,
         },
         mse: metrics.mse,
         rmse: metrics.rmse,

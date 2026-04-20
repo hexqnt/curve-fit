@@ -13,8 +13,8 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             metric_response,
             tr(
                 language,
-                "Optimization metric\n- This metric is minimized during fitting\n- Diagnostics shows it as loss(metric)\n- MSE: smooth gradients, MAE: more robust to outliers, soft_l1: compromise",
-                "Метрика оптимизации\n- Эта метрика минимизируется во время фитинга\n- В диагностике она отображается как loss(metric)\n- MSE: более гладкие градиенты, MAE: устойчивее к выбросам, soft_l1: компромисс",
+                "Optimization metric\n- This metric is minimized during fitting\n- Diagnostics shows it as loss(metric)\n- MSE (L2): smooth gradients\n- MAE (L1): more robust to outliers\n- soft_l1: compromise\n- Chebyshev: minimizes max absolute residual\n- MSLE: emphasizes relative/log-scaled deviations",
+                "Метрика оптимизации\n- Эта метрика минимизируется во время фитинга\n- В диагностике она отображается как loss(metric)\n- MSE (L2): более гладкие градиенты\n- MAE (L1): устойчивее к выбросам\n- soft_l1: компромисс\n- Chebyshev: минимизирует максимальный модуль остатка\n- MSLE: акцент на относительных/логарифмических отклонениях",
             ),
         );
     });

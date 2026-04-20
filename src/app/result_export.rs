@@ -429,9 +429,11 @@ fn optimizer_method_id(method: OptimizerMethod) -> &'static str {
 
 fn objective_metric_name(metric: OptimizationLossMetric) -> &'static str {
     match metric {
-        OptimizationLossMetric::Mse => "Mean Squared Error",
-        OptimizationLossMetric::Mae => "Mean Absolute Error",
+        OptimizationLossMetric::Mse => "Mean Squared Error (L2)",
+        OptimizationLossMetric::Mae => "Mean Absolute Error (L1)",
         OptimizationLossMetric::SoftL1 => "Soft L1",
+        OptimizationLossMetric::Chebyshev => "Chebyshev Distance (Linf)",
+        OptimizationLossMetric::Msle => "Mean Squared Logarithmic Error",
     }
 }
 

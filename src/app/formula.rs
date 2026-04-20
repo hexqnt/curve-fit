@@ -568,6 +568,13 @@ fn latex_to_plain_text(text: &str) -> String {
                     output.push_str("\\frac");
                 }
                 "quad" => output.push(' '),
+                "begin" | "end" => {
+                    // Окружения нужны только для LaTeX-верстки и не должны
+                    // попадать в человекочитаемый plain-text.
+                    if matches!(chars.next(), Some('{')) {
+                        let _ = read_braced_group(&mut chars);
+                    }
+                }
                 "text" => {
                     if matches!(chars.next(), Some('{')) {
                         let content = read_braced_group(&mut chars);

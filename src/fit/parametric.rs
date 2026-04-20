@@ -46,7 +46,7 @@ impl CurveProblemTerm<'_> {
         matches!(
             self.problem.metric_quantization,
             MetricQuantization::Disabled
-        )
+        ) && self.problem.loss_metric.simd_fast_path_supported()
     }
 
     fn fallback_term(&self) -> models::DataTerm<'_, CurveProblemPredictionLoss<'_>> {
@@ -202,28 +202,79 @@ impl CurveProblem {
     }
 
     #[inline]
-    fn residual(&self, predicted: f64, observed: f64) -> f64 {
-        self.residual_quantizer.residual(predicted, observed)
+    fn quantized_prediction_target(&self, predicted: f64, observed: f64) -> (f64, f64) {
+        (
+            self.residual_quantizer.quantize_value(predicted),
+            self.residual_quantizer.quantize_value(observed),
+        )
     }
 
     #[inline]
     fn loss_value_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
-        self.loss_metric
-            .value_from_residual(self.residual(predicted, observed))
+        let (predicted, observed) = self.quantized_prediction_target(predicted, observed);
+        self.loss_metric.value_from_prediction(predicted, observed)
     }
 
     #[inline]
     fn loss_derivative_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
-        self.loss_metric
-            .residual_derivative(self.residual(predicted, observed))
+        let (predicted, observed) = self.quantized_prediction_target(predicted, observed);
+        self.loss_metric.prediction_derivative(predicted, observed)
     }
 
     #[inline]
     fn loss_second_derivative_from_prediction(&self, predicted: f64, observed: f64) -> f64 {
+        let (predicted, observed) = self.quantized_prediction_target(predicted, observed);
         self.loss_metric
-            .residual_second_derivative(self.residual(predicted, observed))
+            .prediction_second_derivative(predicted, observed)
     }
 
+    fn chebyshev_objective_value(&self, param: &[f64]) -> f64 {
+        let mut max_abs_residual = 0.0_f64;
+        for (x, y) in self
+            .point_x
+            .iter()
+            .copied()
+            .zip(self.point_y.iter().copied())
+        {
+            let prediction = models::value_at(self.family, param, x);
+            let (prediction, observed) = self.quantized_prediction_target(prediction, y);
+            let residual = prediction - observed;
+            if !residual.is_finite() {
+                return LARGE_COST;
+            }
+            max_abs_residual = max_abs_residual.max(residual.abs());
+        }
+        max_abs_residual
+    }
+
+    fn objective_value_at_param(&self, param: &[f64]) -> f64 {
+        if self.loss_metric == OptimizationLossMetric::Chebyshev {
+            return self.chebyshev_objective_value(param);
+        }
+        self.objective().value(param)
+    }
+
+    fn numerical_gradient_from_cost(&self, param: &[f64]) -> Vec<f64> {
+        let mut gradient = vec![0.0; param.len()];
+        let mut probe = param.to_vec();
+        for (index, gradient_value) in gradient.iter_mut().enumerate() {
+            let base_step =
+                ((param[index].abs() + 1.0) * HESSIAN_FD_REL_STEP).max(HESSIAN_FD_MIN_STEP);
+            let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
+                let step = base_step * factor;
+                probe[index] = param[index] + step;
+                let cost_plus = self.objective_value_at_param(&probe);
+                probe[index] = param[index] - step;
+                let cost_minus = self.objective_value_at_param(&probe);
+                probe[index] = param[index];
+                finite_central_difference(cost_plus, cost_minus, step)
+            });
+            *gradient_value = derivative.unwrap_or(LARGE_COST);
+        }
+        gradient
+    }
+
+    #[inline]
     fn objective(&self) -> CurveProblemObjective<'_> {
         CurveProblemObjective { problem: self }
     }
@@ -235,7 +286,7 @@ impl CostFunction for CurveProblem {
 
     fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
         let param = array1_as_slice(param);
-        let value = self.objective().value(param);
+        let value = self.objective_value_at_param(param);
         if value.is_finite() {
             Ok(value)
         } else {
@@ -250,7 +301,12 @@ impl Gradient for CurveProblem {
 
     fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
         let param = array1_as_slice(param);
-        let (_, mut gradient) = self.objective().value_grad(param);
+        let mut gradient = if self.loss_metric == OptimizationLossMetric::Chebyshev {
+            self.numerical_gradient_from_cost(param)
+        } else {
+            let (_, gradient) = self.objective().value_grad(param);
+            gradient
+        };
         for value in &mut gradient {
             if !value.is_finite() {
                 *value = LARGE_COST;
@@ -265,7 +321,7 @@ impl Hessian for CurveProblem {
     type Hessian = Array2<f64>;
 
     fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
-        if !matches!(self.loss_metric, OptimizationLossMetric::Mae) {
+        if !self.loss_metric.requires_numerical_hessian() {
             let (_, _, hessian) = self.objective().value_grad_hessian(array1_as_slice(param));
             return Ok(hessian);
         }

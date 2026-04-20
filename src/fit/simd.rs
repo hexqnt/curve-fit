@@ -173,10 +173,15 @@ pub(super) fn accumulate_inverse_gradient_scalar(
 fn value_from_residual_simd(loss_metric: OptimizationLossMetric, residual: Vf64) -> Vf64 {
     match loss_metric {
         OptimizationLossMetric::Mse => residual * residual,
-        OptimizationLossMetric::Mae => residual.abs(),
+        OptimizationLossMetric::Mae | OptimizationLossMetric::Chebyshev => residual.abs(),
         OptimizationLossMetric::SoftL1 => {
             let one = Vf64::splat(1.0);
             Vf64::splat(2.0) * ((one + residual * residual).sqrt() - one)
+        }
+        OptimizationLossMetric::Msle => {
+            let one = Vf64::splat(1.0);
+            let log_term = (one + residual.abs()).ln();
+            log_term * log_term
         }
     }
 }
@@ -184,7 +189,7 @@ fn value_from_residual_simd(loss_metric: OptimizationLossMetric, residual: Vf64)
 fn residual_derivative_simd(loss_metric: OptimizationLossMetric, residual: Vf64) -> Vf64 {
     match loss_metric {
         OptimizationLossMetric::Mse => Vf64::splat(2.0) * residual,
-        OptimizationLossMetric::Mae => {
+        OptimizationLossMetric::Mae | OptimizationLossMetric::Chebyshev => {
             let one = Vf64::splat(1.0);
             let zero = Vf64::splat(0.0);
             let gt_zero = residual.simd_gt(zero);
@@ -194,6 +199,16 @@ fn residual_derivative_simd(loss_metric: OptimizationLossMetric, residual: Vf64)
         OptimizationLossMetric::SoftL1 => {
             let one = Vf64::splat(1.0);
             Vf64::splat(2.0) * residual / (one + residual * residual).sqrt()
+        }
+        OptimizationLossMetric::Msle => {
+            let one = Vf64::splat(1.0);
+            let abs_residual = residual.abs();
+            let log_term = (one + abs_residual).ln();
+            let magnitude = Vf64::splat(2.0) * log_term / (one + abs_residual);
+            let zero = Vf64::splat(0.0);
+            let gt_zero = residual.simd_gt(zero);
+            let lt_zero = residual.simd_lt(zero);
+            lt_zero.select(-magnitude, gt_zero.select(magnitude, zero))
         }
     }
 }

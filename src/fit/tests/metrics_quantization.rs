@@ -5,8 +5,6 @@ fn prediction_loss_adapter_respects_metric_and_quantization() {
     let points = build_points(&[0.0, 1.0], |_| 0.0);
     let prediction = 1.225;
     let target = 0.0;
-    let raw_residual = prediction - target;
-    let quantized_residual = 1.23;
 
     for metric in OptimizationLossMetric::ALL {
         let raw_problem = CurveProblem::new_with_metric_quantization(
@@ -31,33 +29,35 @@ fn prediction_loss_adapter_respects_metric_and_quantization() {
 
         assert_near(
             raw_loss.value(prediction, target),
-            metric.value_from_residual(raw_residual),
+            metric.value_from_prediction(prediction, target),
             1e-12,
         );
         assert_near(
             raw_loss.d_prediction(prediction, target),
-            metric.residual_derivative(raw_residual),
+            metric.prediction_derivative(prediction, target),
             1e-12,
         );
         assert_near(
             raw_loss.d2_prediction(prediction, target),
-            metric.residual_second_derivative(raw_residual),
+            metric.prediction_second_derivative(prediction, target),
             1e-12,
         );
 
+        let quantized_prediction = 1.23;
+        let quantized_target = 0.0;
         assert_near(
             quantized_loss.value(prediction, target),
-            metric.value_from_residual(quantized_residual),
+            metric.value_from_prediction(quantized_prediction, quantized_target),
             1e-12,
         );
         assert_near(
             quantized_loss.d_prediction(prediction, target),
-            metric.residual_derivative(quantized_residual),
+            metric.prediction_derivative(quantized_prediction, quantized_target),
             1e-12,
         );
         assert_near(
             quantized_loss.d2_prediction(prediction, target),
-            metric.residual_second_derivative(quantized_residual),
+            metric.prediction_second_derivative(quantized_prediction, quantized_target),
             1e-12,
         );
     }
@@ -82,17 +82,31 @@ fn iteration_metrics_loss_matches_selected_objective() {
     let mae_metrics = calculate_iteration_metrics(&points, &params, OptimizationLossMetric::Mae);
     let soft_l1_metrics =
         calculate_iteration_metrics(&points, &params, OptimizationLossMetric::SoftL1);
+    let chebyshev_metrics =
+        calculate_iteration_metrics(&points, &params, OptimizationLossMetric::Chebyshev);
+    let msle_metrics = calculate_iteration_metrics(&points, &params, OptimizationLossMetric::Msle);
 
     assert!((mse_metrics.loss - 1.0).abs() < 1e-12);
     assert!((mae_metrics.loss - 1.0).abs() < 1e-12);
+    assert!((chebyshev_metrics.loss - 1.0).abs() < 1e-12);
 
     let expected_soft_l1 = 2.0 * (2.0_f64.sqrt() - 1.0);
+    let expected_msle = [0.0_f64, 1.0, 2.0]
+        .iter()
+        .copied()
+        .map(|x| OptimizationLossMetric::Msle.value_from_prediction(x, x + 1.0))
+        .sum::<f64>()
+        / 3.0;
     assert!((mse_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
     assert!((mae_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+    assert!((chebyshev_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
     assert!((soft_l1_metrics.loss - expected_soft_l1).abs() < 1e-12);
     assert!((soft_l1_metrics.mse - 1.0).abs() < 1e-12);
     assert!((soft_l1_metrics.mae - 1.0).abs() < 1e-12);
     assert!((soft_l1_metrics.soft_l1 - expected_soft_l1).abs() < 1e-12);
+    assert!((msle_metrics.loss - expected_msle).abs() < 1e-12);
+    assert!((msle_metrics.mse - 1.0).abs() < 1e-12);
+    assert!((msle_metrics.mae - 1.0).abs() < 1e-12);
 }
 
 #[test]
@@ -209,7 +223,7 @@ fn spline_final_snapshot_uses_quantized_metrics_while_residuals_stay_raw() {
 
 #[test]
 fn parametric_fit_supports_all_objective_metrics() {
-    let points = build_points(&[-2.0, -1.0, 0.0, 1.0, 2.0], |x| 2.5 * x - 0.75);
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0, 4.0], |x| 2.5 * x + 1.75);
     let optimizer_config = OptimizerConfig::Lbfgs(LbfgsConfig::default());
     for loss_metric in OptimizationLossMetric::ALL {
         let result = fit_curve_with_progress_and_optimizer_config_and_loss_metric(
@@ -221,7 +235,11 @@ fn parametric_fit_supports_all_objective_metrics() {
             |_iteration, _params| true,
         )
         .expect("fit with selected objective metric must succeed");
-        assert!(result.mse < 1e-8);
+        assert!(
+            result.mse < 1e-8,
+            "loss={loss_metric:?}, mse={}",
+            result.mse
+        );
     }
 }
 

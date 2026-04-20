@@ -7,11 +7,19 @@ pub enum OptimizationLossMetric {
     Mse,
     Mae,
     SoftL1,
+    Chebyshev,
+    Msle,
 }
 
 impl OptimizationLossMetric {
     /// Полный список вариантов для UI и переборов.
-    pub const ALL: [Self; 3] = [Self::Mse, Self::Mae, Self::SoftL1];
+    pub const ALL: [Self; 5] = [
+        Self::Mse,
+        Self::Mae,
+        Self::SoftL1,
+        Self::Chebyshev,
+        Self::Msle,
+    ];
 
     /// Короткое имя метрики для подписи в легенде.
     pub fn id(self) -> &'static str {
@@ -19,6 +27,29 @@ impl OptimizationLossMetric {
             Self::Mse => "mse",
             Self::Mae => "mae",
             Self::SoftL1 => "soft_l1",
+            Self::Chebyshev => "chebyshev",
+            Self::Msle => "msle",
+        }
+    }
+
+    #[inline]
+    pub(super) fn simd_fast_path_supported(self) -> bool {
+        matches!(self, Self::Mse | Self::Mae | Self::SoftL1)
+    }
+
+    #[inline]
+    pub(super) fn requires_numerical_hessian(self) -> bool {
+        matches!(self, Self::Mae | Self::Chebyshev)
+    }
+
+    #[inline]
+    fn signum_or_zero(value: f64) -> f64 {
+        if value > 0.0 {
+            1.0
+        } else if value < 0.0 {
+            -1.0
+        } else {
+            0.0
         }
     }
 
@@ -27,31 +58,51 @@ impl OptimizationLossMetric {
             Self::Mse => residual * residual,
             Self::Mae => residual.abs(),
             Self::SoftL1 => 2.0 * ((1.0 + residual * residual).sqrt() - 1.0),
+            Self::Chebyshev => residual.abs(),
+            Self::Msle => {
+                let log_term = (1.0 + residual.abs()).ln();
+                log_term * log_term
+            }
         }
     }
 
     pub(super) fn residual_derivative(self, residual: f64) -> f64 {
         match self {
             Self::Mse => 2.0 * residual,
-            Self::Mae => {
-                if residual > 0.0 {
-                    1.0
-                } else if residual < 0.0 {
-                    -1.0
-                } else {
-                    0.0
-                }
-            }
+            Self::Mae | Self::Chebyshev => Self::signum_or_zero(residual),
             Self::SoftL1 => 2.0 * residual / (1.0 + residual * residual).sqrt(),
+            Self::Msle => {
+                let abs_residual = residual.abs();
+                let log_term = (1.0 + abs_residual).ln();
+                Self::signum_or_zero(residual) * (2.0 * log_term / (1.0 + abs_residual))
+            }
         }
     }
 
     pub(super) fn residual_second_derivative(self, residual: f64) -> f64 {
         match self {
             Self::Mse => 2.0,
-            Self::Mae => 0.0,
+            Self::Mae | Self::Chebyshev => 0.0,
             Self::SoftL1 => 2.0 / (1.0 + residual * residual).powf(1.5),
+            Self::Msle => {
+                let abs_residual = residual.abs();
+                let one_plus_abs = 1.0 + abs_residual;
+                let log_term = one_plus_abs.ln();
+                2.0 * (1.0 - log_term) / (one_plus_abs * one_plus_abs)
+            }
         }
+    }
+
+    pub(super) fn value_from_prediction(self, prediction: f64, target: f64) -> f64 {
+        self.value_from_residual(prediction - target)
+    }
+
+    pub(super) fn prediction_derivative(self, prediction: f64, target: f64) -> f64 {
+        self.residual_derivative(prediction - target)
+    }
+
+    pub(super) fn prediction_second_derivative(self, prediction: f64, target: f64) -> f64 {
+        self.residual_second_derivative(prediction - target)
     }
 }
 
@@ -124,11 +175,6 @@ impl ResidualQuantizer {
             Self::Disabled => value,
             Self::Enabled { scale } => (value * scale).round() / scale,
         }
-    }
-
-    #[inline]
-    pub(super) fn residual(self, predicted: f64, observed: f64) -> f64 {
-        self.quantize_value(predicted) - self.quantize_value(observed)
     }
 }
 
@@ -211,6 +257,7 @@ pub(super) struct ScalarMetrics {
     pub(super) rmse: f64,
     pub(super) mae: f64,
     pub(super) soft_l1: f64,
+    pub(super) msle: f64,
     pub(super) r2: f64,
     pub(super) max_abs_error: f64,
 }
@@ -223,6 +270,8 @@ pub(super) fn scalar_loss_value(
         OptimizationLossMetric::Mse => metrics.mse,
         OptimizationLossMetric::Mae => metrics.mae,
         OptimizationLossMetric::SoftL1 => metrics.soft_l1,
+        OptimizationLossMetric::Chebyshev => metrics.max_abs_error,
+        OptimizationLossMetric::Msle => metrics.msle,
     }
 }
 
@@ -246,13 +295,17 @@ where
     let mut sse = 0.0;
     let mut sae = 0.0;
     let mut soft_l1_sum = 0.0;
+    let mut msle_sum = 0.0;
     let mut max_abs_error = 0.0_f64;
     for point in points.as_slice() {
-        let residual = quantizer.residual(evaluate(point.x()), point.y());
+        let predicted = quantizer.quantize_value(evaluate(point.x()));
+        let observed = quantizer.quantize_value(point.y());
+        let residual = predicted - observed;
         let abs_residual = residual.abs();
         sse += residual * residual;
         sae += abs_residual;
         soft_l1_sum += OptimizationLossMetric::SoftL1.value_from_residual(residual);
+        msle_sum += OptimizationLossMetric::Msle.value_from_prediction(predicted, observed);
         max_abs_error = max_abs_error.max(abs_residual);
     }
 
@@ -268,6 +321,7 @@ where
     let rmse = mse.sqrt();
     let mae = sae / sample_count;
     let soft_l1 = soft_l1_sum / sample_count;
+    let msle = msle_sum / sample_count;
     let r2 = if sst <= 1e-15 {
         if sse <= 1e-15 { 1.0 } else { 0.0 }
     } else {
@@ -279,6 +333,7 @@ where
         rmse,
         mae,
         soft_l1,
+        msle,
         r2,
         max_abs_error,
     }
@@ -289,6 +344,7 @@ pub(super) struct EvaluatorMetrics {
     pub(super) rmse: f64,
     pub(super) mae: f64,
     pub(super) soft_l1: f64,
+    pub(super) msle: f64,
     pub(super) r2: f64,
     pub(super) max_abs_error: f64,
     pub(super) residuals: Vec<[f64; 2]>,
@@ -316,6 +372,7 @@ where
         rmse: scalar.rmse,
         mae: scalar.mae,
         soft_l1: scalar.soft_l1,
+        msle: scalar.msle,
         r2: scalar.r2,
         max_abs_error: scalar.max_abs_error,
         residuals,

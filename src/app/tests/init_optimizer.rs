@@ -228,7 +228,7 @@ fn fit_export_spline_record_includes_expected_payload() {
     assert_eq!(value["optimizer"]["loss_metric"]["id"], "mae");
     assert_eq!(
         value["optimizer"]["loss_metric"]["name"],
-        "Mean Absolute Error"
+        "Mean Absolute Error (L1)"
     );
     assert!(
         value["optimizer"]

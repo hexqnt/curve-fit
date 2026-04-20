@@ -141,9 +141,12 @@ fn ui_loss_diagnostics(
                         );
                         if app.fit_loss_metric != OptimizationLossMetric::Mse {
                             plot_ui.line(
-                                Line::new("MSE", PlotPoints::from_iter(mse_points.iter().copied()))
-                                    .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MSE))
-                                    .width(1.5_f32),
+                                Line::new(
+                                    "MSE (L2)",
+                                    PlotPoints::from_iter(mse_points.iter().copied()),
+                                )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MSE))
+                                .width(1.5_f32),
                             );
                         }
                         plot_ui.line(
@@ -153,9 +156,12 @@ fn ui_loss_diagnostics(
                         );
                         if app.fit_loss_metric != OptimizationLossMetric::Mae {
                             plot_ui.line(
-                                Line::new("MAE", PlotPoints::from_iter(mae_points.iter().copied()))
-                                    .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAE))
-                                    .width(1.5_f32),
+                                Line::new(
+                                    "MAE (L1)",
+                                    PlotPoints::from_iter(mae_points.iter().copied()),
+                                )
+                                .id(egui::Id::new(DIAGNOSTICS_SERIES_ID_MAE))
+                                .width(1.5_f32),
                             );
                         }
                         if app.fit_loss_metric != OptimizationLossMetric::SoftL1 {

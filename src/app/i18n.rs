@@ -156,9 +156,11 @@ pub(super) fn optimization_loss_metric_label(
     metric: OptimizationLossMetric,
 ) -> &'static str {
     match metric {
-        OptimizationLossMetric::Mse => "MSE",
-        OptimizationLossMetric::Mae => "MAE",
+        OptimizationLossMetric::Mse => "MSE (L2)",
+        OptimizationLossMetric::Mae => "MAE (L1)",
         OptimizationLossMetric::SoftL1 => "soft_l1",
+        OptimizationLossMetric::Chebyshev => "Chebyshev",
+        OptimizationLossMetric::Msle => "MSLE",
     }
 }
 
