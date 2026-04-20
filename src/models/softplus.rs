@@ -8,12 +8,90 @@ use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+const PARAM_COUNT: usize = 4;
+
 #[inline]
 fn softplus_simd(value: Vf64) -> Vf64 {
     let zero = Vf64::splat(0.0);
     let positive_branch = value + ln_1p_simd((-value).exp());
     let negative_branch = ln_1p_simd(value.exp());
     value.simd_gt(zero).select(positive_branch, negative_branch)
+}
+
+#[derive(Clone, Copy)]
+struct Params<T> {
+    amplitude: T,
+    slope: T,
+    x0: T,
+    offset: T,
+}
+
+impl Params<f64> {
+    #[inline]
+    fn parse(param: &[f64]) -> Self {
+        let [amplitude, slope, x0, offset]: [f64; PARAM_COUNT] = param
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {} params", PARAM_COUNT));
+        Self {
+            amplitude,
+            slope,
+            x0,
+            offset,
+        }
+    }
+
+    #[inline]
+    fn simd(self) -> Params<Vf64> {
+        Params::<Vf64> {
+            amplitude: Vf64::splat(self.amplitude),
+            slope: Vf64::splat(self.slope),
+            x0: Vf64::splat(self.x0),
+            offset: Vf64::splat(self.offset),
+        }
+    }
+
+    #[inline]
+    fn value_at(self, x: f64) -> f64 {
+        self.amplitude * math_softplus(self.slope * (x - self.x0)) + self.offset
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: f64, grad: &mut [f64]) -> f64 {
+        debug_assert_eq!(grad.len(), PARAM_COUNT);
+
+        let z = self.slope * (x - self.x0);
+        let softplus_z = math_softplus(z);
+        let sigma_z = sigmoid(z);
+
+        grad[0] = softplus_z;
+        grad[1] = self.amplitude * sigma_z * (x - self.x0);
+        grad[2] = -self.amplitude * sigma_z * self.slope;
+        grad[3] = 1.0;
+
+        self.amplitude * softplus_z + self.offset
+    }
+}
+
+impl Params<Vf64> {
+    #[inline]
+    fn value_at(self, x: Vf64) -> Vf64 {
+        self.amplitude * softplus_simd(self.slope * (x - self.x0)) + self.offset
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+        let x_centered = x - self.x0;
+        let z = self.slope * x_centered;
+        let softplus_z = softplus_simd(z);
+        let sigma_z = sigmoid_simd(z);
+
+        grad[0] = softplus_z;
+        grad[1] = self.amplitude * sigma_z * x_centered;
+        grad[2] = -self.amplitude * sigma_z * self.slope;
+        grad[3] = Vf64::splat(1.0);
+
+        self.amplitude * softplus_z + self.offset
+    }
 }
 
 /// Вычисляет softplus-переход:
@@ -25,60 +103,25 @@ fn softplus_simd(value: Vf64) -> Vf64 {
 /// - `offset` — вертикальный сдвиг.
 #[inline]
 pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
-    let amplitude = param[0];
-    let slope = param[1];
-    let x0 = param[2];
-    let offset = param[3];
-    amplitude * math_softplus(slope * (x - x0)) + offset
+    Params::parse(param).value_at(x)
 }
 
 #[allow(dead_code)]
 #[inline]
 pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
-    let amplitude = Vf64::splat(param[0]);
-    let slope = Vf64::splat(param[1]);
-    let x0 = Vf64::splat(param[2]);
-    let offset = Vf64::splat(param[3]);
-    amplitude * softplus_simd(slope * (x - x0)) + offset
+    Params::parse(param).simd().value_at(x)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
-    debug_assert_eq!(grad.len(), 4);
-
-    let amplitude = param[0];
-    let slope = param[1];
-    let x0 = param[2];
-    let offset = param[3];
-    let z = slope * (x - x0);
-    let softplus_z = math_softplus(z);
-    let sigma_z = sigmoid(z);
-
-    grad[0] = softplus_z;
-    grad[1] = amplitude * sigma_z * (x - x0);
-    grad[2] = -amplitude * sigma_z * slope;
-    grad[3] = 1.0;
-
-    amplitude * softplus_z + offset
+    Params::parse(param).value_grad_at(x, grad)
 }
 
+#[allow(dead_code)]
 #[inline]
-pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 4]) -> Vf64 {
-    let amplitude = Vf64::splat(param[0]);
-    let slope = Vf64::splat(param[1]);
-    let x0 = Vf64::splat(param[2]);
-    let offset = Vf64::splat(param[3]);
-    let x_centered = x - x0;
-    let z = slope * x_centered;
-    let softplus_z = softplus_simd(z);
-    let sigma_z = sigmoid_simd(z);
-
-    grad[0] = softplus_z;
-    grad[1] = amplitude * sigma_z * x_centered;
-    grad[2] = -amplitude * sigma_z * slope;
-    grad[3] = Vf64::splat(1.0);
-
-    amplitude * softplus_z + offset
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+    Params::parse(param).simd().value_grad_at(x, grad)
 }
 
 pub(super) fn add_value_grad(
@@ -89,6 +132,8 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -96,36 +141,33 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut point_grad = [Vf64::splat(0.0); 4];
-        let mut gradient_0 = Vf64::splat(0.0);
-        let mut gradient_1 = Vf64::splat(0.0);
-        let mut gradient_2 = Vf64::splat(0.0);
-        let mut gradient_3 = Vf64::splat(0.0);
+        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
+        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
+            params_simd.value_grad_at(x, &mut point_grad);
 
-            gradient_0 += upstream * point_grad[0];
-            gradient_1 += upstream * point_grad[1];
-            gradient_2 += upstream * point_grad[2];
-            gradient_3 += upstream * point_grad[3];
+            for (gradient_value, point_grad_value) in
+                gradient_accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
 
-        gradient[0] += gradient_0.reduce_sum();
-        gradient[1] += gradient_1.reduce_sum();
-        gradient[2] += gradient_2.reduce_sum();
-        gradient[3] += gradient_3.reduce_sum();
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
+        {
+            *gradient_value += accum_value.reduce_sum();
+        }
 
-        let mut point_grad = [0.0; 4];
+        let mut point_grad = [0.0; PARAM_COUNT];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
+            params.value_grad_at(x, &mut point_grad);
 
-            gradient[0] += upstream * point_grad[0];
-            gradient[1] += upstream * point_grad[1];
-            gradient[2] += upstream * point_grad[2];
-            gradient[3] += upstream * point_grad[3];
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
     }
 }
@@ -136,25 +178,20 @@ pub(super) fn add_value_grad_raw_hessian(
     value_first: &[f64],
     value_second: &[f64],
 ) -> Option<Array2<f64>> {
-    if param.len() != 4 {
+    if param.len() != PARAM_COUNT {
         return None;
     }
 
     let sample_count = x_values.len();
     if sample_count == 0 {
-        return Some(Array2::zeros((4, 4)));
+        return Some(Array2::zeros((PARAM_COUNT, PARAM_COUNT)));
     }
     let sample_scale = 1.0 / sample_count as f64;
-    let mut hessian = Array2::zeros((4, 4));
-    let amplitude = param[0];
-    let slope = param[1];
-    let x0 = param[2];
+    let mut hessian = Array2::zeros((PARAM_COUNT, PARAM_COUNT));
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
-        let amplitude = Vf64::splat(amplitude);
-        let slope = Vf64::splat(slope);
-        let x0 = Vf64::splat(x0);
-        let offset = Vf64::splat(param[3]);
         let zero = Vf64::splat(0.0);
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
         let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
@@ -181,12 +218,12 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_second_chunks.iter())
         {
             let x = Vf64::from_array(*x_chunk);
-            let u = x - x0;
-            let z = slope * u;
+            let u = x - params_simd.x0;
+            let z = params_simd.slope * u;
             let softplus_z = softplus_simd(z);
             let sigma_z = sigmoid_simd(z);
             let d2_shape_dz2 = sigma_z * (Vf64::splat(1.0) - sigma_z);
-            let model = amplitude * softplus_z + offset;
+            let model = params_simd.amplitude * softplus_z + params_simd.offset;
             if !model.is_finite().all() {
                 return None;
             }
@@ -201,14 +238,16 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = softplus_z;
-            let jac_b = amplitude * sigma_z * u;
-            let jac_c = -amplitude * sigma_z * slope;
+            let jac_b = params_simd.amplitude * sigma_z * u;
+            let jac_c = -params_simd.amplitude * sigma_z * params_simd.slope;
             let jac_d = Vf64::splat(1.0);
             let d2_model_dadb = sigma_z * u;
-            let d2_model_dadc = -sigma_z * slope;
-            let d2_model_dbdb = amplitude * d2_shape_dz2 * u * u;
-            let d2_model_dbdc = -amplitude * (slope * u * d2_shape_dz2 + sigma_z);
-            let d2_model_dcdc = amplitude * d2_shape_dz2 * slope * slope;
+            let d2_model_dadc = -sigma_z * params_simd.slope;
+            let d2_model_dbdb = params_simd.amplitude * d2_shape_dz2 * u * u;
+            let d2_model_dbdc =
+                -params_simd.amplitude * (params_simd.slope * u * d2_shape_dz2 + sigma_z);
+            let d2_model_dcdc =
+                params_simd.amplitude * d2_shape_dz2 * params_simd.slope * params_simd.slope;
 
             h00 += value_second * jac_a * jac_a;
             h01 += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -238,12 +277,12 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_first_tail.iter())
             .zip(value_second_tail.iter())
         {
-            let u = x - param[2];
-            let z = param[1] * u;
+            let u = x - params.x0;
+            let z = params.slope * u;
             let softplus_z = math_softplus(z);
             let sigma_z = sigmoid(z);
             let d2_shape_dz2 = sigma_z * (1.0 - sigma_z);
-            let model = value_at(param, x);
+            let model = params.amplitude * softplus_z + params.offset;
             if !model.is_finite() {
                 return None;
             }
@@ -253,14 +292,14 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = softplus_z;
-            let jac_b = param[0] * sigma_z * u;
-            let jac_c = -param[0] * sigma_z * param[1];
+            let jac_b = params.amplitude * sigma_z * u;
+            let jac_c = -params.amplitude * sigma_z * params.slope;
             let jac_d = 1.0;
             let d2_model_dadb = sigma_z * u;
-            let d2_model_dadc = -sigma_z * param[1];
-            let d2_model_dbdb = param[0] * d2_shape_dz2 * u * u;
-            let d2_model_dbdc = -param[0] * (param[1] * u * d2_shape_dz2 + sigma_z);
-            let d2_model_dcdc = param[0] * d2_shape_dz2 * param[1] * param[1];
+            let d2_model_dadc = -sigma_z * params.slope;
+            let d2_model_dbdb = params.amplitude * d2_shape_dz2 * u * u;
+            let d2_model_dbdc = -params.amplitude * (params.slope * u * d2_shape_dz2 + sigma_z);
+            let d2_model_dcdc = params.amplitude * d2_shape_dz2 * params.slope * params.slope;
 
             hessian[[0, 0]] += value_second * jac_a * jac_a;
             hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -312,10 +351,11 @@ mod tests {
     #[test]
     fn simd_value_matches_scalar_near_zero_transition() {
         let param = [1.3, 0.6, -0.4, 0.2];
+        let [_, _, x0, _] = param;
         let mut x_values = [0.0; Vf64::LEN];
         let center = (Vf64::LEN as f64 - 1.0) * 0.5;
         for (index, x) in x_values.iter_mut().enumerate() {
-            *x = param[2] + (index as f64 - center) * 1e-9;
+            *x = x0 + (index as f64 - center) * 1e-9;
         }
 
         let simd = value_simd_at(&param, Vf64::from_array(x_values)).to_array();

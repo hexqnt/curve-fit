@@ -29,6 +29,7 @@ pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
         })
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
     debug_assert_eq!(grad.len(), param.len());
@@ -43,6 +44,7 @@ pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
     value
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64]) -> Vf64 {
     debug_assert_eq!(grad.len(), param.len());

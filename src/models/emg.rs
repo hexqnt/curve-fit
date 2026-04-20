@@ -1,32 +1,101 @@
-use super::common::{Vf64, erfc_approx_simd};
+use super::common::{Vf64, erfc_approx_simd, positive_param_with_derivative_simd};
 use super::common::{erfc_approx, positive_param_with_derivative};
 use ndarray::Array2;
 use std::simd::StdFloat;
 use std::simd::num::SimdFloat;
 
-#[inline]
-fn eval_right(amplitude: f64, mu: f64, sigma: f64, tau: f64, baseline: f64, x: f64) -> f64 {
-    let (sigma, _) = positive_param_with_derivative(sigma);
-    let (tau, _) = positive_param_with_derivative(tau);
-    let delta = x - mu;
-    let z = (sigma / tau - delta / sigma) / std::f64::consts::SQRT_2;
-    let exponent = sigma * sigma / (2.0 * tau * tau) - delta / tau;
-    baseline + (amplitude / (2.0 * tau)) * exponent.exp() * erfc_approx(z)
+const PARAM_COUNT: usize = 5;
+
+#[derive(Clone, Copy)]
+struct Params<T> {
+    amplitude: T,
+    mu: T,
+    sigma: T,
+    tau: T,
+    baseline: T,
 }
 
-#[inline]
-fn eval_right_simd(amplitude: f64, mu: f64, sigma: f64, tau: f64, baseline: f64, x: Vf64) -> Vf64 {
-    let (sigma, _) = positive_param_with_derivative(sigma);
-    let (tau, _) = positive_param_with_derivative(tau);
-    let delta = x - Vf64::splat(mu);
-    let z = (Vf64::splat(sigma / tau) - delta / Vf64::splat(sigma))
-        / Vf64::splat(std::f64::consts::SQRT_2);
-    let exponent = Vf64::splat(sigma * sigma / (2.0 * tau * tau)) - delta / Vf64::splat(tau);
-    Vf64::splat(baseline)
-        + Vf64::splat(amplitude / (2.0 * tau)) * exponent.exp() * erfc_approx_simd(z)
+impl Params<f64> {
+    #[inline]
+    fn parse(param: &[f64]) -> Self {
+        let [amplitude, mu, sigma, tau, baseline]: [f64; PARAM_COUNT] = param
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {} params", PARAM_COUNT));
+        Self {
+            amplitude,
+            mu,
+            sigma,
+            tau,
+            baseline,
+        }
+    }
+
+    #[inline]
+    fn simd(self) -> Params<Vf64> {
+        Params::<Vf64> {
+            amplitude: Vf64::splat(self.amplitude),
+            mu: Vf64::splat(self.mu),
+            sigma: Vf64::splat(self.sigma),
+            tau: Vf64::splat(self.tau),
+            baseline: Vf64::splat(self.baseline),
+        }
+    }
+
+    #[inline]
+    fn eval_right(self, x: f64) -> f64 {
+        let (sigma, _) = positive_param_with_derivative(self.sigma);
+        let (tau, _) = positive_param_with_derivative(self.tau);
+        let delta = x - self.mu;
+        let z = (sigma / tau - delta / sigma) / std::f64::consts::SQRT_2;
+        let exponent = sigma * sigma / (2.0 * tau * tau) - delta / tau;
+        self.baseline + (self.amplitude / (2.0 * tau)) * exponent.exp() * erfc_approx(z)
+    }
+
+    #[inline]
+    fn value_at(self, x: f64) -> f64 {
+        if self.tau.is_sign_negative() {
+            self.eval_right(2.0 * self.mu - x)
+        } else {
+            self.eval_right(x)
+        }
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: f64, grad: &mut [f64]) -> f64 {
+        debug_assert_eq!(grad.len(), PARAM_COUNT);
+        grad.fill(0.0);
+        self.value_at(x)
+    }
 }
 
-#[inline]
+impl Params<Vf64> {
+    #[inline]
+    fn eval_right(self, x: Vf64) -> Vf64 {
+        let (sigma, _) = positive_param_with_derivative_simd(self.sigma);
+        let (tau, _) = positive_param_with_derivative_simd(self.tau);
+        let delta = x - self.mu;
+        let z = (sigma / tau - delta / sigma) / Vf64::splat(std::f64::consts::SQRT_2);
+        let exponent = sigma * sigma / (Vf64::splat(2.0) * tau * tau) - delta / tau;
+        self.baseline
+            + (self.amplitude / (Vf64::splat(2.0) * tau)) * exponent.exp() * erfc_approx_simd(z)
+    }
+
+    #[inline]
+    fn value_at(self, x: Vf64) -> Vf64 {
+        if self.tau.to_array()[0].is_sign_negative() {
+            self.eval_right(Vf64::splat(2.0) * self.mu - x)
+        } else {
+            self.eval_right(x)
+        }
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+        grad.fill(Vf64::splat(0.0));
+        self.value_at(x)
+    }
+}
+
 /// Вычисляет экспоненциально-модифицированную гауссиану (EMG):
 /// `f(x) = baseline + (amplitude / (2 * tau)) * exp(sigma^2 / (2 * tau^2) - (x - mu) / tau) * erfc(z)`,
 /// где:
@@ -37,49 +106,27 @@ fn eval_right_simd(amplitude: f64, mu: f64, sigma: f64, tau: f64, baseline: f64,
 /// - `baseline` — вертикальный сдвиг.
 ///
 /// Для `tau < 0` используется отражение по `mu`, что даёт хвост в противоположную сторону.
+#[inline]
 pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
-    let amplitude = param[0];
-    let mu = param[1];
-    let sigma = param[2];
-    let tau = param[3];
-    let baseline = param[4];
-
-    if tau.is_sign_negative() {
-        let reflected_x = 2.0 * mu - x;
-        eval_right(amplitude, mu, sigma, tau.abs(), baseline, reflected_x)
-    } else {
-        eval_right(amplitude, mu, sigma, tau, baseline, x)
-    }
+    Params::parse(param).value_at(x)
 }
 
 #[allow(dead_code)]
 #[inline]
 pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
-    let amplitude = param[0];
-    let mu = param[1];
-    let sigma = param[2];
-    let tau = param[3];
-    let baseline = param[4];
-
-    if tau.is_sign_negative() {
-        let reflected_x = Vf64::splat(2.0 * mu) - x;
-        eval_right_simd(amplitude, mu, sigma, tau.abs(), baseline, reflected_x)
-    } else {
-        eval_right_simd(amplitude, mu, sigma, tau, baseline, x)
-    }
+    Params::parse(param).simd().value_at(x)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
-    debug_assert_eq!(grad.len(), 5);
-    grad.fill(0.0);
-    value_at(param, x)
+    Params::parse(param).value_grad_at(x, grad)
 }
 
+#[allow(dead_code)]
 #[inline]
-pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 5]) -> Vf64 {
-    grad.fill(Vf64::splat(0.0));
-    value_simd_at(param, x)
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+    Params::parse(param).simd().value_grad_at(x, grad)
 }
 
 pub(super) fn add_value_grad(
@@ -90,6 +137,8 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -97,39 +146,33 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut point_grad = [Vf64::splat(0.0); 5];
-        let mut gradient_0 = Vf64::splat(0.0);
-        let mut gradient_1 = Vf64::splat(0.0);
-        let mut gradient_2 = Vf64::splat(0.0);
-        let mut gradient_3 = Vf64::splat(0.0);
-        let mut gradient_4 = Vf64::splat(0.0);
+        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
+        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
-            gradient_0 += upstream * point_grad[0];
-            gradient_1 += upstream * point_grad[1];
-            gradient_2 += upstream * point_grad[2];
-            gradient_3 += upstream * point_grad[3];
-            gradient_4 += upstream * point_grad[4];
+            params_simd.value_grad_at(x, &mut point_grad);
+
+            for (gradient_value, point_grad_value) in
+                gradient_accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
 
-        gradient[0] += gradient_0.reduce_sum();
-        gradient[1] += gradient_1.reduce_sum();
-        gradient[2] += gradient_2.reduce_sum();
-        gradient[3] += gradient_3.reduce_sum();
-        gradient[4] += gradient_4.reduce_sum();
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
+        {
+            *gradient_value += accum_value.reduce_sum();
+        }
 
-        let mut point_grad = [0.0; 5];
+        let mut point_grad = [0.0; PARAM_COUNT];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
+            params.value_grad_at(x, &mut point_grad);
 
-            gradient[0] += upstream * point_grad[0];
-            gradient[1] += upstream * point_grad[1];
-            gradient[2] += upstream * point_grad[2];
-            gradient[3] += upstream * point_grad[3];
-            gradient[4] += upstream * point_grad[4];
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
     }
 }

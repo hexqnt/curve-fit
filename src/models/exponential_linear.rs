@@ -5,6 +5,79 @@ use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+const PARAM_COUNT: usize = 4;
+
+#[derive(Clone, Copy)]
+struct Params<T> {
+    exp_amplitude: T,
+    exp_rate: T,
+    linear_slope: T,
+    offset: T,
+}
+
+impl Params<f64> {
+    #[inline]
+    fn parse(param: &[f64]) -> Self {
+        let [exp_amplitude, exp_rate, linear_slope, offset]: [f64; PARAM_COUNT] = param
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {} params", PARAM_COUNT));
+        Self {
+            exp_amplitude,
+            exp_rate,
+            linear_slope,
+            offset,
+        }
+    }
+
+    #[inline]
+    fn simd(self) -> Params<Vf64> {
+        Params::<Vf64> {
+            exp_amplitude: Vf64::splat(self.exp_amplitude),
+            exp_rate: Vf64::splat(self.exp_rate),
+            linear_slope: Vf64::splat(self.linear_slope),
+            offset: Vf64::splat(self.offset),
+        }
+    }
+
+    #[inline]
+    fn value_at(self, x: f64) -> f64 {
+        self.exp_amplitude * (self.exp_rate * x).exp() + self.linear_slope * x + self.offset
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: f64, grad: &mut [f64]) -> f64 {
+        debug_assert_eq!(grad.len(), PARAM_COUNT);
+
+        let exp_part = (self.exp_rate * x).exp();
+
+        grad[0] = exp_part;
+        grad[1] = self.exp_amplitude * exp_part * x;
+        grad[2] = x;
+        grad[3] = 1.0;
+
+        self.exp_amplitude * exp_part + self.linear_slope * x + self.offset
+    }
+}
+
+impl Params<Vf64> {
+    #[inline]
+    fn value_at(self, x: Vf64) -> Vf64 {
+        self.exp_amplitude * (self.exp_rate * x).exp() + self.linear_slope * x + self.offset
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+        let exp_part = (self.exp_rate * x).exp();
+
+        grad[0] = exp_part;
+        grad[1] = self.exp_amplitude * exp_part * x;
+        grad[2] = x;
+        grad[3] = Vf64::splat(1.0);
+
+        self.exp_amplitude * exp_part + self.linear_slope * x + self.offset
+    }
+}
+
 /// Вычисляет экспоненциально-линейную модель:
 /// `f(x) = exp_amplitude * exp(exp_rate * x) + linear_slope * x + offset`,
 /// где:
@@ -14,55 +87,25 @@ use std::simd::num::SimdFloat;
 /// - `offset` — свободный член.
 #[inline]
 pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
-    let exp_amplitude = param[0];
-    let exp_rate = param[1];
-    let linear_slope = param[2];
-    let offset = param[3];
-    exp_amplitude * (exp_rate * x).exp() + linear_slope * x + offset
+    Params::parse(param).value_at(x)
 }
 
 #[allow(dead_code)]
 #[inline]
 pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
-    let exp_amplitude = Vf64::splat(param[0]);
-    let exp_rate = Vf64::splat(param[1]);
-    let linear_slope = Vf64::splat(param[2]);
-    let offset = Vf64::splat(param[3]);
-    exp_amplitude * (exp_rate * x).exp() + linear_slope * x + offset
+    Params::parse(param).simd().value_at(x)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
-    debug_assert_eq!(grad.len(), 4);
-
-    let exp_amplitude = param[0];
-    let exp_rate = param[1];
-    let linear_slope = param[2];
-    let offset = param[3];
-    let exp_part = (exp_rate * x).exp();
-
-    grad[0] = exp_part;
-    grad[1] = exp_amplitude * exp_part * x;
-    grad[2] = x;
-    grad[3] = 1.0;
-
-    exp_amplitude * exp_part + linear_slope * x + offset
+    Params::parse(param).value_grad_at(x, grad)
 }
 
+#[allow(dead_code)]
 #[inline]
-pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 4]) -> Vf64 {
-    let exp_amplitude = Vf64::splat(param[0]);
-    let exp_rate = Vf64::splat(param[1]);
-    let linear_slope = Vf64::splat(param[2]);
-    let offset = Vf64::splat(param[3]);
-    let exp_part = (exp_rate * x).exp();
-
-    grad[0] = exp_part;
-    grad[1] = exp_amplitude * exp_part * x;
-    grad[2] = x;
-    grad[3] = Vf64::splat(1.0);
-
-    exp_amplitude * exp_part + linear_slope * x + offset
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+    Params::parse(param).simd().value_grad_at(x, grad)
 }
 
 pub(super) fn add_value_grad(
@@ -73,6 +116,8 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -80,36 +125,33 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut point_grad = [Vf64::splat(0.0); 4];
-        let mut gradient_0 = Vf64::splat(0.0);
-        let mut gradient_1 = Vf64::splat(0.0);
-        let mut gradient_2 = Vf64::splat(0.0);
-        let mut gradient_3 = Vf64::splat(0.0);
+        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
+        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
+            params_simd.value_grad_at(x, &mut point_grad);
 
-            gradient_0 += upstream * point_grad[0];
-            gradient_1 += upstream * point_grad[1];
-            gradient_2 += upstream * point_grad[2];
-            gradient_3 += upstream * point_grad[3];
+            for (gradient_value, point_grad_value) in
+                gradient_accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
 
-        gradient[0] += gradient_0.reduce_sum();
-        gradient[1] += gradient_1.reduce_sum();
-        gradient[2] += gradient_2.reduce_sum();
-        gradient[3] += gradient_3.reduce_sum();
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
+        {
+            *gradient_value += accum_value.reduce_sum();
+        }
 
-        let mut point_grad = [0.0; 4];
+        let mut point_grad = [0.0; PARAM_COUNT];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
+            params.value_grad_at(x, &mut point_grad);
 
-            gradient[0] += upstream * point_grad[0];
-            gradient[1] += upstream * point_grad[1];
-            gradient[2] += upstream * point_grad[2];
-            gradient[3] += upstream * point_grad[3];
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
     }
 }
@@ -120,24 +162,20 @@ pub(super) fn add_value_grad_raw_hessian(
     value_first: &[f64],
     value_second: &[f64],
 ) -> Option<Array2<f64>> {
-    if param.len() != 4 {
+    if param.len() != PARAM_COUNT {
         return None;
     }
 
     let sample_count = x_values.len();
     if sample_count == 0 {
-        return Some(Array2::zeros((4, 4)));
+        return Some(Array2::zeros((PARAM_COUNT, PARAM_COUNT)));
     }
     let sample_scale = 1.0 / sample_count as f64;
-    let mut hessian = Array2::zeros((4, 4));
-    let exp_amplitude = param[0];
-    let exp_rate = param[1];
+    let mut hessian = Array2::zeros((PARAM_COUNT, PARAM_COUNT));
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
-        let exp_amplitude = Vf64::splat(exp_amplitude);
-        let exp_rate = Vf64::splat(exp_rate);
-        let linear_slope = Vf64::splat(param[2]);
-        let offset = Vf64::splat(param[3]);
         let zero = Vf64::splat(0.0);
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
         let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
@@ -164,8 +202,10 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_second_chunks.iter())
         {
             let x = Vf64::from_array(*x_chunk);
-            let exp_part = (exp_rate * x).exp();
-            let model = exp_amplitude * exp_part + linear_slope * x + offset;
+            let exp_part = (params_simd.exp_rate * x).exp();
+            let model = params_simd.exp_amplitude * exp_part
+                + params_simd.linear_slope * x
+                + params_simd.offset;
             if !model.is_finite().all() {
                 return None;
             }
@@ -180,11 +220,11 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_part;
-            let jac_b = exp_amplitude * x * exp_part;
+            let jac_b = params_simd.exp_amplitude * x * exp_part;
             let jac_c = x;
             let jac_d = Vf64::splat(1.0);
             let d2_model_dadb = x * exp_part;
-            let d2_model_dbdb = exp_amplitude * x * x * exp_part;
+            let d2_model_dbdb = params_simd.exp_amplitude * x * x * exp_part;
 
             h00 += value_second * jac_a * jac_a;
             h01 += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -214,8 +254,8 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_first_tail.iter())
             .zip(value_second_tail.iter())
         {
-            let exp_part = (param[1] * x).exp();
-            let model = value_at(param, x);
+            let exp_part = (params.exp_rate * x).exp();
+            let model = params.exp_amplitude * exp_part + params.linear_slope * x + params.offset;
             if !model.is_finite() {
                 return None;
             }
@@ -225,11 +265,11 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_part;
-            let jac_b = param[0] * x * exp_part;
+            let jac_b = params.exp_amplitude * x * exp_part;
             let jac_c = x;
             let jac_d = 1.0;
             let d2_model_dadb = x * exp_part;
-            let d2_model_dbdb = param[0] * x * x * exp_part;
+            let d2_model_dbdb = params.exp_amplitude * x * x * exp_part;
 
             hessian[[0, 0]] += value_second * jac_a * jac_a;
             hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;

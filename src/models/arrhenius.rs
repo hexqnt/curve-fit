@@ -5,6 +5,73 @@ use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+const PARAM_COUNT: usize = 2;
+
+#[derive(Clone, Copy)]
+struct Params<T> {
+    prefactor: T,
+    temp_coeff: T,
+}
+
+impl Params<f64> {
+    #[inline]
+    fn parse(param: &[f64]) -> Self {
+        let [prefactor, temp_coeff]: [f64; PARAM_COUNT] = param
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {} params", PARAM_COUNT));
+        Self {
+            prefactor,
+            temp_coeff,
+        }
+    }
+
+    #[inline]
+    fn simd(self) -> Params<Vf64> {
+        Params::<Vf64> {
+            prefactor: Vf64::splat(self.prefactor),
+            temp_coeff: Vf64::splat(self.temp_coeff),
+        }
+    }
+
+    #[inline]
+    fn value_at(self, x: f64) -> f64 {
+        let x = positive_x(x);
+        self.prefactor * (self.temp_coeff / x).exp()
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: f64, grad: &mut [f64]) -> f64 {
+        debug_assert_eq!(grad.len(), PARAM_COUNT);
+
+        let x = positive_x(x);
+        let exp_term = (self.temp_coeff / x).exp();
+
+        grad[0] = exp_term;
+        grad[1] = self.prefactor * exp_term / x;
+
+        self.prefactor * exp_term
+    }
+}
+
+impl Params<Vf64> {
+    #[inline]
+    fn value_at(self, x: Vf64) -> Vf64 {
+        let x = positive_x_simd(x);
+        self.prefactor * (self.temp_coeff / x).exp()
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+        let x = positive_x_simd(x);
+        let exp_term = (self.temp_coeff / x).exp();
+
+        grad[0] = exp_term;
+        grad[1] = self.prefactor * exp_term / x;
+
+        self.prefactor * exp_term
+    }
+}
+
 /// Вычисляет кривую Аррениуса:
 /// `f(x) = prefactor * exp(temp_coeff / x)`,
 /// где:
@@ -14,47 +81,25 @@ use std::simd::num::SimdFloat;
 /// Значение `x` предварительно ограничивается снизу через `positive_x`.
 #[inline]
 pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
-    let x = positive_x(x);
-    let prefactor = param[0];
-    let temp_coeff = param[1];
-    prefactor * (temp_coeff / x).exp()
+    Params::parse(param).value_at(x)
 }
 
 #[allow(dead_code)]
 #[inline]
 pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
-    let x = positive_x_simd(x);
-    let prefactor = Vf64::splat(param[0]);
-    let temp_coeff = Vf64::splat(param[1]);
-    prefactor * (temp_coeff / x).exp()
+    Params::parse(param).simd().value_at(x)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
-    debug_assert_eq!(grad.len(), 2);
-
-    let x = positive_x(x);
-    let prefactor = param[0];
-    let temp_coeff = param[1];
-    let exp_term = (temp_coeff / x).exp();
-
-    grad[0] = exp_term;
-    grad[1] = prefactor * exp_term / x;
-
-    prefactor * exp_term
+    Params::parse(param).value_grad_at(x, grad)
 }
 
+#[allow(dead_code)]
 #[inline]
-pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 2]) -> Vf64 {
-    let x = positive_x_simd(x);
-    let prefactor = Vf64::splat(param[0]);
-    let temp_coeff = Vf64::splat(param[1]);
-    let exp_term = (temp_coeff / x).exp();
-
-    grad[0] = exp_term;
-    grad[1] = prefactor * exp_term / x;
-
-    prefactor * exp_term
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+    Params::parse(param).simd().value_grad_at(x, grad)
 }
 
 pub(super) fn add_value_grad(
@@ -65,6 +110,8 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -72,26 +119,33 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut point_grad = [Vf64::splat(0.0); 2];
-        let mut gradient_0 = Vf64::splat(0.0);
-        let mut gradient_1 = Vf64::splat(0.0);
+        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
+        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
-            gradient_0 += upstream * point_grad[0];
-            gradient_1 += upstream * point_grad[1];
+            params_simd.value_grad_at(x, &mut point_grad);
+
+            for (gradient_value, point_grad_value) in
+                gradient_accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
 
-        gradient[0] += gradient_0.reduce_sum();
-        gradient[1] += gradient_1.reduce_sum();
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
+        {
+            *gradient_value += accum_value.reduce_sum();
+        }
 
-        let mut point_grad = [0.0; 2];
+        let mut point_grad = [0.0; PARAM_COUNT];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
-            gradient[0] += upstream * point_grad[0];
-            gradient[1] += upstream * point_grad[1];
+            params.value_grad_at(x, &mut point_grad);
+
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
     }
 }
@@ -102,22 +156,20 @@ pub(super) fn add_value_grad_raw_hessian(
     value_first: &[f64],
     value_second: &[f64],
 ) -> Option<Array2<f64>> {
-    if param.len() != 2 {
+    if param.len() != PARAM_COUNT {
         return None;
     }
 
     let sample_count = x_values.len();
     if sample_count == 0 {
-        return Some(Array2::zeros((2, 2)));
+        return Some(Array2::zeros((PARAM_COUNT, PARAM_COUNT)));
     }
     let sample_scale = 1.0 / sample_count as f64;
-    let mut hessian = Array2::zeros((2, 2));
-    let prefactor = param[0];
-    let temp_coeff = param[1];
+    let mut hessian = Array2::zeros((PARAM_COUNT, PARAM_COUNT));
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
-        let prefactor = Vf64::splat(prefactor);
-        let temp_coeff = Vf64::splat(temp_coeff);
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
         let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
         let (value_second_chunks, value_second_tail) = value_second.as_chunks::<{ Vf64::LEN }>();
@@ -137,9 +189,9 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_second_chunks.iter())
         {
             let x = positive_x_simd(Vf64::from_array(*x_chunk));
-            let exp_term = (temp_coeff / x).exp();
+            let exp_term = (params_simd.temp_coeff / x).exp();
             let inv_x = Vf64::splat(1.0) / x;
-            let model = prefactor * exp_term;
+            let model = params_simd.prefactor * exp_term;
             if !model.is_finite().all() {
                 return None;
             }
@@ -154,9 +206,9 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_term;
-            let jac_b = prefactor * exp_term * inv_x;
+            let jac_b = params_simd.prefactor * exp_term * inv_x;
             let d2_model_dadb = exp_term * inv_x;
-            let d2_model_dbdb = prefactor * exp_term * inv_x * inv_x;
+            let d2_model_dbdb = params_simd.prefactor * exp_term * inv_x * inv_x;
 
             h00 += value_second * jac_a * jac_a;
             h01 += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -173,9 +225,9 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_second_tail.iter())
         {
             let x = positive_x(x);
-            let exp_term = (param[1] / x).exp();
+            let exp_term = (params.temp_coeff / x).exp();
             let inv_x = 1.0 / x;
-            let model = value_at(param, x);
+            let model = params.prefactor * exp_term;
             if !model.is_finite() {
                 return None;
             }
@@ -185,9 +237,9 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_term;
-            let jac_b = param[0] * exp_term * inv_x;
+            let jac_b = params.prefactor * exp_term * inv_x;
             let d2_model_dadb = exp_term * inv_x;
-            let d2_model_dbdb = param[0] * exp_term * inv_x * inv_x;
+            let d2_model_dbdb = params.prefactor * exp_term * inv_x * inv_x;
 
             hessian[[0, 0]] += value_second * jac_a * jac_a;
             hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;

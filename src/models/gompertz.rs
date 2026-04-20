@@ -5,6 +5,80 @@ use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+const PARAM_COUNT: usize = 3;
+
+#[derive(Clone, Copy)]
+struct Params<T> {
+    upper_asymptote: T,
+    growth_rate: T,
+    x0: T,
+}
+
+impl Params<f64> {
+    #[inline]
+    fn parse(param: &[f64]) -> Self {
+        let [upper_asymptote, growth_rate, x0]: [f64; PARAM_COUNT] = param
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected {} params", PARAM_COUNT));
+        Self {
+            upper_asymptote,
+            growth_rate,
+            x0,
+        }
+    }
+
+    #[inline]
+    fn simd(self) -> Params<Vf64> {
+        Params::<Vf64> {
+            upper_asymptote: Vf64::splat(self.upper_asymptote),
+            growth_rate: Vf64::splat(self.growth_rate),
+            x0: Vf64::splat(self.x0),
+        }
+    }
+
+    #[inline]
+    fn value_at(self, x: f64) -> f64 {
+        let inner = (-self.growth_rate * (x - self.x0)).exp();
+        self.upper_asymptote * (-inner).exp()
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: f64, grad: &mut [f64]) -> f64 {
+        debug_assert_eq!(grad.len(), PARAM_COUNT);
+
+        let x_centered = x - self.x0;
+        let exp_inner = (-self.growth_rate * x_centered).exp();
+        let exp_outer = (-exp_inner).exp();
+
+        grad[0] = exp_outer;
+        grad[1] = self.upper_asymptote * exp_outer * exp_inner * x_centered;
+        grad[2] = -self.upper_asymptote * exp_outer * exp_inner * self.growth_rate;
+
+        self.upper_asymptote * exp_outer
+    }
+}
+
+impl Params<Vf64> {
+    #[inline]
+    fn value_at(self, x: Vf64) -> Vf64 {
+        let inner = (-self.growth_rate * (x - self.x0)).exp();
+        self.upper_asymptote * (-inner).exp()
+    }
+
+    #[inline]
+    fn value_grad_at(self, x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+        let x_centered = x - self.x0;
+        let exp_inner = (-self.growth_rate * x_centered).exp();
+        let exp_outer = (-exp_inner).exp();
+
+        grad[0] = exp_outer;
+        grad[1] = self.upper_asymptote * exp_outer * exp_inner * x_centered;
+        grad[2] = -self.upper_asymptote * exp_outer * exp_inner * self.growth_rate;
+
+        self.upper_asymptote * exp_outer
+    }
+}
+
 /// Вычисляет кривую Гомпертца:
 /// `f(x) = upper_asymptote * exp(-exp(-growth_rate * (x - x0)))`,
 /// где:
@@ -13,55 +87,25 @@ use std::simd::num::SimdFloat;
 /// - `x0` — положение точки перегиба.
 #[inline]
 pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
-    let upper_asymptote = param[0];
-    let growth_rate = param[1];
-    let x0 = param[2];
-    let inner = (-growth_rate * (x - x0)).exp();
-    upper_asymptote * (-inner).exp()
+    Params::parse(param).value_at(x)
 }
 
 #[allow(dead_code)]
 #[inline]
 pub(super) fn value_simd_at(param: &[f64], x: Vf64) -> Vf64 {
-    let upper_asymptote = Vf64::splat(param[0]);
-    let growth_rate = Vf64::splat(param[1]);
-    let x0 = Vf64::splat(param[2]);
-    let inner = (-growth_rate * (x - x0)).exp();
-    upper_asymptote * (-inner).exp()
+    Params::parse(param).simd().value_at(x)
 }
 
+#[allow(dead_code)]
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
-    debug_assert_eq!(grad.len(), 3);
-
-    let upper_asymptote = param[0];
-    let growth_rate = param[1];
-    let x0 = param[2];
-    let x_centered = x - x0;
-    let exp_inner = (-growth_rate * x_centered).exp();
-    let exp_outer = (-exp_inner).exp();
-
-    grad[0] = exp_outer;
-    grad[1] = upper_asymptote * exp_outer * exp_inner * x_centered;
-    grad[2] = -upper_asymptote * exp_outer * exp_inner * growth_rate;
-
-    upper_asymptote * exp_outer
+    Params::parse(param).value_grad_at(x, grad)
 }
 
+#[allow(dead_code)]
 #[inline]
-pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; 3]) -> Vf64 {
-    let upper_asymptote = Vf64::splat(param[0]);
-    let growth_rate = Vf64::splat(param[1]);
-    let x0 = Vf64::splat(param[2]);
-    let x_centered = x - x0;
-    let exp_inner = (-growth_rate * x_centered).exp();
-    let exp_outer = (-exp_inner).exp();
-
-    grad[0] = exp_outer;
-    grad[1] = upper_asymptote * exp_outer * exp_inner * x_centered;
-    grad[2] = -upper_asymptote * exp_outer * exp_inner * growth_rate;
-
-    upper_asymptote * exp_outer
+pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
+    Params::parse(param).simd().value_grad_at(x, grad)
 }
 
 pub(super) fn add_value_grad(
@@ -72,6 +116,8 @@ pub(super) fn add_value_grad(
 ) {
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(gradient.len(), param.len());
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
@@ -79,31 +125,33 @@ pub(super) fn add_value_grad(
         debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
         debug_assert_eq!(x_tail.len(), value_first_tail.len());
 
-        let mut point_grad = [Vf64::splat(0.0); 3];
-        let mut gradient_0 = Vf64::splat(0.0);
-        let mut gradient_1 = Vf64::splat(0.0);
-        let mut gradient_2 = Vf64::splat(0.0);
+        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
+        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
 
         for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
             let x = Vf64::from_array(*x_chunk);
             let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, &mut point_grad);
+            params_simd.value_grad_at(x, &mut point_grad);
 
-            gradient_0 += upstream * point_grad[0];
-            gradient_1 += upstream * point_grad[1];
-            gradient_2 += upstream * point_grad[2];
+            for (gradient_value, point_grad_value) in
+                gradient_accum.iter_mut().zip(point_grad.iter().copied())
+            {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
 
-        gradient[0] += gradient_0.reduce_sum();
-        gradient[1] += gradient_1.reduce_sum();
-        gradient[2] += gradient_2.reduce_sum();
+        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
+        {
+            *gradient_value += accum_value.reduce_sum();
+        }
 
-        let mut point_grad = [0.0; 3];
+        let mut point_grad = [0.0; PARAM_COUNT];
         for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, &mut point_grad);
-            gradient[0] += upstream * point_grad[0];
-            gradient[1] += upstream * point_grad[1];
-            gradient[2] += upstream * point_grad[2];
+            params.value_grad_at(x, &mut point_grad);
+
+            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
+                *gradient_value += upstream * point_grad_value;
+            }
         }
     }
 }
@@ -117,25 +165,21 @@ pub(super) fn add_value_grad_raw_hessian(
     debug_assert_eq!(x_values.len(), value_first.len());
     debug_assert_eq!(x_values.len(), value_second.len());
 
-    if param.len() != 3 {
+    if param.len() != PARAM_COUNT {
         return None;
     }
 
     let sample_count = x_values.len();
     if sample_count == 0 {
-        return Some(Array2::zeros((3, 3)));
+        return Some(Array2::zeros((PARAM_COUNT, PARAM_COUNT)));
     }
 
     let sample_scale = 1.0 / sample_count as f64;
-    let mut hessian = Array2::zeros((3, 3));
-    let upper_asymptote = param[0];
-    let growth_rate = param[1];
-    let x0 = param[2];
+    let mut hessian = Array2::zeros((PARAM_COUNT, PARAM_COUNT));
+    let params = Params::parse(param);
+    let params_simd = params.simd();
 
     {
-        let upper_asymptote = Vf64::splat(upper_asymptote);
-        let growth_rate = Vf64::splat(growth_rate);
-        let x0 = Vf64::splat(x0);
         let zero = Vf64::splat(0.0);
         let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
         let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
@@ -158,12 +202,12 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_second_chunks.iter())
         {
             let x = Vf64::from_array(*x_chunk);
-            let u = x - x0;
-            let exp_inner = (-growth_rate * u).exp();
+            let u = x - params_simd.x0;
+            let exp_inner = (-params_simd.growth_rate * u).exp();
             let exp_outer = (-exp_inner).exp();
             let exp_product = exp_outer * exp_inner;
             let d2_shape_dz2 = exp_product * (exp_inner - Vf64::splat(1.0));
-            let model = upper_asymptote * exp_outer;
+            let model = params_simd.upper_asymptote * exp_outer;
             if !model.is_finite().all() {
                 return None;
             }
@@ -178,14 +222,18 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_outer;
-            let jac_b = upper_asymptote * exp_product * u;
-            let jac_c = -upper_asymptote * exp_product * growth_rate;
+            let jac_b = params_simd.upper_asymptote * exp_product * u;
+            let jac_c = -params_simd.upper_asymptote * exp_product * params_simd.growth_rate;
 
             let d2_model_dadb = exp_product * u;
-            let d2_model_dadc = -exp_product * growth_rate;
-            let d2_model_dbdb = upper_asymptote * d2_shape_dz2 * u * u;
-            let d2_model_dbdc = -upper_asymptote * (growth_rate * u * d2_shape_dz2 + exp_product);
-            let d2_model_dcdc = upper_asymptote * d2_shape_dz2 * growth_rate * growth_rate;
+            let d2_model_dadc = -exp_product * params_simd.growth_rate;
+            let d2_model_dbdb = params_simd.upper_asymptote * d2_shape_dz2 * u * u;
+            let d2_model_dbdc = -params_simd.upper_asymptote
+                * (params_simd.growth_rate * u * d2_shape_dz2 + exp_product);
+            let d2_model_dcdc = params_simd.upper_asymptote
+                * d2_shape_dz2
+                * params_simd.growth_rate
+                * params_simd.growth_rate;
 
             h00 += value_second * jac_a * jac_a;
             h01 += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -207,12 +255,12 @@ pub(super) fn add_value_grad_raw_hessian(
             .zip(value_first_tail.iter())
             .zip(value_second_tail.iter())
         {
-            let u = x - param[2];
-            let exp_inner = (-param[1] * u).exp();
+            let u = x - params.x0;
+            let exp_inner = (-params.growth_rate * u).exp();
             let exp_outer = (-exp_inner).exp();
             let exp_product = exp_outer * exp_inner;
             let d2_shape_dz2 = exp_product * (exp_inner - 1.0);
-            let model = param[0] * exp_outer;
+            let model = params.upper_asymptote * exp_outer;
             if !model.is_finite() {
                 return None;
             }
@@ -222,13 +270,15 @@ pub(super) fn add_value_grad_raw_hessian(
             }
 
             let jac_a = exp_outer;
-            let jac_b = param[0] * exp_product * u;
-            let jac_c = -param[0] * exp_product * param[1];
+            let jac_b = params.upper_asymptote * exp_product * u;
+            let jac_c = -params.upper_asymptote * exp_product * params.growth_rate;
             let d2_model_dadb = exp_product * u;
-            let d2_model_dadc = -exp_product * param[1];
-            let d2_model_dbdb = param[0] * d2_shape_dz2 * u * u;
-            let d2_model_dbdc = -param[0] * (param[1] * u * d2_shape_dz2 + exp_product);
-            let d2_model_dcdc = param[0] * d2_shape_dz2 * param[1] * param[1];
+            let d2_model_dadc = -exp_product * params.growth_rate;
+            let d2_model_dbdb = params.upper_asymptote * d2_shape_dz2 * u * u;
+            let d2_model_dbdc =
+                -params.upper_asymptote * (params.growth_rate * u * d2_shape_dz2 + exp_product);
+            let d2_model_dcdc =
+                params.upper_asymptote * d2_shape_dz2 * params.growth_rate * params.growth_rate;
 
             hessian[[0, 0]] += value_second * jac_a * jac_a;
             hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;
@@ -265,8 +315,8 @@ mod tests {
             &[-1.5, -0.8, -0.2, 0.6, 1.4, 2.3],
             &[1.9, 0.9, 0.2],
             &[1.4, 0.6, -0.2],
-            4e-5,
-            8e-4,
+            3e-5,
+            6e-4,
         );
     }
 
