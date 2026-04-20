@@ -31,6 +31,7 @@ mod power;
 mod pseudo_voigt;
 mod rational_11;
 mod rational_22;
+mod rational_nn;
 #[cfg(test)]
 mod simd_tests;
 mod softplus;

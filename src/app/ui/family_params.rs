@@ -31,6 +31,20 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             params_need_sync = true;
         }
     }
+    if app.selected_model.is_rational() {
+        let previous_degree = app.rational_degree;
+        ui.add_enabled(
+            can_edit_params,
+            egui::Slider::new(
+                &mut app.rational_degree,
+                MIN_RATIONAL_DEGREE..=MAX_RATIONAL_DEGREE,
+            )
+            .text(tr(language, "Rational degree", "Степень рациональной")),
+        );
+        if previous_degree != app.rational_degree {
+            params_need_sync = true;
+        }
+    }
 
     if params_need_sync {
         app.sync_parameter_inputs();

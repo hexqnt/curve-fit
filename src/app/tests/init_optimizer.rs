@@ -193,6 +193,46 @@ fn fit_export_parametric_record_includes_expected_payload() {
 }
 
 #[test]
+fn fit_export_rational_record_uses_unified_selected_id_and_degree_specific_fitted_id() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Rational,
+        rational_degree: 5,
+        fit_loss_metric: OptimizationLossMetric::Mse,
+        fit_optimizer_method: OptimizerMethod::Lbfgs,
+        ..Default::default()
+    };
+    let result = FitResult {
+        family: CurveFamily::Rational55,
+        params: CurveParams::Rational55 {
+            a: 0.0,
+            b: 0.0,
+            c: 0.0,
+            d: 0.2,
+            e: 0.8,
+            f: 0.1,
+            g: 0.04,
+            h: 0.01,
+            i: 0.0,
+            j: 0.0,
+            k: 0.0,
+        },
+        mse: 0.01,
+        rmse: 0.1,
+        iterations: 12,
+    };
+
+    app.store_parametric_fit_export_record(&result, 12);
+    let json = app
+        .build_fit_export_json_pretty()
+        .expect("fit export JSON must be built");
+    let value: serde_json::Value =
+        serde_json::from_str(&json).expect("fit export JSON must be valid");
+
+    assert_eq!(value["model"]["selected"]["id"], "rational");
+    assert_eq!(value["model"]["fitted"]["id"], "rational_55");
+}
+
+#[test]
 fn fit_export_spline_record_includes_expected_payload() {
     let mut app = CurveFitApp {
         selected_model: ModelChoice::LinearSpline,
@@ -525,11 +565,45 @@ fn param_init_method_support_matrix_is_correct() {
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::DampedSinusoid));
     assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational11));
     assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational22));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational33));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational44));
+    assert!(ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Rational55));
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::Emg));
     assert!(ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::PseudoVoigt));
 
     assert!(!ParamInitMethod::DataBased.is_supported_for_family(CurveFamily::Arrhenius));
     assert!(!ParamInitMethod::Randomized.is_supported_for_family(CurveFamily::FourPl));
+}
+
+#[test]
+fn rational_model_degree_controls_resolved_family_and_parameter_count() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::Rational,
+        rational_degree: 3,
+        ..Default::default()
+    };
+    app.sync_parameter_inputs();
+
+    assert_eq!(
+        app.resolved_model().parametric_family(),
+        Some(CurveFamily::Rational33)
+    );
+    assert_eq!(
+        app.parameter_inputs.len(),
+        CurveFamily::Rational33.parameter_count()
+    );
+
+    app.rational_degree = 5;
+    app.sync_parameter_inputs();
+
+    assert_eq!(
+        app.resolved_model().parametric_family(),
+        Some(CurveFamily::Rational55)
+    );
+    assert_eq!(
+        app.parameter_inputs.len(),
+        CurveFamily::Rational55.parameter_count()
+    );
 }
 
 #[test]
@@ -614,6 +688,9 @@ fn data_based_rational_and_peak_initialization_returns_finite_values() {
     for family in [
         CurveFamily::Rational11,
         CurveFamily::Rational22,
+        CurveFamily::Rational33,
+        CurveFamily::Rational44,
+        CurveFamily::Rational55,
         CurveFamily::Emg,
         CurveFamily::PseudoVoigt,
     ] {

@@ -17,6 +17,7 @@ impl Default for CurveFitApp {
     fn default() -> Self {
         let selected_model = ModelChoice::Polynomial;
         let polynomial_degree = 1;
+        let rational_degree = MIN_RATIONAL_DEGREE;
         let selected_family = polynomial_family(polynomial_degree);
         let default_lbfgs = LbfgsConfig::default();
         let default_nelder_mead = NelderMeadConfig::default();
@@ -50,6 +51,7 @@ impl Default for CurveFitApp {
             clipboard_copy_web_result: Rc::new(RefCell::new(None)),
             selected_model,
             polynomial_degree,
+            rational_degree,
             parameter_inputs: params_to_input_strings(&selected_family.default_params()),
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,

@@ -548,6 +548,85 @@ fn lbfgs_fits_rational_22_data() {
 }
 
 #[test]
+fn lbfgs_fits_rational_33_data() {
+    let true_params = CurveParams::Rational33 {
+        a: 0.0,
+        b: 0.0,
+        c: 1.0,
+        d: 0.2,
+        e: 0.0,
+        f: 0.0,
+        g: 0.0,
+    };
+    let points = build_points(&[-2.2, -1.6, -1.0, -0.4, 0.1, 0.7, 1.3, 1.9, 2.5], |x| {
+        true_params.evaluate(x)
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Rational33,
+        CurveParams::Rational33 {
+            a: 0.0,
+            b: 0.0,
+            c: 0.4,
+            d: 0.0,
+            e: 0.0,
+            f: 0.0,
+            g: 0.0,
+        },
+        &config,
+    )
+    .expect("rational 3/3 fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
+fn lbfgs_fits_rational_55_data() {
+    let true_params = CurveParams::Rational55 {
+        a: 0.0,
+        b: 0.0,
+        c: 0.0,
+        d: 0.0,
+        e: 0.8,
+        f: 0.1,
+        g: 0.0,
+        h: 0.0,
+        i: 0.0,
+        j: 0.0,
+        k: 0.0,
+    };
+    let points = build_points(
+        &[
+            -2.5, -2.0, -1.5, -1.0, -0.5, -0.1, 0.3, 0.8, 1.2, 1.7, 2.1, 2.6,
+        ],
+        |x| true_params.evaluate(x),
+    );
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::Rational55,
+        CurveParams::Rational55 {
+            a: 0.0,
+            b: 0.0,
+            c: 0.0,
+            d: 0.0,
+            e: 0.2,
+            f: 0.0,
+            g: 0.0,
+            h: 0.0,
+            i: 0.0,
+            j: 0.0,
+            k: 0.0,
+        },
+        &config,
+    )
+    .expect("rational 5/5 fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
 fn lbfgs_fits_emg_positive_tau_data() {
     let true_params = CurveParams::Emg {
         a: 2.4,
@@ -675,6 +754,28 @@ fn new_families_support_all_optimizers_smoke() {
                 e: 0.0,
             },
             vec![-2.0, -1.5, -0.9, -0.2, 0.4, 1.1, 1.8, 2.6],
+        ),
+        (
+            CurveFamily::Rational33,
+            CurveParams::Rational33 {
+                a: 0.0,
+                b: 0.0,
+                c: 1.0,
+                d: 0.2,
+                e: 0.0,
+                f: 0.0,
+                g: 0.0,
+            },
+            CurveParams::Rational33 {
+                a: 0.0,
+                b: 0.0,
+                c: 0.4,
+                d: 0.0,
+                e: 0.0,
+                f: 0.0,
+                g: 0.0,
+            },
+            vec![-2.2, -1.6, -1.0, -0.4, 0.1, 0.7, 1.3, 1.9, 2.5],
         ),
         (
             CurveFamily::Emg,

@@ -12,6 +12,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
         language,
         app.selected_model,
         app.polynomial_degree,
+        app.rational_degree,
         app.optimization_loss_metric,
     );
     let mut is_open = app.panel.show_formula_window;

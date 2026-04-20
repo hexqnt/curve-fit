@@ -18,8 +18,13 @@ pub(super) fn polynomial_family(degree: usize) -> CurveFamily {
     }
 }
 
+pub(super) fn rational_family(degree: usize) -> CurveFamily {
+    CurveFamily::from_rational_degree(degree)
+}
+
 pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
     family.is_polynomial()
+        || family.is_rational()
         || matches!(
             family,
             CurveFamily::Logistic
@@ -29,8 +34,6 @@ pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
                 | CurveFamily::Gaussian
                 | CurveFamily::ExponentialBasic
                 | CurveFamily::Power
-                | CurveFamily::Rational11
-                | CurveFamily::Rational22
                 | CurveFamily::Emg
                 | CurveFamily::PseudoVoigt
         )
@@ -46,6 +49,9 @@ pub(super) fn data_based_params_for_family(
     if family.is_polynomial() {
         return data_based_polynomial_params(family, points);
     }
+    if family.is_rational() {
+        return data_based_rational_params(family, points);
+    }
 
     match family {
         CurveFamily::Logistic => data_based_logistic_params(points),
@@ -55,8 +61,6 @@ pub(super) fn data_based_params_for_family(
         CurveFamily::Gaussian => data_based_gaussian_params(points),
         CurveFamily::ExponentialBasic => data_based_exponential_basic_params(points),
         CurveFamily::Power => data_based_power_params(points),
-        CurveFamily::Rational11 => data_based_rational_11_params(points),
-        CurveFamily::Rational22 => data_based_rational_22_params(points),
         CurveFamily::Emg => data_based_emg_params(points),
         CurveFamily::PseudoVoigt => data_based_pseudo_voigt_params(points),
         _ => Err(format!(
@@ -168,17 +172,20 @@ fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
     build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope])
 }
 
-fn data_based_rational_11_params(points: &Points) -> Result<CurveParams, String> {
-    let (slope, intercept) = linear_regression(points)?;
-    build_curve_params(CurveFamily::Rational11, vec![slope, intercept, 0.0, 0.0])
-}
+fn data_based_rational_params(family: CurveFamily, points: &Points) -> Result<CurveParams, String> {
+    let Some(degree) = family.rational_degree() else {
+        return Err(format!("Family {family} is not rational"));
+    };
 
-fn data_based_rational_22_params(points: &Points) -> Result<CurveParams, String> {
     let (slope, intercept) = linear_regression(points)?;
-    build_curve_params(
-        CurveFamily::Rational22,
-        vec![0.0, slope, intercept, 0.0, 0.0],
-    )
+    if degree == 1 {
+        return build_curve_params(CurveFamily::Rational11, vec![slope, intercept, 0.0, 0.0]);
+    }
+
+    let mut values = vec![0.0; family.parameter_count()];
+    values[degree - 1] = slope;
+    values[degree] = intercept;
+    build_curve_params(family, values)
 }
 
 fn data_based_emg_params(points: &Points) -> Result<CurveParams, String> {

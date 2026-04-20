@@ -10,6 +10,7 @@ use ratex_types::display_item::DisplayList;
 
 use super::i18n::tr;
 use super::{FormulaReferenceSection, ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
+use crate::domain::{MAX_RATIONAL_DEGREE, MIN_RATIONAL_DEGREE};
 use crate::fit::OptimizationLossMetric;
 
 // Держим размер формулы на уровне основного текста интерфейса.
@@ -21,6 +22,7 @@ const FORMULA_FRAME_PADDING_Y: f64 = 14.0;
 const FORMULA_MIN_WIDTH: f64 = 380.0;
 const FORMULA_MIN_HEIGHT: f64 = 68.0;
 const FORMULA_BORDER_RADIUS: f64 = 10.0;
+const MIN_GENERALIZED_RATIONAL_DEGREE: usize = 3;
 
 #[derive(Debug, Clone)]
 struct FormulaSource {
@@ -69,7 +71,11 @@ impl FormulaSvgTheme {
     }
 }
 
-fn model_formula_source(model: ModelChoice, polynomial_degree: usize) -> FormulaSource {
+fn model_formula_source(
+    model: ModelChoice,
+    polynomial_degree: usize,
+    rational_degree: usize,
+) -> FormulaSource {
     match model {
         ModelChoice::Polynomial => {
             let render_latex = polynomial_formula_full(polynomial_degree);
@@ -78,6 +84,7 @@ fn model_formula_source(model: ModelChoice, polynomial_degree: usize) -> Formula
                 render_latex,
             }
         }
+        ModelChoice::Rational => rational_formula_source(rational_degree),
         ModelChoice::Arrhenius => FormulaSource::single(r"y = A \cdot \exp(\frac{B}{x})"),
         ModelChoice::Inverse => FormulaSource::single(r"y = A + \frac{B}{x}"),
         ModelChoice::Logistic => FormulaSource::single(r"y = \frac{A}{1 + \exp(-B \cdot (x - C))}"),
@@ -126,12 +133,6 @@ fn model_formula_source(model: ModelChoice, polynomial_degree: usize) -> Formula
         ModelChoice::Gaussian => {
             FormulaSource::single(r"y = a \cdot \exp(-\frac{(x - b)^{2}}{2 \cdot c^{2}})")
         }
-        ModelChoice::Rational11 => {
-            FormulaSource::single(r"y = d + \frac{a \cdot x + b}{1 + c \cdot x}")
-        }
-        ModelChoice::Rational22 => FormulaSource::single(
-            r"y = \frac{a \cdot x^{2} + b \cdot x + c}{1 + d \cdot x + e \cdot x^{2}}",
-        ),
         ModelChoice::Emg => FormulaSource::single(
             r"y = c + \frac{a}{2 \cdot \tau} \cdot \exp(\frac{\sigma^{2}}{2 \cdot \tau^{2}} - \frac{x - \mu}{\tau}) \cdot \text{erfc}(\frac{1}{\sqrt{2}}(\frac{\sigma}{|\tau|} - \frac{x - \mu}{\sigma}))",
         ),
@@ -168,14 +169,20 @@ pub(super) fn model_formula_info(
     language: UiLanguage,
     model: ModelChoice,
     polynomial_degree: usize,
+    rational_degree: usize,
     optimization_metric: OptimizationLossMetric,
 ) -> ModelFormulaInfo {
-    let model_formula = model_formula_source(model, polynomial_degree);
+    let model_formula = model_formula_source(model, polynomial_degree, rational_degree);
     let model_section = FormulaReferenceSection {
         title: tr(language, "Model equation", "Уравнение модели").to_string(),
         render_latex: model_formula.render_latex.clone(),
         plain_text: model_formula.plain_text.clone(),
-        description: model_reference_description(language, model, polynomial_degree),
+        description: model_reference_description(
+            language,
+            model,
+            polynomial_degree,
+            rational_degree,
+        ),
     };
 
     let optimization_formula = optimization_metric_source(optimization_metric);
@@ -200,63 +207,43 @@ fn optimization_metric_source(metric: OptimizationLossMetric) -> FormulaSource {
     match metric {
         OptimizationLossMetric::Mse => FormulaSource::explicit(
             r"\begin{aligned}
-L_{\text{MSE}} &= \sum_{i=1}^{N} r_i^{2},\quad r_i = y_{\text{pred},i} - y_i \\
-\rho(r) &= r^{2} \\
-\rho'(r) &= 2r \\
-\rho''(r) &= 2
+L_{\text{MSE}} &= \sum_{i=1}^{N} r_i^{2} \\
+r_i &= y_{\text{pred},i} - y_i
 \end{aligned}",
-            "L_MSE = sum_{i=1..N}(r_i^2), r_i = y_pred,i - y_i\n\
-rho(r) = r^2\n\
-rho'(r) = 2r\n\
-rho''(r) = 2",
+            "L_MSE = sum_{i=1..N}(r_i^2)\n\
+r_i = y_pred,i - y_i",
         ),
         OptimizationLossMetric::Mae => FormulaSource::explicit(
             r"\begin{aligned}
-L_{\text{MAE}} &= \sum_{i=1}^{N} |r_i|,\quad r_i = y_{\text{pred},i} - y_i \\
-\rho(r) &= |r| \\
-\rho'(r) &= \text{sign}(r) \\
-\rho''(r) &= 0,\ r \neq 0
+L_{\text{MAE}} &= \sum_{i=1}^{N} |r_i| \\
+r_i &= y_{\text{pred},i} - y_i
 \end{aligned}",
-            "L_MAE = sum_{i=1..N}(|r_i|), r_i = y_pred,i - y_i\n\
-rho(r) = |r|\n\
-rho'(r) = sign(r)\n\
-rho''(r) = 0 for r != 0",
+            "L_MAE = sum_{i=1..N}(|r_i|)\n\
+r_i = y_pred,i - y_i",
         ),
         OptimizationLossMetric::SoftL1 => FormulaSource::explicit(
             r"\begin{aligned}
-L_{\text{soft\_L1}} &= \sum_{i=1}^{N} 2 \cdot (\sqrt{1 + r_i^{2}} - 1),\quad r_i = y_{\text{pred},i} - y_i \\
-\rho(r) &= 2 \cdot (\sqrt{1 + r^{2}} - 1) \\
-\rho'(r) &= \frac{2r}{\sqrt{1 + r^{2}}} \\
-\rho''(r) &= \frac{2}{(1 + r^{2})^{3/2}}
+L_{\text{soft\_L1}} &= \sum_{i=1}^{N} 2 \cdot (\sqrt{1 + r_i^{2}} - 1) \\
+r_i &= y_{\text{pred},i} - y_i
 \end{aligned}",
-            "L_soft_L1 = sum_{i=1..N}(2*(sqrt(1 + r_i^2) - 1)), r_i = y_pred,i - y_i\n\
-rho(r) = 2*(sqrt(1 + r^2) - 1)\n\
-rho'(r) = 2r/sqrt(1 + r^2)\n\
-rho''(r) = 2/(1 + r^2)^(3/2)",
+            "L_soft_L1 = sum_{i=1..N}(2*(sqrt(1 + r_i^2) - 1))\n\
+r_i = y_pred,i - y_i",
         ),
         OptimizationLossMetric::Chebyshev => FormulaSource::explicit(
             r"\begin{aligned}
-L_{\text{Chebyshev}} &= \max_{i=1..N} |r_i|,\quad r_i = y_{\text{pred},i} - y_i \\
-\rho(r) &= |r| \\
-\text{active set } A &= \{i : |r_i| = L\} \\
-\partial L / \partial r_i &= 0\ \text{for } i \notin A,\ \text{and sign}(r_i)\ \text{for } i \in A
+L_{\text{Chebyshev}} &= \max_{i=1..N} |r_i| \\
+r_i &= y_{\text{pred},i} - y_i
 \end{aligned}",
-            "L_Chebyshev = max_{i=1..N}(|r_i|), r_i = y_pred,i - y_i\n\
-rho(r) = |r|\n\
-active set A = {i: |r_i| = L}\n\
-dL/dr_i = 0 for i not in A, and sign(r_i) for i in A",
+            "L_Chebyshev = max_{i=1..N}(|r_i|)\n\
+r_i = y_pred,i - y_i",
         ),
         OptimizationLossMetric::Msle => FormulaSource::explicit(
             r"\begin{aligned}
-L_{\text{MSLE}} &= \sum_{i=1}^{N} \ln(1 + |r_i|)^{2},\quad r_i = y_{\text{pred},i} - y_i \\
-\rho(r) &= \ln(1 + |r|)^{2} \\
-\rho'(r) &= \text{sign}(r) \cdot \frac{2 \cdot \ln(1 + |r|)}{1 + |r|} \\
-\rho''(r) &= \frac{2 \cdot (1 - \ln(1 + |r|))}{(1 + |r|)^{2}}
+L_{\text{MSLE}} &= \sum_{i=1}^{N} \ln(1 + |r_i|)^{2} \\
+r_i &= y_{\text{pred},i} - y_i
 \end{aligned}",
-            "L_MSLE = sum_{i=1..N}(ln(1 + |r_i|)^2), r_i = y_pred,i - y_i\n\
-rho(r) = ln(1 + |r|)^2\n\
-rho'(r) = sign(r) * 2*ln(1 + |r|)/(1 + |r|)\n\
-rho''(r) = 2*(1 - ln(1 + |r|))/(1 + |r|)^2",
+            "L_MSLE = sum_{i=1..N}(ln(1 + |r_i|)^2)\n\
+r_i = y_pred,i - y_i",
         ),
     }
 }
@@ -265,8 +252,9 @@ fn model_reference_description(
     language: UiLanguage,
     model: ModelChoice,
     polynomial_degree: usize,
+    rational_degree: usize,
 ) -> String {
-    let min_points = model_min_points(model, polynomial_degree);
+    let min_points = model_min_points(model, polynomial_degree, rational_degree);
     let mut description = format!(
         "{}: {min_points}\n{}: x - {}, y - {}",
         tr(language, "Minimum points", "Минимум точек"),
@@ -378,8 +366,8 @@ fn reference_plain_text(sections: &[FormulaReferenceSection]) -> String {
     output
 }
 
-fn model_min_points(model: ModelChoice, polynomial_degree: usize) -> usize {
-    match ResolvedModel::from_choice(model, polynomial_degree) {
+fn model_min_points(model: ModelChoice, polynomial_degree: usize, rational_degree: usize) -> usize {
+    match ResolvedModel::from_choice(model, polynomial_degree, rational_degree) {
         ResolvedModel::Parametric(family) => family.min_points(),
         ResolvedModel::LinearSpline | ResolvedModel::MonotoneCubicSpline => 2,
         ResolvedModel::NaturalCubicSpline => 3,
@@ -432,11 +420,8 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         (UiLanguage::English, ModelChoice::ExponentialLinear) => {
             "Exponential trend with linear drift background."
         }
-        (UiLanguage::English, ModelChoice::Rational11) => {
-            "Compact rational model with one linear pole term."
-        }
-        (UiLanguage::English, ModelChoice::Rational22) => {
-            "Flexible rational model with quadratic numerator/denominator."
+        (UiLanguage::English, ModelChoice::Rational) => {
+            "Flexible rational model with matched numerator/denominator degree."
         }
         (UiLanguage::English, ModelChoice::Emg) => {
             "Asymmetric peak (EMG); signed tau controls left/right tail."
@@ -496,11 +481,8 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         (UiLanguage::Russian, ModelChoice::ExponentialLinear) => {
             "Экспоненциальный тренд с линейным дрейфом фона."
         }
-        (UiLanguage::Russian, ModelChoice::Rational11) => {
-            "Компактная рациональная модель с линейным полюсом."
-        }
-        (UiLanguage::Russian, ModelChoice::Rational22) => {
-            "Гибкая рациональная модель с квадратами в числителе и знаменателе."
+        (UiLanguage::Russian, ModelChoice::Rational) => {
+            "Гибкая рациональная модель с одинаковой степенью числителя и знаменателя."
         }
         (UiLanguage::Russian, ModelChoice::Emg) => {
             "Асимметричный пик EMG; знак tau задаёт левый или правый хвост."
@@ -546,6 +528,65 @@ fn polynomial_formula_full(degree: usize) -> String {
 
 fn polynomial_parameter_symbols() -> [char; 10] {
     ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']
+}
+
+fn rational_formula_source(degree: usize) -> FormulaSource {
+    match degree.clamp(MIN_RATIONAL_DEGREE, MAX_RATIONAL_DEGREE) {
+        1 => FormulaSource::single(r"y = d + \frac{a \cdot x + b}{1 + c \cdot x}"),
+        2 => FormulaSource::single(
+            r"y = \frac{a \cdot x^{2} + b \cdot x + c}{1 + d \cdot x + e \cdot x^{2}}",
+        ),
+        degree => {
+            let render_latex = rational_formula_full(degree);
+            FormulaSource {
+                plain_text: latex_to_plain_text(&render_latex),
+                render_latex,
+            }
+        }
+    }
+}
+
+fn rational_formula_full(degree: usize) -> String {
+    let degree = degree.clamp(MIN_GENERALIZED_RATIONAL_DEGREE, MAX_RATIONAL_DEGREE);
+    let symbols = rational_parameter_symbols();
+
+    let mut numerator_terms = Vec::with_capacity(degree + 1);
+    for (index, symbol) in symbols.iter().copied().enumerate().take(degree + 1) {
+        let power = degree - index;
+        let term = match power {
+            0 => symbol.to_string(),
+            1 => format!(r"{symbol} \cdot x"),
+            _ => format!(r"{symbol} \cdot x^{{{power}}}"),
+        };
+        numerator_terms.push(term);
+    }
+
+    let mut denominator_terms = Vec::with_capacity(degree + 1);
+    denominator_terms.push("1".to_string());
+    for (index, symbol) in symbols
+        .iter()
+        .copied()
+        .enumerate()
+        .skip(degree + 1)
+        .take(degree)
+    {
+        let power = index - degree;
+        let term = match power {
+            1 => format!(r"{symbol} \cdot x"),
+            _ => format!(r"{symbol} \cdot x^{{{power}}}"),
+        };
+        denominator_terms.push(term);
+    }
+
+    format!(
+        r"y = \frac{{{}}}{{{}}}",
+        numerator_terms.join(" + "),
+        denominator_terms.join(" + ")
+    )
+}
+
+fn rational_parameter_symbols() -> [char; 11] {
+    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k']
 }
 
 pub(super) fn formula_svg_uri(formula: &str, dark_mode: bool) -> String {
@@ -815,16 +856,26 @@ mod tests {
     #[test]
     fn every_model_formula_renders_as_svg() {
         for model in ModelChoice::ALL {
-            let degrees = if model.is_polynomial() {
-                [1_usize, 9].as_slice()
+            let degree_pairs = if model.is_polynomial() {
+                [(1_usize, 1_usize), (9, 1)].as_slice()
+            } else if model.is_rational() {
+                [(1_usize, 1_usize), (1, 5)].as_slice()
             } else {
-                [1_usize].as_slice()
+                [(1_usize, 1_usize)].as_slice()
             };
-            for &degree in degrees {
+            for &(polynomial_degree, rational_degree) in degree_pairs {
+                let degree = if model.is_polynomial() {
+                    polynomial_degree
+                } else if model.is_rational() {
+                    rational_degree
+                } else {
+                    1
+                };
                 let formula = model_formula_info(
                     UiLanguage::English,
                     model,
-                    degree,
+                    polynomial_degree,
+                    rational_degree,
                     OptimizationLossMetric::Mse,
                 );
                 for section in &formula.sections {
@@ -856,16 +907,26 @@ mod tests {
     #[test]
     fn every_model_plain_text_stays_readable() {
         for model in ModelChoice::ALL {
-            let degrees = if model.is_polynomial() {
-                [1_usize, 9].as_slice()
+            let degree_pairs = if model.is_polynomial() {
+                [(1_usize, 1_usize), (9, 1)].as_slice()
+            } else if model.is_rational() {
+                [(1_usize, 1_usize), (1, 5)].as_slice()
             } else {
-                [1_usize].as_slice()
+                [(1_usize, 1_usize)].as_slice()
             };
-            for &degree in degrees {
+            for &(polynomial_degree, rational_degree) in degree_pairs {
+                let degree = if model.is_polynomial() {
+                    polynomial_degree
+                } else if model.is_rational() {
+                    rational_degree
+                } else {
+                    1
+                };
                 let formula = model_formula_info(
                     UiLanguage::English,
                     model,
-                    degree,
+                    polynomial_degree,
+                    rational_degree,
                     OptimizationLossMetric::Mse,
                 );
                 let plain_text = formula.model_plain_text.trim();
@@ -898,7 +959,7 @@ mod tests {
     fn every_optimization_metric_formula_renders_as_svg() {
         for metric in OptimizationLossMetric::ALL {
             let formula =
-                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, metric);
+                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, 1, metric);
             let metric_section = formula
                 .sections
                 .iter()
@@ -921,6 +982,7 @@ mod tests {
             UiLanguage::English,
             ModelChoice::Polynomial,
             3,
+            1,
             OptimizationLossMetric::SoftL1,
         );
         let titles: Vec<&str> = formula
@@ -950,6 +1012,7 @@ mod tests {
             UiLanguage::English,
             ModelChoice::Polynomial,
             3,
+            1,
             OptimizationLossMetric::Mse,
         );
         let metric_section = formula
@@ -969,10 +1032,49 @@ mod tests {
     }
 
     #[test]
+    fn optimization_metric_reference_omits_loss_derivative_formulas() {
+        for metric in OptimizationLossMetric::ALL {
+            let formula =
+                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, 1, metric);
+            let metric_section = formula
+                .sections
+                .iter()
+                .find(|section| section.title.starts_with("Optimization metric"))
+                .expect("metric section must be present");
+
+            assert!(
+                !metric_section.render_latex.contains("rho'"),
+                "{metric:?} formula must not include first-derivative equations"
+            );
+            assert!(
+                !metric_section.render_latex.contains("rho''"),
+                "{metric:?} formula must not include second-derivative equations"
+            );
+            assert!(
+                !metric_section.render_latex.contains(r"\partial"),
+                "{metric:?} formula must not include partial-derivative equations"
+            );
+            assert!(
+                !metric_section.plain_text.contains("rho'"),
+                "{metric:?} plain text must not include first-derivative equations"
+            );
+            assert!(
+                !metric_section.plain_text.contains("rho''"),
+                "{metric:?} plain text must not include second-derivative equations"
+            );
+            assert!(
+                !metric_section.plain_text.contains("dL/dr"),
+                "{metric:?} plain text must not include dL/dr equations"
+            );
+        }
+    }
+
+    #[test]
     fn pseudo_voigt_render_formula_stays_multiline() {
         let formula = model_formula_info(
             UiLanguage::English,
             ModelChoice::PseudoVoigt,
+            1,
             1,
             OptimizationLossMetric::Mse,
         );
@@ -992,6 +1094,7 @@ mod tests {
         let formula = model_formula_info(
             UiLanguage::English,
             ModelChoice::PseudoVoigt,
+            1,
             1,
             OptimizationLossMetric::Mse,
         );

@@ -9,7 +9,7 @@ mod params;
 mod point;
 
 pub use error::InputError;
-pub use family::CurveFamily;
+pub use family::{CurveFamily, MAX_RATIONAL_DEGREE, MIN_RATIONAL_DEGREE};
 pub use fit_result::FitResult;
 pub use optimizer::{
     AdamConfig, LbfgsConfig, NelderMeadConfig, NewtonCgConfig, OptimizerConfig, OptimizerMethod,

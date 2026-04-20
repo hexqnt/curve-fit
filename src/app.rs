@@ -75,6 +75,7 @@ use self::optimizer::{
 use self::panel_state::{DiagnosticsTab, PanelState};
 use self::param_init::{
     data_based_params_for_family, is_advanced_param_init_supported, polynomial_family,
+    rational_family,
 };
 use self::plot_utils::{fit_bounds_for_content, plot_domain};
 use self::points_state::{ParsedPointsCache, PointsEditorState};
@@ -99,8 +100,9 @@ use self::types::{
     PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
 };
 use crate::domain::{
-    AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,
-    OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig, SteepestDescentConfig,
+    AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, MAX_RATIONAL_DEGREE,
+    MIN_RATIONAL_DEGREE, NelderMeadConfig, NewtonCgConfig, OptimizerConfig, OptimizerMethod, Point,
+    Points, SgdConfig, SteepestDescentConfig,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::fit::FitError;

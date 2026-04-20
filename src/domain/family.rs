@@ -38,11 +38,18 @@ pub enum CurveFamily {
     Gaussian,
     Rational11,
     Rational22,
+    Rational33,
+    Rational44,
+    Rational55,
     Emg,
     PseudoVoigt,
 }
 
 pub(crate) const CURVE_FAMILY_COUNT: usize = CurveFamily::PseudoVoigt as usize + 1;
+/// Минимально поддерживаемая степень рациональной модели `n/n`.
+pub const MIN_RATIONAL_DEGREE: usize = 1;
+/// Максимально поддерживаемая степень рациональной модели `n/n`.
+pub const MAX_RATIONAL_DEGREE: usize = 5;
 
 #[derive(Debug, Clone, Copy)]
 struct CurveFamilyMetadata {
@@ -240,6 +247,24 @@ const CURVE_FAMILY_METADATA: [CurveFamilyMetadata; CURVE_FAMILY_COUNT] = [
         requires_positive_x: false,
     },
     CurveFamilyMetadata {
+        label: "Rational (3/3)",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g"],
+        min_points: 7,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Rational (4/4)",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g", "h", "i"],
+        min_points: 9,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Rational (5/5)",
+        parameter_names: &["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
+        min_points: 11,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
         label: "EMG",
         parameter_names: &["a", "mu", "sigma", "tau", "c"],
         min_points: 5,
@@ -287,6 +312,9 @@ impl CurveFamily {
         Self::Gaussian,
         Self::Rational11,
         Self::Rational22,
+        Self::Rational33,
+        Self::Rational44,
+        Self::Rational55,
         Self::Emg,
         Self::PseudoVoigt,
     ];
@@ -321,6 +349,43 @@ impl CurveFamily {
                 | Self::Octic
                 | Self::Nonic
         )
+    }
+
+    /// Возвращает `true`, если семейство является рациональной моделью `n/n`.
+    pub fn is_rational(self) -> bool {
+        matches!(
+            self,
+            Self::Rational11
+                | Self::Rational22
+                | Self::Rational33
+                | Self::Rational44
+                | Self::Rational55
+        )
+    }
+
+    /// Возвращает рациональное семейство `n/n` для заданной степени.
+    ///
+    /// Значение автоматически ограничивается поддерживаемым диапазоном.
+    pub fn from_rational_degree(degree: usize) -> Self {
+        match degree.clamp(MIN_RATIONAL_DEGREE, MAX_RATIONAL_DEGREE) {
+            1 => Self::Rational11,
+            2 => Self::Rational22,
+            3 => Self::Rational33,
+            4 => Self::Rational44,
+            _ => Self::Rational55,
+        }
+    }
+
+    /// Возвращает степень рациональной модели `n/n`, если семейство рациональное.
+    pub fn rational_degree(self) -> Option<usize> {
+        match self {
+            Self::Rational11 => Some(1),
+            Self::Rational22 => Some(2),
+            Self::Rational33 => Some(3),
+            Self::Rational44 => Some(4),
+            Self::Rational55 => Some(5),
+            _ => None,
+        }
     }
 
     /// Количество параметров модели.
@@ -544,6 +609,39 @@ impl CurveFamily {
                 c: 0.0,
                 d: 0.0,
                 e: 0.0,
+            },
+            Self::Rational33 => CurveParams::Rational33 {
+                a: 0.0,
+                b: 0.0,
+                c: 1.0,
+                d: 0.0,
+                e: 0.0,
+                f: 0.0,
+                g: 0.0,
+            },
+            Self::Rational44 => CurveParams::Rational44 {
+                a: 0.0,
+                b: 0.0,
+                c: 0.0,
+                d: 1.0,
+                e: 0.0,
+                f: 0.0,
+                g: 0.0,
+                h: 0.0,
+                i: 0.0,
+            },
+            Self::Rational55 => CurveParams::Rational55 {
+                a: 0.0,
+                b: 0.0,
+                c: 0.0,
+                d: 0.0,
+                e: 1.0,
+                f: 0.0,
+                g: 0.0,
+                h: 0.0,
+                i: 0.0,
+                j: 0.0,
+                k: 0.0,
             },
             Self::Emg => CurveParams::Emg {
                 a: 1.0,

@@ -5,7 +5,7 @@ use super::{
     damped_sinusoid, emg, exponential_basic, exponential_half_life, exponential_linear,
     falling_exponential, five_pl, four_pl, gaussian, gompertz, hyperbolic_tangent, inverse,
     logistic, lorentzian, michaelis_menten, natural_log, polynomial, power, pseudo_voigt,
-    rational_11, rational_22, softplus,
+    rational_11, rational_22, rational_nn, softplus,
 };
 
 #[inline]
@@ -37,6 +37,9 @@ pub(crate) fn value_at(family: CurveFamily, param: &Param, x: f64) -> f64 {
         CurveFamily::Gaussian => gaussian::value_at(param, x),
         CurveFamily::Rational11 => rational_11::value_at(param, x),
         CurveFamily::Rational22 => rational_22::value_at(param, x),
+        CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
+            rational_nn::value_at(param, x)
+        }
         CurveFamily::Emg => emg::value_at(param, x),
         CurveFamily::PseudoVoigt => pseudo_voigt::value_at(param, x),
         _ => unreachable!("Polynomial families are handled by the guarded branch above"),
@@ -147,6 +150,9 @@ pub(crate) fn add_model_grad_unscaled(
         }
         CurveFamily::Rational22 => {
             rational_22::add_value_grad(x_values, param, value_first, gradient)
+        }
+        CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
+            rational_nn::add_value_grad(x_values, param, value_first, gradient)
         }
         CurveFamily::PseudoVoigt => {
             pseudo_voigt::add_value_grad(x_values, param, value_first, gradient)
@@ -298,6 +304,9 @@ pub(crate) fn model_raw_hessian_from_value_derivatives(
         }
         CurveFamily::Rational22 => {
             rational_22::add_value_grad_raw_hessian(x_values, param, value_first, value_second)
+        }
+        CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
+            rational_nn::add_value_grad_raw_hessian(x_values, param, value_first, value_second)
         }
         CurveFamily::Emg => {
             emg::add_value_grad_raw_hessian(x_values, param, value_first, value_second)

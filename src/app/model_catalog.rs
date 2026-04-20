@@ -27,8 +27,7 @@ pub(super) enum ModelChoice {
     Softplus,
     Power,
     Gaussian,
-    Rational11,
-    Rational22,
+    Rational,
     Emg,
     PseudoVoigt,
     LinearSpline,
@@ -38,7 +37,7 @@ pub(super) enum ModelChoice {
 }
 
 impl ModelChoice {
-    pub(super) const ALL: [Self; 29] = [
+    pub(super) const ALL: [Self; 28] = [
         Self::Polynomial,
         Self::Arrhenius,
         Self::Inverse,
@@ -60,8 +59,7 @@ impl ModelChoice {
         Self::Softplus,
         Self::Power,
         Self::Gaussian,
-        Self::Rational11,
-        Self::Rational22,
+        Self::Rational,
         Self::Emg,
         Self::PseudoVoigt,
         Self::LinearSpline,
@@ -73,9 +71,13 @@ impl ModelChoice {
     pub(super) fn is_polynomial(self) -> bool {
         matches!(self, Self::Polynomial)
     }
+
+    pub(super) fn is_rational(self) -> bool {
+        matches!(self, Self::Rational)
+    }
 }
 
-/// Нормализованный выбор модели после учета степени полинома.
+/// Нормализованный выбор модели после учета выбранной степени (полинома/рациональной).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ResolvedModel {
     Parametric(CurveFamily),
@@ -86,9 +88,14 @@ pub(super) enum ResolvedModel {
 }
 
 impl ResolvedModel {
-    pub(super) fn from_choice(choice: ModelChoice, polynomial_degree: usize) -> Self {
+    pub(super) fn from_choice(
+        choice: ModelChoice,
+        polynomial_degree: usize,
+        rational_degree: usize,
+    ) -> Self {
         match choice {
             ModelChoice::Polynomial => Self::Parametric(polynomial_family(polynomial_degree)),
+            ModelChoice::Rational => Self::Parametric(rational_family(rational_degree)),
             ModelChoice::Arrhenius => Self::Parametric(CurveFamily::Arrhenius),
             ModelChoice::Inverse => Self::Parametric(CurveFamily::Inverse),
             ModelChoice::Logistic => Self::Parametric(CurveFamily::Logistic),
@@ -109,8 +116,6 @@ impl ResolvedModel {
             ModelChoice::Softplus => Self::Parametric(CurveFamily::Softplus),
             ModelChoice::Power => Self::Parametric(CurveFamily::Power),
             ModelChoice::Gaussian => Self::Parametric(CurveFamily::Gaussian),
-            ModelChoice::Rational11 => Self::Parametric(CurveFamily::Rational11),
-            ModelChoice::Rational22 => Self::Parametric(CurveFamily::Rational22),
             ModelChoice::Emg => Self::Parametric(CurveFamily::Emg),
             ModelChoice::PseudoVoigt => Self::Parametric(CurveFamily::PseudoVoigt),
             ModelChoice::LinearSpline => Self::LinearSpline,
@@ -199,8 +204,7 @@ pub(super) fn model_group(model: ModelChoice) -> ModelGroup {
         | ModelChoice::ExponentialHalfLife
         | ModelChoice::FallingExponential
         | ModelChoice::Power
-        | ModelChoice::Rational11
-        | ModelChoice::Rational22 => ModelGroup::ParametricGeneral,
+        | ModelChoice::Rational => ModelGroup::ParametricGeneral,
     }
 }
 

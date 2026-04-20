@@ -106,6 +106,8 @@ impl ParametricNormalization {
 
         if family.is_polynomial() {
             self.transform_polynomial_params(&mut values, direction);
+        } else if let Some(degree) = family.rational_degree() {
+            self.transform_rational_params(&mut values, degree, direction);
         } else if let Some(scales) = Self::static_param_scales(family) {
             if values.len() != scales.len() {
                 return Err(format!(
@@ -131,6 +133,11 @@ impl ParametricNormalization {
                 | CurveFamily::Septic
                 | CurveFamily::Octic
                 | CurveFamily::Nonic => unreachable!("handled by polynomial branch above"),
+                CurveFamily::Rational11
+                | CurveFamily::Rational22
+                | CurveFamily::Rational33
+                | CurveFamily::Rational44
+                | CurveFamily::Rational55 => unreachable!("handled by rational branch above"),
                 _ => unreachable!("handled by static scale table above"),
             }
         }
@@ -151,6 +158,32 @@ impl ParametricNormalization {
         let power = values[1];
         let factor = self.x_scale.powf(power) / self.y_scale;
         values[0] = direction.apply(values[0], factor);
+    }
+
+    fn transform_rational_params(
+        self,
+        values: &mut [f64],
+        degree: usize,
+        direction: ScaleDirection,
+    ) {
+        if degree == 1 {
+            self.transform_value(&mut values[0], ParamScale::new(1, -1), direction);
+            self.transform_value(&mut values[1], ParamScale::new(0, -1), direction);
+            self.transform_value(&mut values[2], ParamScale::new(1, 0), direction);
+            self.transform_value(&mut values[3], ParamScale::new(0, -1), direction);
+            return;
+        }
+
+        let numerator_len = degree + 1;
+        for (index, value) in values.iter_mut().enumerate().take(numerator_len) {
+            let power = (degree - index) as i32;
+            self.transform_value(value, ParamScale::new(power, -1), direction);
+        }
+
+        for (index, value) in values.iter_mut().enumerate().skip(numerator_len) {
+            let power = (index - degree) as i32;
+            self.transform_value(value, ParamScale::new(power, 0), direction);
+        }
     }
 
     fn transform_value(self, value: &mut f64, scale: ParamScale, direction: ScaleDirection) {
@@ -237,19 +270,6 @@ impl ParametricNormalization {
             ParamScale::new(-1, 0),
             ParamScale::new(-1, 0),
         ];
-        const RATIONAL_11_SCALES: [ParamScale; 4] = [
-            ParamScale::new(1, -1),
-            ParamScale::new(0, -1),
-            ParamScale::new(1, 0),
-            ParamScale::new(0, -1),
-        ];
-        const RATIONAL_22_SCALES: [ParamScale; 5] = [
-            ParamScale::new(2, -1),
-            ParamScale::new(1, -1),
-            ParamScale::new(0, -1),
-            ParamScale::new(1, 0),
-            ParamScale::new(2, 0),
-        ];
         const EMG_SCALES: [ParamScale; 5] = [
             ParamScale::new(-1, -1),
             ParamScale::new(-1, 0),
@@ -284,8 +304,6 @@ impl ParametricNormalization {
             | CurveFamily::ArctangentStep
             | CurveFamily::Softplus => Some(&STEP_LIKE_SCALES),
             CurveFamily::Gaussian => Some(&GAUSSIAN_SCALES),
-            CurveFamily::Rational11 => Some(&RATIONAL_11_SCALES),
-            CurveFamily::Rational22 => Some(&RATIONAL_22_SCALES),
             CurveFamily::Emg => Some(&EMG_SCALES),
             CurveFamily::PseudoVoigt => Some(&PSEUDO_VOIGT_SCALES),
             CurveFamily::Power
@@ -297,7 +315,12 @@ impl ParametricNormalization {
             | CurveFamily::Sextic
             | CurveFamily::Septic
             | CurveFamily::Octic
-            | CurveFamily::Nonic => None,
+            | CurveFamily::Nonic
+            | CurveFamily::Rational11
+            | CurveFamily::Rational22
+            | CurveFamily::Rational33
+            | CurveFamily::Rational44
+            | CurveFamily::Rational55 => None,
         }
     }
 }

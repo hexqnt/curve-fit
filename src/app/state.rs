@@ -144,6 +144,7 @@ pub(super) enum ActiveOptimizerSnapshot {
 pub(super) struct RightPanelFitSnapshot {
     pub(super) selected_model: ModelChoice,
     pub(super) polynomial_degree: usize,
+    pub(super) rational_degree: usize,
     pub(super) parameter_inputs: Vec<String>,
     pub(super) spline_knots: usize,
     pub(super) spline_knot_strategy: SplineKnotStrategy,
@@ -235,6 +236,7 @@ pub struct CurveFitApp {
     pub(super) clipboard_copy_web_result: Rc<RefCell<Option<Result<(), String>>>>,
     pub(super) selected_model: ModelChoice,
     pub(super) polynomial_degree: usize,
+    pub(super) rational_degree: usize,
     pub(super) parameter_inputs: Vec<String>,
     pub(super) optimizer_method: OptimizerMethod,
     pub(super) optimizer_mode: OptimizerUiMode,
@@ -375,7 +377,11 @@ impl CurveFitApp {
     }
 
     pub(super) fn resolved_model(&self) -> ResolvedModel {
-        ResolvedModel::from_choice(self.selected_model, self.polynomial_degree)
+        ResolvedModel::from_choice(
+            self.selected_model,
+            self.polynomial_degree,
+            self.rational_degree,
+        )
     }
 
     pub(super) fn active_optimizer_view(&self) -> ActiveOptimizerView<'_> {
@@ -473,6 +479,7 @@ impl CurveFitApp {
         RightPanelFitSnapshot {
             selected_model: self.selected_model,
             polynomial_degree: self.polynomial_degree,
+            rational_degree: self.rational_degree,
             parameter_inputs: self.parameter_inputs.clone(),
             spline_knots: self.spline_knots,
             spline_knot_strategy: self.spline_knot_strategy,
