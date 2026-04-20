@@ -300,7 +300,7 @@ pub struct CurveFitApp {
     pub(super) result_metrics: Option<ExtendedMetrics>,
     pub(super) residual_plot_points: Vec<PlotPoint>,
     pub(super) spline_plot_curve: Option<Arc<[PlotPoint]>>,
-    pub(super) formula_svg_cache: Option<FormulaSvgCache>,
+    pub(super) formula_svg_cache: Vec<FormulaSvgCache>,
     pub(super) sampled_curve_cache: Option<SampledCurveCache>,
     pub(super) iteration_diagnostics: IterationDiagnostics,
     pub(super) status: Option<StatusMessage>,
@@ -559,9 +559,10 @@ impl CurveFitApp {
         formula: &str,
         dark_mode: bool,
     ) -> Result<(String, Arc<[u8]>), String> {
-        if let Some(cache) = &self.formula_svg_cache
-            && cache.formula == formula
-            && cache.dark_mode == dark_mode
+        if let Some(cache) = self
+            .formula_svg_cache
+            .iter()
+            .find(|cache| cache.formula == formula && cache.dark_mode == dark_mode)
         {
             return cache
                 .render_result
@@ -578,7 +579,7 @@ impl CurveFitApp {
                 Err(error)
             }
         };
-        self.formula_svg_cache = Some(FormulaSvgCache {
+        self.formula_svg_cache.push(FormulaSvgCache {
             formula: formula.to_string(),
             dark_mode,
             uri: uri.clone(),

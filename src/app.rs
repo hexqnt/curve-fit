@@ -95,8 +95,8 @@ use self::status::StatusMessage;
 #[cfg(not(target_arch = "wasm32"))]
 use self::types::dialog_directory_from_path;
 use self::types::{
-    ExtendedMetrics, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod, PlotTool,
-    SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
+    ExtendedMetrics, FormulaReferenceSection, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod,
+    PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
 };
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, NelderMeadConfig, NewtonCgConfig,

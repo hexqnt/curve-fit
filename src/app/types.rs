@@ -106,12 +106,21 @@ impl ParamInitMethod {
     }
 }
 
-/// Полная формула модели и сопутствующие заметки для UI.
+/// Отдельный справочный блок в окне формул: заголовок, LaTeX и пояснение.
 #[derive(Debug, Clone)]
-pub(super) struct ModelFormulaInfo {
+pub(super) struct FormulaReferenceSection {
+    pub(super) title: String,
     pub(super) render_latex: String,
     pub(super) plain_text: String,
-    pub(super) notes: String,
+    pub(super) description: String,
+}
+
+/// Набор справочных блоков для окна `Model Formula`.
+#[derive(Debug, Clone)]
+pub(super) struct ModelFormulaInfo {
+    pub(super) model_plain_text: String,
+    pub(super) reference_plain_text: String,
+    pub(super) sections: Vec<FormulaReferenceSection>,
 }
 
 /// Кэш уже отрендеренной SVG-формулы, зависящий от темы и текста формулы.

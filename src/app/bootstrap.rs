@@ -121,7 +121,7 @@ impl Default for CurveFitApp {
             result_metrics: None,
             residual_plot_points: Vec::new(),
             spline_plot_curve: None,
-            formula_svg_cache: None,
+            formula_svg_cache: Vec::new(),
             sampled_curve_cache: None,
             iteration_diagnostics: IterationDiagnostics::default(),
             status: Some(StatusMessage::Ready),

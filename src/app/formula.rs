@@ -9,7 +9,8 @@ use ratex_types::color::Color as RatexColor;
 use ratex_types::display_item::DisplayList;
 
 use super::i18n::tr;
-use super::{ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
+use super::{FormulaReferenceSection, ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
+use crate::fit::OptimizationLossMetric;
 
 // Держим размер формулы на уровне основного текста интерфейса.
 const FORMULA_FONT_SIZE: f64 = 22.0;
@@ -167,27 +168,214 @@ pub(super) fn model_formula_info(
     language: UiLanguage,
     model: ModelChoice,
     polynomial_degree: usize,
+    optimization_metric: OptimizationLossMetric,
 ) -> ModelFormulaInfo {
-    let formula = model_formula_source(model, polynomial_degree);
+    let model_formula = model_formula_source(model, polynomial_degree);
+    let model_section = FormulaReferenceSection {
+        title: tr(language, "Model equation", "Уравнение модели").to_string(),
+        render_latex: model_formula.render_latex.clone(),
+        plain_text: model_formula.plain_text.clone(),
+        description: model_reference_description(language, model, polynomial_degree),
+    };
+
+    let optimization_formula = optimization_metric_source(optimization_metric);
+    let metric_section = FormulaReferenceSection {
+        title: optimization_metric_title(language, optimization_metric),
+        render_latex: optimization_formula.render_latex,
+        plain_text: optimization_formula.plain_text,
+        description: optimization_metric_description(language, optimization_metric).to_string(),
+    };
+
+    let sections = vec![model_section, metric_section];
+    let reference_plain_text = reference_plain_text(&sections);
+
+    ModelFormulaInfo {
+        model_plain_text: model_formula.plain_text,
+        reference_plain_text,
+        sections,
+    }
+}
+
+fn optimization_metric_source(metric: OptimizationLossMetric) -> FormulaSource {
+    match metric {
+        OptimizationLossMetric::Mse => FormulaSource::explicit(
+            r"\begin{aligned}
+L_{\text{MSE}} &= \sum_{i=1}^{N} r_i^{2},\quad r_i = y_{\text{pred},i} - y_i \\
+\rho(r) &= r^{2} \\
+\rho'(r) &= 2r \\
+\rho''(r) &= 2
+\end{aligned}",
+            "L_MSE = sum_{i=1..N}(r_i^2), r_i = y_pred,i - y_i\n\
+rho(r) = r^2\n\
+rho'(r) = 2r\n\
+rho''(r) = 2",
+        ),
+        OptimizationLossMetric::Mae => FormulaSource::explicit(
+            r"\begin{aligned}
+L_{\text{MAE}} &= \sum_{i=1}^{N} |r_i|,\quad r_i = y_{\text{pred},i} - y_i \\
+\rho(r) &= |r| \\
+\rho'(r) &= \text{sign}(r) \\
+\rho''(r) &= 0,\ r \neq 0
+\end{aligned}",
+            "L_MAE = sum_{i=1..N}(|r_i|), r_i = y_pred,i - y_i\n\
+rho(r) = |r|\n\
+rho'(r) = sign(r)\n\
+rho''(r) = 0 for r != 0",
+        ),
+        OptimizationLossMetric::SoftL1 => FormulaSource::explicit(
+            r"\begin{aligned}
+L_{\text{soft\_L1}} &= \sum_{i=1}^{N} 2 \cdot (\sqrt{1 + r_i^{2}} - 1),\quad r_i = y_{\text{pred},i} - y_i \\
+\rho(r) &= 2 \cdot (\sqrt{1 + r^{2}} - 1) \\
+\rho'(r) &= \frac{2r}{\sqrt{1 + r^{2}}} \\
+\rho''(r) &= \frac{2}{(1 + r^{2})^{3/2}}
+\end{aligned}",
+            "L_soft_L1 = sum_{i=1..N}(2*(sqrt(1 + r_i^2) - 1)), r_i = y_pred,i - y_i\n\
+rho(r) = 2*(sqrt(1 + r^2) - 1)\n\
+rho'(r) = 2r/sqrt(1 + r^2)\n\
+rho''(r) = 2/(1 + r^2)^(3/2)",
+        ),
+        OptimizationLossMetric::Chebyshev => FormulaSource::explicit(
+            r"\begin{aligned}
+L_{\text{Chebyshev}} &= \max_{i=1..N} |r_i|,\quad r_i = y_{\text{pred},i} - y_i \\
+\rho(r) &= |r| \\
+\text{active set } A &= \{i : |r_i| = L\} \\
+\partial L / \partial r_i &= 0\ \text{for } i \notin A,\ \text{and sign}(r_i)\ \text{for } i \in A
+\end{aligned}",
+            "L_Chebyshev = max_{i=1..N}(|r_i|), r_i = y_pred,i - y_i\n\
+rho(r) = |r|\n\
+active set A = {i: |r_i| = L}\n\
+dL/dr_i = 0 for i not in A, and sign(r_i) for i in A",
+        ),
+        OptimizationLossMetric::Msle => FormulaSource::explicit(
+            r"\begin{aligned}
+L_{\text{MSLE}} &= \sum_{i=1}^{N} \ln(1 + |r_i|)^{2},\quad r_i = y_{\text{pred},i} - y_i \\
+\rho(r) &= \ln(1 + |r|)^{2} \\
+\rho'(r) &= \text{sign}(r) \cdot \frac{2 \cdot \ln(1 + |r|)}{1 + |r|} \\
+\rho''(r) &= \frac{2 \cdot (1 - \ln(1 + |r|))}{(1 + |r|)^{2}}
+\end{aligned}",
+            "L_MSLE = sum_{i=1..N}(ln(1 + |r_i|)^2), r_i = y_pred,i - y_i\n\
+rho(r) = ln(1 + |r|)^2\n\
+rho'(r) = sign(r) * 2*ln(1 + |r|)/(1 + |r|)\n\
+rho''(r) = 2*(1 - ln(1 + |r|))/(1 + |r|)^2",
+        ),
+    }
+}
+
+fn model_reference_description(
+    language: UiLanguage,
+    model: ModelChoice,
+    polynomial_degree: usize,
+) -> String {
     let min_points = model_min_points(model, polynomial_degree);
-    let mut notes = format!(
-        "{}: {min_points}",
-        tr(language, "Minimum points", "Минимум точек")
+    let mut description = format!(
+        "{}: {min_points}\n{}: x - {}, y - {}",
+        tr(language, "Minimum points", "Минимум точек"),
+        tr(language, "Variables", "Переменные"),
+        tr(language, "input axis", "входная ось"),
+        tr(language, "target value", "целевое значение"),
     );
 
     if let Some(constraint) = model_constraint_note(language, model) {
-        notes.push('\n');
-        notes.push_str(constraint);
+        description.push('\n');
+        description.push_str(constraint);
     }
 
-    notes.push('\n');
-    notes.push_str(model_ml_note(language, model));
+    description.push('\n');
+    description.push_str(model_ml_note(language, model));
+    description
+}
 
-    ModelFormulaInfo {
-        render_latex: formula.render_latex,
-        plain_text: formula.plain_text,
-        notes,
+fn optimization_metric_title(language: UiLanguage, metric: OptimizationLossMetric) -> String {
+    format!(
+        "{}: {}",
+        tr(language, "Optimization metric", "Метрика оптимизации"),
+        super::optimization_loss_metric_label(language, metric),
+    )
+}
+
+fn optimization_metric_description(
+    language: UiLanguage,
+    metric: OptimizationLossMetric,
+) -> &'static str {
+    match (language, metric) {
+        (UiLanguage::English, OptimizationLossMetric::Mse) => {
+            "Quadratic loss.\n\
+- Strongly penalizes large residuals.\n\
+- Smooth gradient and constant curvature.\n\
+- Objective is summed over points; 1/N scaling is omitted because argmin is unchanged."
+        }
+        (UiLanguage::English, OptimizationLossMetric::Mae) => {
+            "Absolute loss.\n\
+- More robust to outliers than MSE.\n\
+- Non-smooth at zero residual, so curvature-based methods rely on approximations.\n\
+- Objective is summed over points; 1/N scaling is omitted because argmin is unchanged."
+        }
+        (UiLanguage::English, OptimizationLossMetric::SoftL1) => {
+            "Smooth robust loss.\n\
+- Behaves like L2 near zero and like L1 on large residuals.\n\
+- Keeps gradients smooth while reducing outlier domination.\n\
+- Useful as a practical compromise between MSE and MAE."
+        }
+        (UiLanguage::English, OptimizationLossMetric::Chebyshev) => {
+            "Minimax loss (worst-case error).\n\
+- Minimizes the maximum absolute residual.\n\
+- Focuses optimization on active worst points.\n\
+- Non-smooth when active set changes."
+        }
+        (UiLanguage::English, OptimizationLossMetric::Msle) => {
+            "Log-scaled robust loss.\n\
+- Works on ln(1 + |residual|), emphasizing relative differences.\n\
+- Reduces influence of very large absolute residuals.\n\
+- Objective is summed over points; 1/N scaling is omitted because argmin is unchanged."
+        }
+        (UiLanguage::Russian, OptimizationLossMetric::Mse) => {
+            "Квадратичный loss.\n\
+- Сильно штрафует большие residual.\n\
+- Гладкий градиент и постоянная кривизна.\n\
+- Objective задан суммой по точкам; деление на 1/N опущено, так как argmin не меняется."
+        }
+        (UiLanguage::Russian, OptimizationLossMetric::Mae) => {
+            "Абсолютный loss.\n\
+- Устойчивее к выбросам, чем MSE.\n\
+- Негладкий при residual = 0, поэтому методы с кривизной используют аппроксимации.\n\
+- Objective задан суммой по точкам; деление на 1/N опущено, так как argmin не меняется."
+        }
+        (UiLanguage::Russian, OptimizationLossMetric::SoftL1) => {
+            "Гладкий робастный loss.\n\
+- Вблизи нуля ведёт себя как L2, на больших residual — как L1.\n\
+- Сохраняет гладкие градиенты и снижает доминирование выбросов.\n\
+- Практичный компромисс между MSE и MAE."
+        }
+        (UiLanguage::Russian, OptimizationLossMetric::Chebyshev) => {
+            "Минимакс-loss (ошибка худшей точки).\n\
+- Минимизирует максимальный модуль residual.\n\
+- Фокусирует оптимизацию на активном множестве худших точек.\n\
+- Негладкий при смене активного множества."
+        }
+        (UiLanguage::Russian, OptimizationLossMetric::Msle) => {
+            "Логарифмический робастный loss.\n\
+- Работает с ln(1 + |residual|), акцентируя относительные различия.\n\
+- Ослабляет влияние очень больших абсолютных residual.\n\
+- Objective задан суммой по точкам; деление на 1/N опущено, так как argmin не меняется."
+        }
     }
+}
+
+fn reference_plain_text(sections: &[FormulaReferenceSection]) -> String {
+    let mut output = String::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            output.push_str("\n\n");
+        }
+        output.push_str(section.title.trim());
+        output.push('\n');
+        output.push_str(section.plain_text.trim());
+        if !section.description.trim().is_empty() {
+            output.push('\n');
+            output.push_str(section.description.trim());
+        }
+    }
+    output
 }
 
 fn model_min_points(model: ModelChoice, polynomial_degree: usize) -> usize {
@@ -633,22 +821,34 @@ mod tests {
                 [1_usize].as_slice()
             };
             for &degree in degrees {
-                let formula = model_formula_info(UiLanguage::English, model, degree);
-                let svg = String::from_utf8(
-                    formula_svg_bytes(&formula.render_latex, false).unwrap_or_else(|error| {
-                        panic!("{model:?} degree {degree} failed: {error}")
-                    }),
-                )
-                .expect("SVG must be valid UTF-8");
+                let formula = model_formula_info(
+                    UiLanguage::English,
+                    model,
+                    degree,
+                    OptimizationLossMetric::Mse,
+                );
+                for section in &formula.sections {
+                    let svg = String::from_utf8(
+                        formula_svg_bytes(&section.render_latex, false).unwrap_or_else(|error| {
+                            panic!(
+                                "{model:?} degree {degree} section '{}' failed: {error}",
+                                section.title
+                            )
+                        }),
+                    )
+                    .expect("SVG must be valid UTF-8");
 
-                assert!(
-                    svg.starts_with("<svg"),
-                    "{model:?} degree {degree} must render SVG root"
-                );
-                assert!(
-                    svg.contains("<path"),
-                    "{model:?} degree {degree} must contain path glyphs"
-                );
+                    assert!(
+                        svg.starts_with("<svg"),
+                        "{model:?} degree {degree} section '{}' must render SVG root",
+                        section.title
+                    );
+                    assert!(
+                        svg.contains("<path"),
+                        "{model:?} degree {degree} section '{}' must contain path glyphs",
+                        section.title
+                    );
+                }
             }
         }
     }
@@ -662,8 +862,13 @@ mod tests {
                 [1_usize].as_slice()
             };
             for &degree in degrees {
-                let formula = model_formula_info(UiLanguage::English, model, degree);
-                let plain_text = formula.plain_text.trim();
+                let formula = model_formula_info(
+                    UiLanguage::English,
+                    model,
+                    degree,
+                    OptimizationLossMetric::Mse,
+                );
+                let plain_text = formula.model_plain_text.trim();
 
                 assert!(
                     !plain_text.is_empty(),
@@ -690,20 +895,109 @@ mod tests {
     }
 
     #[test]
+    fn every_optimization_metric_formula_renders_as_svg() {
+        for metric in OptimizationLossMetric::ALL {
+            let formula =
+                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, metric);
+            let metric_section = formula
+                .sections
+                .iter()
+                .find(|section| section.title.contains("Optimization metric"))
+                .expect("metric section must be present");
+            let svg = String::from_utf8(
+                formula_svg_bytes(&metric_section.render_latex, false)
+                    .unwrap_or_else(|error| panic!("{metric:?} formula must render: {error}")),
+            )
+            .expect("SVG must be valid UTF-8");
+
+            assert!(svg.starts_with("<svg"));
+            assert!(svg.contains("<path"));
+        }
+    }
+
+    #[test]
+    fn formula_reference_contains_only_model_and_metric_sections() {
+        let formula = model_formula_info(
+            UiLanguage::English,
+            ModelChoice::Polynomial,
+            3,
+            OptimizationLossMetric::SoftL1,
+        );
+        let titles: Vec<&str> = formula
+            .sections
+            .iter()
+            .map(|section| section.title.as_str())
+            .collect();
+
+        assert_eq!(
+            titles.len(),
+            2,
+            "reference should have two collapsible sections"
+        );
+        assert!(titles[0].starts_with("Model equation"));
+        assert!(titles[1].starts_with("Optimization metric"));
+        assert!(
+            titles
+                .iter()
+                .all(|title| !title.contains("Fitting notation")),
+            "fitting-notation section must be absent"
+        );
+    }
+
+    #[test]
+    fn optimization_metric_reference_uses_objective_scale_consistently() {
+        let formula = model_formula_info(
+            UiLanguage::English,
+            ModelChoice::Polynomial,
+            3,
+            OptimizationLossMetric::Mse,
+        );
+        let metric_section = formula
+            .sections
+            .iter()
+            .find(|section| section.title.starts_with("Optimization metric"))
+            .expect("metric section must be present");
+
+        assert!(
+            metric_section.plain_text.contains("sum"),
+            "objective formula should be expressed as pointwise sum"
+        );
+        assert!(
+            !metric_section.plain_text.contains("(1/N)"),
+            "scale factor should be explained in description, not encoded in objective formula"
+        );
+    }
+
+    #[test]
     fn pseudo_voigt_render_formula_stays_multiline() {
-        let formula = model_formula_info(UiLanguage::English, ModelChoice::PseudoVoigt, 1);
-        let display_list = render_formula_display_list(&formula.render_latex, RatexColor::BLACK)
-            .expect("pseudo-Voigt display list must build from aligned LaTeX");
+        let formula = model_formula_info(
+            UiLanguage::English,
+            ModelChoice::PseudoVoigt,
+            1,
+            OptimizationLossMetric::Mse,
+        );
+        let model_section = formula
+            .sections
+            .first()
+            .expect("model section must be first");
+        let display_list =
+            render_formula_display_list(&model_section.render_latex, RatexColor::BLACK)
+                .expect("pseudo-Voigt display list must build from aligned LaTeX");
 
         assert!(display_list.height + display_list.depth > 3.0);
     }
 
     #[test]
     fn pseudo_voigt_plain_text_is_human_readable() {
-        let formula = model_formula_info(UiLanguage::English, ModelChoice::PseudoVoigt, 1);
+        let formula = model_formula_info(
+            UiLanguage::English,
+            ModelChoice::PseudoVoigt,
+            1,
+            OptimizationLossMetric::Mse,
+        );
 
-        assert!(formula.plain_text.contains('\n'));
-        assert!(formula.plain_text.contains("η"));
-        assert!(!formula.plain_text.contains(r"\begin"));
+        assert!(formula.model_plain_text.contains('\n'));
+        assert!(formula.model_plain_text.contains("η"));
+        assert!(!formula.model_plain_text.contains(r"\begin"));
     }
 }
