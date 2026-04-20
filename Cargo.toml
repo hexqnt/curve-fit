@@ -1,6 +1,6 @@
 [package]
 name = "curve-fit"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 authors = ["hexqnt <hexqntlab@gmail.com>"]
 license = "Apache-2.0 OR MIT"
