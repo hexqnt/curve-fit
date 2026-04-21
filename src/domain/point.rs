@@ -1,6 +1,8 @@
 //! Типы точки и набора точек с инвариантами на конечность координат и минимальный размер.
 
 use super::InputError;
+use std::sync::Arc;
+
 const MIN_POINTS: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,7 +44,7 @@ impl Point {
 #[derive(Debug, Clone, PartialEq)]
 /// Набор точек с инвариантом минимального размера (`>= 2`).
 pub struct Points {
-    points: Box<[Point]>,
+    points: Arc<[Point]>,
 }
 
 impl Points {
@@ -88,7 +90,7 @@ impl TryFrom<Vec<Point>> for Points {
             });
         }
         Ok(Self {
-            points: points.into_boxed_slice(),
+            points: Arc::from(points),
         })
     }
 }

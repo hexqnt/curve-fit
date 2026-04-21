@@ -18,6 +18,7 @@ struct StochasticState {
     current_param: Vec<f64>,
     best_param: Vec<f64>,
     gradient_buffer: Vec<f64>,
+    param_buffer: Array1<f64>,
     best_cost: f64,
     iter: u64,
     max_iters: u64,
@@ -240,13 +241,14 @@ where
     O: CostFunction<Param = Array1<f64>, Output = f64>,
 {
     let parameter_count = initial_param.len();
-    let cost = problem
-        .cost(&vec_to_array1(&initial_param))
-        .map_err(optimizer_error)?;
+    let mut param_buffer = Array1::zeros(parameter_count);
+    array1_as_mut_slice(&mut param_buffer).copy_from_slice(&initial_param);
+    let cost = problem.cost(&param_buffer).map_err(optimizer_error)?;
     Ok(StochasticState {
         current_param: initial_param.clone(),
         best_param: initial_param,
         gradient_buffer: Vec::with_capacity(parameter_count),
+        param_buffer,
         best_cost: finite_cost_or_large(cost),
         iter: 0,
         max_iters,
@@ -255,6 +257,15 @@ where
 
 fn stochastic_state_is_terminated(state: &StochasticState) -> bool {
     state.iter >= state.max_iters
+}
+
+fn overwrite_vec_from_slice(target: &mut Vec<f64>, source: &[f64]) {
+    if target.len() == source.len() {
+        target.copy_from_slice(source);
+    } else {
+        target.clear();
+        target.extend_from_slice(source);
+    }
 }
 
 fn stochastic_step<O>(
@@ -266,9 +277,9 @@ where
     O: CostFunction<Param = Array1<f64>, Output = f64>
         + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
 {
-    let current_param_array = vec_to_array1(&state.current_param);
+    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(&state.current_param);
     let gradient = problem
-        .gradient(&current_param_array)
+        .gradient(&state.param_buffer)
         .map_err(optimizer_error)?;
     state.gradient_buffer.clear();
     state
@@ -276,53 +287,51 @@ where
         .extend_from_slice(array1_as_slice(&gradient));
     solver.step(&state.gradient_buffer);
 
-    let current_param = solver.parameters().clone();
-    let current_cost = finite_cost_or_large(
-        problem
-            .cost(&vec_to_array1(&current_param))
-            .map_err(optimizer_error)?,
-    );
+    let current_param = solver.parameters();
+    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(current_param.as_slice());
+    let current_cost =
+        finite_cost_or_large(problem.cost(&state.param_buffer).map_err(optimizer_error)?);
 
     if current_cost < state.best_cost {
         state.best_cost = current_cost;
-        state.best_param = current_param.clone();
+        overwrite_vec_from_slice(&mut state.best_param, current_param.as_slice());
     }
-    state.current_param = current_param;
+    overwrite_vec_from_slice(&mut state.current_param, current_param.as_slice());
 
     Ok(())
 }
 
-fn optimizer_state_best_param(state: &OptimizerState) -> Option<Array1<f64>> {
+fn optimizer_state_best_param(state: &OptimizerState) -> Option<&[f64]> {
     match state {
         OptimizerState::Lbfgs(state) => state
             .get_best_param()
             .or_else(|| state.get_param())
-            .cloned(),
+            .map(array1_as_slice),
         OptimizerState::NelderMead(state) => state
             .get_best_param()
             .or_else(|| state.get_param())
-            .cloned(),
+            .map(array1_as_slice),
         OptimizerState::SteepestDescent(state) => state
             .get_best_param()
             .or_else(|| state.get_param())
-            .cloned(),
+            .map(array1_as_slice),
         OptimizerState::NewtonCg(state) => state
             .get_best_param()
             .or_else(|| state.get_param())
-            .cloned(),
-        OptimizerState::Sgd(state) => Some(vec_to_array1(&state.best_param)),
-        OptimizerState::Adam(state) => Some(vec_to_array1(&state.best_param)),
+            .map(array1_as_slice),
+        OptimizerState::Sgd(state) => Some(state.best_param.as_slice()),
+        OptimizerState::Adam(state) => Some(state.best_param.as_slice()),
     }
 }
 
-fn optimizer_state_current_param(state: &OptimizerState) -> Option<Array1<f64>> {
+fn optimizer_state_current_param(state: &OptimizerState) -> Option<&[f64]> {
     match state {
-        OptimizerState::Lbfgs(state) => state.get_param().cloned(),
-        OptimizerState::NelderMead(state) => state.get_param().cloned(),
-        OptimizerState::SteepestDescent(state) => state.get_param().cloned(),
-        OptimizerState::NewtonCg(state) => state.get_param().cloned(),
-        OptimizerState::Sgd(state) => Some(vec_to_array1(&state.current_param)),
-        OptimizerState::Adam(state) => Some(vec_to_array1(&state.current_param)),
+        OptimizerState::Lbfgs(state) => state.get_param().map(array1_as_slice),
+        OptimizerState::NelderMead(state) => state.get_param().map(array1_as_slice),
+        OptimizerState::SteepestDescent(state) => state.get_param().map(array1_as_slice),
+        OptimizerState::NewtonCg(state) => state.get_param().map(array1_as_slice),
+        OptimizerState::Sgd(state) => Some(state.current_param.as_slice()),
+        OptimizerState::Adam(state) => Some(state.current_param.as_slice()),
     }
 }
 
@@ -362,8 +371,9 @@ where
         return Ok(state);
     };
     let gradient = problem.gradient(&param).map_err(optimizer_error)?;
-    state = state.gradient(gradient.clone());
-    if gradient_l2_norm(array1_as_slice(&gradient)) <= STEEPEST_DESCENT_GRAD_TOL {
+    let gradient_norm = gradient_l2_norm(array1_as_slice(&gradient));
+    state = state.gradient(gradient);
+    if gradient_norm <= STEEPEST_DESCENT_GRAD_TOL {
         state = state.terminate_with(TerminationReason::SolverConverged);
     }
     Ok(state)
@@ -612,7 +622,6 @@ impl IncrementalFitRunner {
         family.validate_points(points)?;
 
         let initial_values = initial_params.values();
-        let initial_array = vec_to_array1(&initial_values);
         let max_iters = optimizer_config.max_iters();
         let problem = CurveProblem::new_with_metric_quantization(
             family,
@@ -622,6 +631,7 @@ impl IncrementalFitRunner {
         );
         let mut problem = Problem::new(problem);
         let mut solver = build_optimizer_solver(&initial_values, optimizer_config)?;
+        let initial_array = Array1::from_vec(initial_values);
         let state =
             initialize_optimizer_state(&mut solver, &mut problem, &initial_array, max_iters)?;
 
@@ -666,9 +676,9 @@ impl IncrementalFitRunner {
             };
 
             let iteration = optimizer_state_iter(&state);
-            if let Some(params) = optimizer_state_current_param(&state).and_then(|values| {
-                CurveParams::try_from_slice(self.family, array1_as_slice(&values)).ok()
-            }) {
+            if let Some(params) = optimizer_state_current_param(&state)
+                .and_then(|values| CurveParams::try_from_slice(self.family, values).ok())
+            {
                 let metrics = calculate_iteration_metrics_with_quantization(
                     &self.points,
                     &params,
@@ -694,8 +704,7 @@ impl IncrementalFitRunner {
     fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalFitStep, FitError> {
         let best_param_values =
             optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
-        let best_params =
-            CurveParams::try_from_slice(self.family, array1_as_slice(&best_param_values))?;
+        let best_params = CurveParams::try_from_slice(self.family, best_param_values)?;
         let (mse, rmse) = calculate_metrics_with_quantization(
             &self.points,
             &best_params,
@@ -794,20 +803,26 @@ impl IncrementalSplineFitRunner {
         metric_quantization: MetricQuantization,
     ) -> Result<Self, FitError> {
         let prepared = prepare_spline_inputs(points, config, family, initial_knot_y)?;
+        let PreparedSplineInputs {
+            config,
+            knot_x,
+            initial_y,
+            curve_x_bounds,
+        } = prepared;
         let max_iters = optimizer_config.max_iters();
 
-        let initial_knots = materialize_spline_knots(prepared.knot_x.as_ref(), &prepared.initial_y);
+        let initial_knots = materialize_spline_knots(knot_x.as_ref(), &initial_y);
         let problem = SplineProblem::new(
             family,
             &initial_knots,
             points,
-            prepared.config.extrapolation,
+            config.extrapolation,
             loss_metric,
             metric_quantization,
         );
         let mut problem = Problem::new(problem);
-        let initial_knot_y_array = vec_to_array1(&prepared.initial_y);
-        let mut solver = build_optimizer_solver(&prepared.initial_y, optimizer_config)?;
+        let mut solver = build_optimizer_solver(&initial_y, optimizer_config)?;
+        let initial_knot_y_array = Array1::from_vec(initial_y);
         let state = initialize_optimizer_state(
             &mut solver,
             &mut problem,
@@ -818,9 +833,9 @@ impl IncrementalSplineFitRunner {
         Ok(Self {
             family,
             points: points.clone(),
-            config: prepared.config,
-            knot_x: prepared.knot_x,
-            curve_x_bounds: prepared.curve_x_bounds,
+            config,
+            knot_x,
+            curve_x_bounds,
             loss_metric,
             metric_quantization,
             problem,
@@ -855,20 +870,22 @@ impl IncrementalSplineFitRunner {
             };
 
             let iteration = optimizer_state_iter(&state);
-            if let Some(knot_y) = optimizer_state_current_param(&state) {
+            if let Some(knot_y) =
+                optimizer_state_current_param(&state).map(|knot_y| knot_y.to_vec())
+            {
                 let built = build_spline_curve_from_knot_y(
                     self.family,
                     self.config.extrapolation,
                     self.config.samples,
                     self.knot_x.as_ref(),
-                    array1_as_slice(&knot_y),
+                    &knot_y,
                     self.curve_x_bounds,
                 )?;
                 let metrics = calculate_iteration_metrics_from_evaluator(
                     &self.points,
                     self.loss_metric,
                     self.metric_quantization,
-                    |x| built.evaluator.evaluate(x),
+                    |x| built.evaluator.evaluate(&built.knots, x),
                 );
                 let curve = built.curve;
 
@@ -878,7 +895,7 @@ impl IncrementalSplineFitRunner {
                     iteration,
                     mse: metrics.mse,
                     metrics,
-                    knot_y: array1_as_slice(&knot_y).to_vec(),
+                    knot_y,
                     curve,
                 });
             }
@@ -890,8 +907,9 @@ impl IncrementalSplineFitRunner {
     }
 
     fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalSplineFitStep, FitError> {
-        let best_knot_y =
-            optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
+        let best_knot_y = optimizer_state_best_param(&state)
+            .ok_or(FitError::MissingBestParameters)?
+            .to_vec();
         let iterations = optimizer_state_iter(&state);
         self.state = Some(state);
 
@@ -904,11 +922,8 @@ impl IncrementalSplineFitRunner {
             loss_metric: self.loss_metric,
             metric_quantization: self.metric_quantization,
         };
-        let (result, metrics) = build_spline_result_from_knot_y(
-            &finalize_context,
-            array1_as_slice(&best_knot_y),
-            iterations,
-        )?;
+        let (result, metrics) =
+            build_spline_result_from_knot_y(&finalize_context, &best_knot_y, iterations)?;
 
         Ok(IncrementalSplineFitStep::Finished { result, metrics })
     }

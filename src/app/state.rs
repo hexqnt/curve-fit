@@ -1,6 +1,7 @@
 //! Центральные типы состояния приложения, снимки UI и сообщения рантайма фитинга.
 
 use super::*;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// Неизменяемое представление выбранного оптимизатора и его input-состояния.
 pub(super) enum ActiveOptimizerView<'a> {
@@ -128,34 +129,8 @@ impl ActiveOptimizerViewMut<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-/// Снимок активных input-полей оптимизатора для детекта изменений UI.
-pub(super) enum ActiveOptimizerSnapshot {
-    Lbfgs(LbfgsInputState),
-    NelderMead(NelderMeadInputState),
-    SteepestDescent(SteepestDescentInputState),
-    NewtonCg(NewtonCgInputState),
-    Sgd(SgdInputState),
-    Adam(AdamInputState),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-/// Снимок правой панели, влияющий на автоперезапуск фитинга.
-pub(super) struct RightPanelFitSnapshot {
-    pub(super) selected_model: ModelChoice,
-    pub(super) polynomial_degree: usize,
-    pub(super) rational_degree: usize,
-    pub(super) parameter_inputs: Vec<String>,
-    pub(super) spline_knots: usize,
-    pub(super) spline_knot_strategy: SplineKnotStrategy,
-    pub(super) spline_extrapolation: SplineExtrapolation,
-    pub(super) spline_duplicate_x_policy: SplineDuplicateXPolicy,
-    pub(super) spline_initial_knot_y_inputs: Vec<String>,
-    pub(super) optimization_loss_metric: OptimizationLossMetric,
-    pub(super) metric_quantization_enabled: bool,
-    pub(super) metric_quantization_decimal_places: u8,
-    pub(super) optimizer: ActiveOptimizerSnapshot,
-}
+/// Легковесный отпечаток состояния правой панели для детекта изменений без аллокаций.
+type RightPanelFitFingerprint = u64;
 
 #[derive(Debug)]
 /// Трасса одной итерации параметрического фитинга для replay/диагностики.
@@ -279,7 +254,7 @@ pub struct CurveFitApp {
     pub(super) spline_initial_knot_y_inputs: Vec<String>,
     pub(super) auto_refit_enabled: bool,
     pub(super) auto_refit_pending_rerun: bool,
-    pub(super) last_right_panel_fit_snapshot: Option<RightPanelFitSnapshot>,
+    pub(super) last_right_panel_fit_snapshot: Option<RightPanelFitFingerprint>,
     pub(super) fit_in_progress: bool,
     pub(super) fit_loss_metric: OptimizationLossMetric,
     pub(super) fit_metric_quantization: MetricQuantization,
@@ -458,39 +433,83 @@ impl CurveFitApp {
         self.active_optimizer_view().config()
     }
 
-    pub(super) fn capture_active_optimizer_snapshot(&self) -> ActiveOptimizerSnapshot {
+    fn hash_f64<H: Hasher>(hasher: &mut H, value: f64) {
+        let normalized_bits = if value == 0.0 {
+            0.0f64.to_bits()
+        } else {
+            value.to_bits()
+        };
+        normalized_bits.hash(hasher);
+    }
+
+    fn hash_active_optimizer_inputs<H: Hasher>(&self, hasher: &mut H) {
+        std::mem::discriminant(&self.optimizer_method).hash(hasher);
         match self.optimizer_method {
-            OptimizerMethod::Lbfgs => ActiveOptimizerSnapshot::Lbfgs(self.lbfgs_inputs.clone()),
+            OptimizerMethod::Lbfgs => {
+                self.lbfgs_inputs.history_size.hash(hasher);
+                self.lbfgs_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.lbfgs_inputs.tol_grad);
+                Self::hash_f64(hasher, self.lbfgs_inputs.tol_cost);
+                Self::hash_f64(hasher, self.lbfgs_inputs.c1);
+                Self::hash_f64(hasher, self.lbfgs_inputs.c2);
+                Self::hash_f64(hasher, self.lbfgs_inputs.step_min);
+                Self::hash_f64(hasher, self.lbfgs_inputs.step_max);
+                Self::hash_f64(hasher, self.lbfgs_inputs.width_tolerance);
+            }
             OptimizerMethod::NelderMead => {
-                ActiveOptimizerSnapshot::NelderMead(self.nelder_mead_inputs.clone())
+                self.nelder_mead_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.simplex_scale);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.sd_tolerance);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.alpha);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.gamma);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.rho);
+                Self::hash_f64(hasher, self.nelder_mead_inputs.sigma);
             }
             OptimizerMethod::SteepestDescent => {
-                ActiveOptimizerSnapshot::SteepestDescent(self.steepest_descent_inputs.clone())
+                self.steepest_descent_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.steepest_descent_inputs.c1);
+                Self::hash_f64(hasher, self.steepest_descent_inputs.c2);
+                Self::hash_f64(hasher, self.steepest_descent_inputs.step_min);
+                Self::hash_f64(hasher, self.steepest_descent_inputs.step_max);
+                Self::hash_f64(hasher, self.steepest_descent_inputs.width_tolerance);
             }
             OptimizerMethod::NewtonCg => {
-                ActiveOptimizerSnapshot::NewtonCg(self.newton_cg_inputs.clone())
+                self.newton_cg_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.newton_cg_inputs.tol);
+                Self::hash_f64(hasher, self.newton_cg_inputs.curvature_threshold);
+                Self::hash_f64(hasher, self.newton_cg_inputs.c1);
+                Self::hash_f64(hasher, self.newton_cg_inputs.c2);
+                Self::hash_f64(hasher, self.newton_cg_inputs.step_min);
+                Self::hash_f64(hasher, self.newton_cg_inputs.step_max);
+                Self::hash_f64(hasher, self.newton_cg_inputs.width_tolerance);
             }
-            OptimizerMethod::Sgd => ActiveOptimizerSnapshot::Sgd(self.sgd_inputs.clone()),
-            OptimizerMethod::Adam => ActiveOptimizerSnapshot::Adam(self.adam_inputs.clone()),
+            OptimizerMethod::Sgd => {
+                self.sgd_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.sgd_inputs.learning_rate);
+            }
+            OptimizerMethod::Adam => {
+                self.adam_inputs.max_iters.hash(hasher);
+                Self::hash_f64(hasher, self.adam_inputs.learning_rate);
+            }
         }
     }
 
-    pub(super) fn capture_right_panel_fit_snapshot(&self) -> RightPanelFitSnapshot {
-        RightPanelFitSnapshot {
-            selected_model: self.selected_model,
-            polynomial_degree: self.polynomial_degree,
-            rational_degree: self.rational_degree,
-            parameter_inputs: self.parameter_inputs.clone(),
-            spline_knots: self.spline_knots,
-            spline_knot_strategy: self.spline_knot_strategy,
-            spline_extrapolation: self.spline_extrapolation,
-            spline_duplicate_x_policy: self.spline_duplicate_x_policy,
-            spline_initial_knot_y_inputs: self.spline_initial_knot_y_inputs.clone(),
-            optimization_loss_metric: self.optimization_loss_metric,
-            metric_quantization_enabled: self.metric_quantization_enabled,
-            metric_quantization_decimal_places: self.metric_quantization_decimal_places,
-            optimizer: self.capture_active_optimizer_snapshot(),
-        }
+    pub(super) fn capture_right_panel_fit_snapshot(&self) -> RightPanelFitFingerprint {
+        let mut hasher = DefaultHasher::new();
+        std::mem::discriminant(&self.selected_model).hash(&mut hasher);
+        self.polynomial_degree.hash(&mut hasher);
+        self.rational_degree.hash(&mut hasher);
+        self.parameter_inputs.hash(&mut hasher);
+        self.spline_knots.hash(&mut hasher);
+        std::mem::discriminant(&self.spline_knot_strategy).hash(&mut hasher);
+        std::mem::discriminant(&self.spline_extrapolation).hash(&mut hasher);
+        std::mem::discriminant(&self.spline_duplicate_x_policy).hash(&mut hasher);
+        self.spline_initial_knot_y_inputs.hash(&mut hasher);
+        std::mem::discriminant(&self.optimization_loss_metric).hash(&mut hasher);
+        self.metric_quantization_enabled.hash(&mut hasher);
+        self.metric_quantization_decimal_places.hash(&mut hasher);
+        self.hash_active_optimizer_inputs(&mut hasher);
+        hasher.finish()
     }
 
     pub(super) fn track_right_panel_fit_changes_and_maybe_refit(&mut self) {

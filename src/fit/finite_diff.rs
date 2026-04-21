@@ -38,6 +38,12 @@ pub(super) fn array1_as_slice(values: &Array1<f64>) -> &[f64] {
         .expect("Array1 parameters must have contiguous memory layout")
 }
 
+pub(super) fn array1_as_mut_slice(values: &mut Array1<f64>) -> &mut [f64] {
+    values
+        .as_slice_mut()
+        .expect("Array1 parameters must have contiguous memory layout")
+}
+
 pub(super) fn stabilize_hessian(hessian: &mut Array2<f64>) {
     let dimension = hessian.nrows();
     debug_assert_eq!(dimension, hessian.ncols());

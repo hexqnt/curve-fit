@@ -198,35 +198,27 @@ impl SplineFamilyKind {
 /// Вычислитель значения сплайна после подготовки узлов и производных.
 pub(super) enum SplineEvaluator {
     Linear {
-        knots: Vec<[f64; 2]>,
         extrapolation: SplineExtrapolation,
     },
     CubicHermite {
-        knots: Vec<[f64; 2]>,
         derivatives: Vec<f64>,
         extrapolation: SplineExtrapolation,
     },
     NaturalCubic {
-        knots: Vec<[f64; 2]>,
         second_derivatives: Vec<f64>,
         extrapolation: SplineExtrapolation,
     },
 }
 
 impl SplineEvaluator {
-    pub(super) fn evaluate(&self, x: f64) -> f64 {
+    pub(super) fn evaluate(&self, knots: &[[f64; 2]], x: f64) -> f64 {
         match self {
-            Self::Linear {
-                knots,
-                extrapolation,
-            } => evaluate_linear_spline(knots, x, *extrapolation),
+            Self::Linear { extrapolation } => evaluate_linear_spline(knots, x, *extrapolation),
             Self::CubicHermite {
-                knots,
                 derivatives,
                 extrapolation,
             } => evaluate_cubic_hermite_spline(knots, derivatives, x, *extrapolation),
             Self::NaturalCubic {
-                knots,
                 second_derivatives,
                 extrapolation,
             } => evaluate_natural_cubic_spline(knots, second_derivatives, x, *extrapolation),
@@ -236,34 +228,28 @@ impl SplineEvaluator {
 
 fn build_spline_evaluator(
     family: SplineFamilyKind,
-    knots: Vec<[f64; 2]>,
+    knots: &[[f64; 2]],
     extrapolation: SplineExtrapolation,
 ) -> Result<SplineEvaluator, FitError> {
     match family {
-        SplineFamilyKind::Linear => Ok(SplineEvaluator::Linear {
-            knots,
-            extrapolation,
-        }),
+        SplineFamilyKind::Linear => Ok(SplineEvaluator::Linear { extrapolation }),
         SplineFamilyKind::MonotoneCubic => {
-            let derivatives = build_monotone_cubic_derivatives(&knots)?;
+            let derivatives = build_monotone_cubic_derivatives(knots)?;
             Ok(SplineEvaluator::CubicHermite {
-                knots,
                 derivatives,
                 extrapolation,
             })
         }
         SplineFamilyKind::NaturalCubic => {
-            let second_derivatives = build_natural_cubic_second_derivatives(&knots)?;
+            let second_derivatives = build_natural_cubic_second_derivatives(knots)?;
             Ok(SplineEvaluator::NaturalCubic {
-                knots,
                 second_derivatives,
                 extrapolation,
             })
         }
         SplineFamilyKind::Akima => {
-            let derivatives = build_akima_derivatives(&knots)?;
+            let derivatives = build_akima_derivatives(knots)?;
             Ok(SplineEvaluator::CubicHermite {
-                knots,
                 derivatives,
                 extrapolation,
             })
@@ -276,13 +262,26 @@ pub(super) fn spline_lbfgs_config() -> LbfgsConfig {
 }
 
 pub(super) fn materialize_spline_knots(knot_x: &[f64], knot_y: &[f64]) -> Vec<[f64; 2]> {
+    let mut knots = Vec::with_capacity(knot_x.len());
+    materialize_spline_knots_into(knot_x, knot_y, &mut knots);
+    knots
+}
+
+pub(super) fn materialize_spline_knots_into(
+    knot_x: &[f64],
+    knot_y: &[f64],
+    out: &mut Vec<[f64; 2]>,
+) {
     debug_assert_eq!(knot_x.len(), knot_y.len());
-    knot_x
-        .iter()
-        .copied()
-        .zip(knot_y.iter().copied())
-        .map(|(x, y)| [x, y])
-        .collect()
+    out.clear();
+    out.reserve(knot_x.len());
+    out.extend(
+        knot_x
+            .iter()
+            .copied()
+            .zip(knot_y.iter().copied())
+            .map(|(x, y)| [x, y]),
+    );
 }
 
 pub(super) struct SplineProblem {
@@ -323,18 +322,36 @@ impl SplineProblem {
             return LARGE_COST;
         }
 
-        let knots = materialize_spline_knots(self.knot_x.as_ref(), knot_y);
+        let mut knot_buffer = Vec::with_capacity(self.knot_x.len());
+        self.evaluate_objective_with_knot_buffer(knot_y, &mut knot_buffer)
+    }
+
+    fn evaluate_objective_with_knot_buffer(
+        &self,
+        knot_y: &[f64],
+        knot_buffer: &mut Vec<[f64; 2]>,
+    ) -> f64 {
+        if knot_y.len() != self.knot_x.len() {
+            return LARGE_COST;
+        }
+
+        materialize_spline_knots_into(self.knot_x.as_ref(), knot_y, knot_buffer);
+        self.evaluate_objective_from_knots(knot_buffer.as_slice())
+    }
+
+    fn evaluate_objective_from_knots(&self, knots: &[[f64; 2]]) -> f64 {
         let evaluator = match build_spline_evaluator(self.family, knots, self.extrapolation) {
             Ok(evaluator) => evaluator,
             Err(_) => return LARGE_COST,
         };
+        self.accumulate_objective(|x| evaluator.evaluate(knots, x))
+    }
 
+    fn accumulate_objective(&self, mut evaluate: impl FnMut(f64) -> f64) -> f64 {
         let mut objective_sum = 0.0;
         let mut max_abs_residual = 0.0_f64;
         for point in self.points.as_slice() {
-            let prediction = self
-                .residual_quantizer
-                .quantize_value(evaluator.evaluate(point.x()));
+            let prediction = self.residual_quantizer.quantize_value(evaluate(point.x()));
             let observed = self.residual_quantizer.quantize_value(point.y());
             let residual = prediction - observed;
             if !residual.is_finite() {
@@ -374,6 +391,7 @@ impl Gradient for SplineProblem {
         let param_slice = array1_as_slice(param);
         let mut probe = param.clone();
         let mut gradient = Array1::zeros(param_slice.len());
+        let mut knot_buffer = Vec::with_capacity(self.knot_x.len());
         for (index, gradient_value) in gradient.iter_mut().enumerate() {
             // Численный градиент по центральной схеме конечной разности.
             let base_step =
@@ -381,9 +399,11 @@ impl Gradient for SplineProblem {
             let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
                 let step = base_step * factor;
                 probe[index] = param_slice[index] + step;
-                let cost_plus = self.evaluate_objective(array1_as_slice(&probe));
+                let cost_plus = self
+                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
                 probe[index] = param_slice[index] - step;
-                let cost_minus = self.evaluate_objective(array1_as_slice(&probe));
+                let cost_minus = self
+                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
                 probe[index] = param_slice[index];
                 finite_central_difference(cost_plus, cost_minus, step)
             });
@@ -905,7 +925,7 @@ pub(super) fn build_spline_result_from_knot_y(
     )?;
     let metrics =
         calculate_metrics_from_evaluator(context.points, context.metric_quantization, |x| {
-            built.evaluator.evaluate(x)
+            built.evaluator.evaluate(&built.knots, x)
         });
 
     let result = SplineResult {
@@ -974,8 +994,8 @@ pub(super) fn build_spline_curve_from_knot_y(
     curve_x_bounds: [f64; 2],
 ) -> Result<BuiltSplineCurve, FitError> {
     let knots = materialize_spline_knots(knot_x, knot_y);
-    let evaluator = build_spline_evaluator(family, knots.clone(), extrapolation)?;
-    let curve = sample_sorted_curve(samples, curve_x_bounds, |x| evaluator.evaluate(x));
+    let evaluator = build_spline_evaluator(family, &knots, extrapolation)?;
+    let curve = sample_sorted_curve(samples, curve_x_bounds, |x| evaluator.evaluate(&knots, x));
     Ok(BuiltSplineCurve {
         knots,
         evaluator,

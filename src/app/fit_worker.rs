@@ -8,7 +8,7 @@ use super::*;
 struct ParametricFitWorkerInput {
     family: CurveFamily,
     optimization_points: Points,
-    display_points: Points,
+    display_points: Option<Points>,
     optimization_initial_params: CurveParams,
     normalization: Option<ParametricNormalization>,
     optimizer_config: OptimizerConfig,
@@ -588,7 +588,7 @@ impl CurveFitApp {
         self.fit_in_progress = true;
 
         std::thread::spawn(move || {
-            let progress_points = display_points;
+            let progress_points = display_points.as_ref().unwrap_or(&optimization_points);
             let mut iteration_trace = Vec::new();
             let mut runner = match IncrementalFitRunner::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
                 &optimization_points,
@@ -626,7 +626,7 @@ impl CurveFitApp {
                             params
                         };
                         let metrics = calculate_iteration_metrics_with_quantization(
-                            &progress_points,
+                            progress_points,
                             &params,
                             loss_metric,
                             metric_quantization,
@@ -650,7 +650,7 @@ impl CurveFitApp {
                             result.params
                         };
                         let (mse, rmse) = calculate_metrics_with_quantization(
-                            &progress_points,
+                            progress_points,
                             &params,
                             metric_quantization,
                         );
@@ -886,9 +886,14 @@ impl CurveFitApp {
             return;
         }
 
-        let mut optimization_points = points.clone();
-        let mut optimization_initial_params = initial_params.clone();
-        let normalization = if self.normalize_parametric_data {
+        let fit_seed_initial_params = initial_params.clone();
+        let (
+            optimization_points,
+            display_points,
+            active_fit_points,
+            optimization_initial_params,
+            normalization,
+        ) = if self.normalize_parametric_data {
             let normalization = match ParametricNormalization::try_from_points(&points) {
                 Ok(normalization) => normalization,
                 Err(error) => {
@@ -896,29 +901,37 @@ impl CurveFitApp {
                     return;
                 }
             };
-            optimization_points = match normalization.normalize_points(&points) {
+            let normalized_points = match normalization.normalize_points(&points) {
                 Ok(normalized_points) => normalized_points,
                 Err(error) => {
                     self.status = Some(StatusMessage::Error(error));
                     return;
                 }
             };
-            optimization_initial_params = match normalization.normalize_params(&initial_params) {
+            let normalized_initial_params = match normalization.normalize_params(&initial_params) {
                 Ok(normalized_params) => normalized_params,
                 Err(error) => {
                     self.status = Some(StatusMessage::Error(error));
                     return;
                 }
             };
-            Some(normalization)
+
+            (
+                normalized_points,
+                Some(points.clone()),
+                points,
+                normalized_initial_params,
+                Some(normalization),
+            )
         } else {
-            None
+            let active_fit_points = points.clone();
+            (points, None, active_fit_points, initial_params, None)
         };
 
         self.reset_fit_runtime_for_new_run();
-        self.active_fit_points = Some(points.clone());
+        self.active_fit_points = Some(active_fit_points);
         self.fit_run_ui_seed = Some(FitRunUiSeed::Parametric {
-            initial_params: initial_params.clone(),
+            initial_params: fit_seed_initial_params,
         });
         self.start_fit_timer();
         self.status = Some(StatusMessage::FittingInProgress);
@@ -929,7 +942,7 @@ impl CurveFitApp {
             self.start_fit_worker(ParametricFitWorkerInput {
                 family,
                 optimization_points,
-                display_points: points,
+                display_points,
                 optimization_initial_params,
                 normalization,
                 optimizer_config,
