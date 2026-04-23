@@ -16,6 +16,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let can_edit_params = !app.fit_in_progress;
 
     let mut params_need_sync = ui_model_selector(app, ui, can_edit_params, ModelSelectorMode::Full);
+    let mut tau_grid_changed = false;
 
     if app.selected_model.is_polynomial() {
         let previous_degree = app.polynomial_degree;
@@ -45,9 +46,61 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             params_need_sync = true;
         }
     }
+    if app.selected_model.is_saturating_trend_basis() {
+        let previous_count = app.saturating_trend_tau_count;
+        ui.add_enabled(
+            can_edit_params,
+            egui::Slider::new(
+                &mut app.saturating_trend_tau_count,
+                MIN_SATURATING_TREND_TAU_COUNT..=MAX_SATURATING_TREND_TAU_COUNT,
+            )
+            .text(tr(language, "Tau count", "Число tau")),
+        );
+        if previous_count != app.saturating_trend_tau_count {
+            params_need_sync = true;
+        }
+        ui.horizontal(|ui| {
+            let reset_tau_grid = ui.add_enabled(
+                can_edit_params,
+                egui::Button::new(tr(language, "Reset tau grid", "Сбросить сетку tau")),
+            );
+            if reset_tau_grid.clicked() {
+                app.set_saturating_trend_tau_inputs(&DEFAULT_SATURATING_TREND_TAUS_YEARS);
+                tau_grid_changed = true;
+            }
+            let _ = CurveFitApp::info_hover(
+                reset_tau_grid,
+                tr(
+                    language,
+                    "Restores default increasing tau grid: 0.25, 0.5, 1, 2, 4, 8",
+                    "Восстанавливает сетку tau по умолчанию: 0.25, 0.5, 1, 2, 4, 8",
+                ),
+            );
+        });
+        ui.label(tr(language, "Tau grid (years)", "Сетка tau (в годах)"));
+        egui::Grid::new("saturating_trend_tau_grid_inputs")
+            .num_columns(2)
+            .spacing(egui::vec2(8.0, 6.0))
+            .show(ui, |ui| {
+                for index in 0..app.saturating_trend_tau_count {
+                    ui.label(format!("tau{}", index + 1));
+                    let response = ui.add_enabled(
+                        can_edit_params,
+                        egui::TextEdit::singleline(&mut app.saturating_trend_tau_inputs[index])
+                            .desired_width(120.0),
+                    );
+                    if response.changed() {
+                        tau_grid_changed = true;
+                    }
+                    ui.end_row();
+                }
+            });
+    }
 
     if params_need_sync {
         app.sync_parameter_inputs();
+        app.clear_fit_outputs();
+    } else if tau_grid_changed {
         app.clear_fit_outputs();
     }
 

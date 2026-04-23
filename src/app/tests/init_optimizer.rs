@@ -610,7 +610,7 @@ fn rational_model_degree_controls_resolved_family_and_parameter_count() {
 fn data_based_polynomial_initialization_sets_only_linear_terms() {
     let points = points_from_pairs(&[(0.0, 1.0), (1.0, 3.0), (2.0, 5.0), (3.0, 7.0)]);
     let params =
-        data_based_params_for_family(CurveFamily::Quartic, &points).expect("must initialize");
+        data_based_params_for_family(CurveFamily::Quartic, &points, None).expect("must initialize");
     let values = params.values();
 
     assert_eq!(values.len(), 5);
@@ -624,7 +624,7 @@ fn data_based_polynomial_initialization_sets_only_linear_terms() {
 #[test]
 fn data_based_power_initialization_rejects_non_positive_y() {
     let points = points_from_pairs(&[(1.0, 0.0), (2.0, 2.0)]);
-    let error = data_based_params_for_family(CurveFamily::Power, &points)
+    let error = data_based_params_for_family(CurveFamily::Power, &points, None)
         .expect_err("y <= 0 must be rejected for Power data-based init");
 
     assert!(error.contains("requires y > 0"));
@@ -640,7 +640,7 @@ fn data_based_bi_exponential_initialization_returns_finite_values() {
         (2.3, 0.7),
         (3.2, 0.5),
     ]);
-    let params = data_based_params_for_family(CurveFamily::BiExponential, &points)
+    let params = data_based_params_for_family(CurveFamily::BiExponential, &points, None)
         .expect("must initialize bi-exponential params");
     let values = params.values();
 
@@ -663,7 +663,7 @@ fn data_based_damped_sinusoid_initialization_returns_finite_values() {
         (3.5, 0.1),
         (4.0, -0.4),
     ]);
-    let params = data_based_params_for_family(CurveFamily::DampedSinusoid, &points)
+    let params = data_based_params_for_family(CurveFamily::DampedSinusoid, &points, None)
         .expect("must initialize damped sinusoid params");
     let values = params.values();
 
@@ -693,8 +693,9 @@ fn data_based_rational_and_peak_initialization_returns_finite_values() {
         CurveFamily::Rational55,
         CurveFamily::Emg,
         CurveFamily::PseudoVoigt,
+        CurveFamily::SaturatingTrendBasis6,
     ] {
-        let params = data_based_params_for_family(family, &points)
+        let params = data_based_params_for_family(family, &points, None)
             .expect("must initialize params for new family");
         let values = params.values();
         assert_eq!(values.len(), family.parameter_count());

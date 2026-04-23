@@ -113,15 +113,22 @@ fn rational_family_metadata_matches_expected_degree() {
         (CurveFamily::Rational33, 3, 7, 7),
         (CurveFamily::Rational44, 4, 9, 9),
         (CurveFamily::Rational55, 5, 11, 11),
+        (CurveFamily::SaturatingTrendBasis1, 0, 2, 2),
+        (CurveFamily::SaturatingTrendBasis6, 0, 7, 7),
     ];
 
     for (family, degree, parameter_count, min_points) in scenarios {
-        assert!(family.is_rational());
-        assert_eq!(family.rational_degree(), Some(degree));
+        if degree == 0 {
+            assert!(!family.is_rational());
+            assert_eq!(family.rational_degree(), None);
+        } else {
+            assert!(family.is_rational());
+            assert_eq!(family.rational_degree(), Some(degree));
+            assert_eq!(CurveFamily::from_rational_degree(degree), family);
+        }
         assert_eq!(family.parameter_count(), parameter_count);
         assert_eq!(family.min_points(), min_points);
         assert_eq!(family.parameter_names().len(), parameter_count);
-        assert_eq!(CurveFamily::from_rational_degree(degree), family);
     }
 
     assert_eq!(

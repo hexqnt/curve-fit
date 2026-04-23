@@ -19,6 +19,16 @@ pub(super) fn ui_result(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         if let Some(params) = &app.fit_preview_params {
             ui.separator();
             ui.label(tr(language, "Current parameters", "Текущие параметры"));
+            if let Some(taus) = params.saturating_trend_taus() {
+                ui.label(format!(
+                    "{}: {}",
+                    tr(language, "Tau grid", "Сетка tau"),
+                    taus.iter()
+                        .map(|value| format!("{value:.4}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
             for (name, value) in params
                 .family()
                 .parameter_names()
@@ -114,6 +124,16 @@ pub(super) fn ui_result(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 ui.end_row();
             });
         ui.add_space(2.0);
+        if let Some(taus) = result.params.saturating_trend_taus() {
+            ui.label(tr(language, "Tau grid", "Сетка tau"));
+            ui.monospace(
+                taus.iter()
+                    .map(|value| format!("{value:.8}"))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            );
+            ui.add_space(2.0);
+        }
         ui.label(tr(language, "Parameters", "Параметры"));
         egui::ScrollArea::vertical()
             .id_salt("result_parametric_params_scroll")

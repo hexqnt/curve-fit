@@ -18,6 +18,7 @@ impl Default for CurveFitApp {
         let selected_model = ModelChoice::Polynomial;
         let polynomial_degree = 1;
         let rational_degree = MIN_RATIONAL_DEGREE;
+        let saturating_trend_tau_count = MAX_SATURATING_TREND_TAU_COUNT;
         let selected_family = polynomial_family(polynomial_degree);
         let default_lbfgs = LbfgsConfig::default();
         let default_nelder_mead = NelderMeadConfig::default();
@@ -52,6 +53,10 @@ impl Default for CurveFitApp {
             selected_model,
             polynomial_degree,
             rational_degree,
+            saturating_trend_tau_count,
+            saturating_trend_tau_inputs: tau_grid_to_input_strings(
+                &DEFAULT_SATURATING_TREND_TAUS_YEARS,
+            ),
             parameter_inputs: params_to_input_strings(&selected_family.default_params()),
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,

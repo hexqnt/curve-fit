@@ -31,6 +31,10 @@ fn rational_curve_params_roundtrip_for_new_families() {
             CurveFamily::Rational55,
             vec![0.0, 0.0, 0.0, 0.2, 0.8, 0.1, 0.04, 0.01, 0.0, 0.0, 0.0],
         ),
+        (
+            CurveFamily::SaturatingTrendBasis6,
+            vec![0.1, 1.0, -0.2, 0.4, 0.1, -0.1, 0.05],
+        ),
     ];
 
     for (family, values) in scenarios {

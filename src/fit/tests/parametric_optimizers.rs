@@ -1,4 +1,5 @@
 use super::*;
+use crate::domain::SaturatingTrendTauGrid;
 
 #[test]
 fn lbfgs_fits_linear_data() {
@@ -405,6 +406,34 @@ fn lbfgs_fits_hyperbolic_tangent_data() {
         &config,
     )
     .expect("hyperbolic tangent fit must succeed");
+
+    assert!(result.mse < 1e-8);
+}
+
+#[test]
+fn lbfgs_fits_saturating_trend_basis_data() {
+    let points = build_points(&[0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 12.0], |x| {
+        0.3 + 1.2 * (1.0 - (-x / 0.25).exp()) - 0.4 * (1.0 - (-x / 1.0).exp())
+            + 0.2 * (1.0 - (-x / 4.0).exp())
+            + 0.1 * (1.0 - (-x / 8.0).exp())
+    });
+    let config = LbfgsConfig::default();
+    let result = fit_curve(
+        &points,
+        CurveFamily::SaturatingTrendBasis6,
+        CurveParams::SaturatingTrendBasis6 {
+            c: 0.0,
+            w1: 0.0,
+            w2: 0.0,
+            w3: 0.0,
+            w4: 0.0,
+            w5: 0.0,
+            w6: 0.0,
+            taus: SaturatingTrendTauGrid::default_for_count(6),
+        },
+        &config,
+    )
+    .expect("saturating trend basis fit must succeed");
 
     assert!(result.mse < 1e-8);
 }

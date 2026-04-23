@@ -68,6 +68,10 @@ pub(super) fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
         .collect()
 }
 
+pub(super) fn tau_grid_to_input_strings(values: &[f64]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
 /// Инструмент редактирования точек непосредственно на графике.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum PlotTool {

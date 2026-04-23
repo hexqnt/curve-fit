@@ -285,6 +285,15 @@ impl ParametricNormalization {
             ParamScale::new(0, 0),
             ParamScale::new(0, -1),
         ];
+        const SATURATING_TREND_BASIS_SCALES: [ParamScale; 7] = [
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+            ParamScale::new(0, -1),
+        ];
 
         match family {
             CurveFamily::Arrhenius => Some(&ARRHENIUS_SCALES),
@@ -306,6 +315,12 @@ impl ParametricNormalization {
             CurveFamily::Gaussian => Some(&GAUSSIAN_SCALES),
             CurveFamily::Emg => Some(&EMG_SCALES),
             CurveFamily::PseudoVoigt => Some(&PSEUDO_VOIGT_SCALES),
+            CurveFamily::SaturatingTrendBasis1 => Some(&SATURATING_TREND_BASIS_SCALES[..2]),
+            CurveFamily::SaturatingTrendBasis2 => Some(&SATURATING_TREND_BASIS_SCALES[..3]),
+            CurveFamily::SaturatingTrendBasis3 => Some(&SATURATING_TREND_BASIS_SCALES[..4]),
+            CurveFamily::SaturatingTrendBasis4 => Some(&SATURATING_TREND_BASIS_SCALES[..5]),
+            CurveFamily::SaturatingTrendBasis5 => Some(&SATURATING_TREND_BASIS_SCALES[..6]),
+            CurveFamily::SaturatingTrendBasis6 => Some(&SATURATING_TREND_BASIS_SCALES[..7]),
             CurveFamily::Power
             | CurveFamily::Linear
             | CurveFamily::Quadratic

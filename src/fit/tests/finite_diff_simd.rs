@@ -94,6 +94,7 @@ fn curve_objective_arrhenius_is_consistent_across_levels() {
         CurveFamily::Arrhenius,
         &x_values,
         &y_values,
+        None,
         MsePredictionLoss,
     );
     let objective = models::CurveObjective::new(probe_params.len(), term);
@@ -153,7 +154,13 @@ fn curve_objective_emg_matches_numerical_derivatives() {
         .map(|&x| models::value_at(CurveFamily::Emg, &true_params, x))
         .collect::<Vec<_>>();
 
-    let term = models::DataTerm::new(CurveFamily::Emg, &x_values, &y_values, MsePredictionLoss);
+    let term = models::DataTerm::new(
+        CurveFamily::Emg,
+        &x_values,
+        &y_values,
+        None,
+        MsePredictionLoss,
+    );
     let objective = models::CurveObjective::new(probe_params.len(), term);
 
     let value = objective.value(&probe_params);
@@ -322,6 +329,7 @@ fn polynomial_cost_with_quantization_uses_quantized_scalar_pipeline() {
     let problem = CurveProblem::new_with_metric_quantization(
         CurveFamily::Linear,
         &points,
+        None,
         OptimizationLossMetric::Mse,
         quantization(2),
     );

@@ -30,6 +30,7 @@ pub(super) enum ModelChoice {
     Rational,
     Emg,
     PseudoVoigt,
+    SaturatingTrendBasis,
     LinearSpline,
     MonotoneCubicSpline,
     NaturalCubicSpline,
@@ -37,7 +38,7 @@ pub(super) enum ModelChoice {
 }
 
 impl ModelChoice {
-    pub(super) const ALL: [Self; 28] = [
+    pub(super) const ALL: [Self; 29] = [
         Self::Polynomial,
         Self::Arrhenius,
         Self::Inverse,
@@ -62,6 +63,7 @@ impl ModelChoice {
         Self::Rational,
         Self::Emg,
         Self::PseudoVoigt,
+        Self::SaturatingTrendBasis,
         Self::LinearSpline,
         Self::MonotoneCubicSpline,
         Self::NaturalCubicSpline,
@@ -74,6 +76,10 @@ impl ModelChoice {
 
     pub(super) fn is_rational(self) -> bool {
         matches!(self, Self::Rational)
+    }
+
+    pub(super) fn is_saturating_trend_basis(self) -> bool {
+        matches!(self, Self::SaturatingTrendBasis)
     }
 }
 
@@ -92,6 +98,7 @@ impl ResolvedModel {
         choice: ModelChoice,
         polynomial_degree: usize,
         rational_degree: usize,
+        saturating_trend_tau_count: usize,
     ) -> Self {
         match choice {
             ModelChoice::Polynomial => Self::Parametric(polynomial_family(polynomial_degree)),
@@ -118,6 +125,9 @@ impl ResolvedModel {
             ModelChoice::Gaussian => Self::Parametric(CurveFamily::Gaussian),
             ModelChoice::Emg => Self::Parametric(CurveFamily::Emg),
             ModelChoice::PseudoVoigt => Self::Parametric(CurveFamily::PseudoVoigt),
+            ModelChoice::SaturatingTrendBasis => {
+                Self::Parametric(saturating_trend_basis_family(saturating_trend_tau_count))
+            }
             ModelChoice::LinearSpline => Self::LinearSpline,
             ModelChoice::MonotoneCubicSpline => Self::MonotoneCubicSpline,
             ModelChoice::NaturalCubicSpline => Self::NaturalCubicSpline,
@@ -153,6 +163,10 @@ impl ResolvedModel {
             Self::AkimaSpline => Some(5),
         }
     }
+}
+
+pub(super) fn saturating_trend_basis_family(tau_count: usize) -> CurveFamily {
+    CurveFamily::from_saturating_trend_tau_count(tau_count)
 }
 
 /// Группы моделей для компактного меню выбора в UI.
@@ -203,6 +217,7 @@ pub(super) fn model_group(model: ModelChoice) -> ModelGroup {
         | ModelChoice::ExponentialLinear
         | ModelChoice::ExponentialHalfLife
         | ModelChoice::FallingExponential
+        | ModelChoice::SaturatingTrendBasis
         | ModelChoice::Power
         | ModelChoice::Rational => ModelGroup::ParametricGeneral,
     }

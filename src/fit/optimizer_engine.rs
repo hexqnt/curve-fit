@@ -58,6 +58,7 @@ pub enum IncrementalFitStep {
 /// Пошаговый раннер оптимизации параметрических семейств.
 pub struct IncrementalFitRunner {
     family: CurveFamily,
+    params_template: CurveParams,
     points: Points,
     loss_metric: OptimizationLossMetric,
     metric_quantization: MetricQuantization,
@@ -626,6 +627,7 @@ impl IncrementalFitRunner {
         let problem = CurveProblem::new_with_metric_quantization(
             family,
             points,
+            initial_params.saturating_trend_tau_grid(),
             loss_metric,
             metric_quantization,
         );
@@ -637,6 +639,7 @@ impl IncrementalFitRunner {
 
         Ok(Self {
             family,
+            params_template: initial_params,
             points: points.clone(),
             loss_metric,
             metric_quantization,
@@ -676,9 +679,9 @@ impl IncrementalFitRunner {
             };
 
             let iteration = optimizer_state_iter(&state);
-            if let Some(params) = optimizer_state_current_param(&state)
-                .and_then(|values| CurveParams::try_from_slice(self.family, values).ok())
-            {
+            if let Some(params) = optimizer_state_current_param(&state).and_then(|values| {
+                CurveParams::try_from_slice_like(&self.params_template, values).ok()
+            }) {
                 let metrics = calculate_iteration_metrics_with_quantization(
                     &self.points,
                     &params,
@@ -704,7 +707,8 @@ impl IncrementalFitRunner {
     fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalFitStep, FitError> {
         let best_param_values =
             optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
-        let best_params = CurveParams::try_from_slice(self.family, best_param_values)?;
+        let best_params =
+            CurveParams::try_from_slice_like(&self.params_template, best_param_values)?;
         let (mse, rmse) = calculate_metrics_with_quantization(
             &self.points,
             &best_params,

@@ -212,6 +212,8 @@ pub struct CurveFitApp {
     pub(super) selected_model: ModelChoice,
     pub(super) polynomial_degree: usize,
     pub(super) rational_degree: usize,
+    pub(super) saturating_trend_tau_count: usize,
+    pub(super) saturating_trend_tau_inputs: Vec<String>,
     pub(super) parameter_inputs: Vec<String>,
     pub(super) optimizer_method: OptimizerMethod,
     pub(super) optimizer_mode: OptimizerUiMode,
@@ -328,6 +330,9 @@ impl CurveFitApp {
     fn apply_param_init_result(&mut self, params_result: Result<CurveParams, String>) {
         match params_result {
             Ok(params) => {
+                if let Some(taus) = params.saturating_trend_taus() {
+                    self.set_saturating_trend_tau_inputs(taus);
+                }
                 self.set_parameter_inputs_from_params(&params);
                 self.clear_fit_outputs();
                 self.status = Some(StatusMessage::Ready);
@@ -356,6 +361,7 @@ impl CurveFitApp {
             self.selected_model,
             self.polynomial_degree,
             self.rational_degree,
+            self.saturating_trend_tau_count,
         )
     }
 
@@ -499,6 +505,8 @@ impl CurveFitApp {
         std::mem::discriminant(&self.selected_model).hash(&mut hasher);
         self.polynomial_degree.hash(&mut hasher);
         self.rational_degree.hash(&mut hasher);
+        self.saturating_trend_tau_count.hash(&mut hasher);
+        self.saturating_trend_tau_inputs.hash(&mut hasher);
         self.parameter_inputs.hash(&mut hasher);
         self.spline_knots.hash(&mut hasher);
         std::mem::discriminant(&self.spline_knot_strategy).hash(&mut hasher);
@@ -660,6 +668,10 @@ impl CurveFitApp {
         self.parameter_inputs = params_to_input_strings(params);
     }
 
+    pub(super) fn set_saturating_trend_tau_inputs(&mut self, values: &[f64]) {
+        self.saturating_trend_tau_inputs = tau_grid_to_input_strings(values);
+    }
+
     pub(super) fn sync_spline_initial_knot_y_inputs(&mut self, knot_count: usize) {
         if self.spline_initial_knot_y_inputs.len() < knot_count {
             self.spline_initial_knot_y_inputs
@@ -750,7 +762,8 @@ impl CurveFitApp {
         family
             .validate_points(&points)
             .map_err(|error| error.to_string())?;
-        data_based_params_for_family(family, &points)
+        let tau_grid = self.parsed_saturating_trend_tau_grid()?;
+        data_based_params_for_family(family, &points, tau_grid.as_ref())
     }
 
     pub(super) fn build_randomized_initial_params(
@@ -764,7 +777,9 @@ impl CurveFitApp {
         }
 
         let values = self.randomized_init_values(family.parameter_count());
-        CurveParams::try_from_values(family, values).map_err(|error| error.to_string())
+        let tau_grid = self.parsed_saturating_trend_tau_grid()?;
+        CurveParams::try_from_slice_with_tau_grid(family, &values, tau_grid.as_ref())
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn has_fitted_params_for_family(&self, family: CurveFamily) -> bool {
@@ -812,7 +827,17 @@ impl CurveFitApp {
         }
 
         let params_result = match method {
-            ParamInitMethod::Default => Ok(family.default_params()),
+            ParamInitMethod::Default => {
+                self.parsed_saturating_trend_tau_grid()
+                    .and_then(|tau_grid| {
+                        CurveParams::try_from_slice_with_tau_grid(
+                            family,
+                            &family.default_params().values(),
+                            tau_grid.as_ref(),
+                        )
+                        .map_err(|error| error.to_string())
+                    })
+            }
             ParamInitMethod::DataBased => self.build_data_based_initial_params(family),
             ParamInitMethod::Randomized => self.build_randomized_initial_params(family),
         };

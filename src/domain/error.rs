@@ -35,6 +35,24 @@ pub enum InputError {
         index: usize,
         value: f64,
     },
+    WrongSaturatingTrendTauCount {
+        expected_min: usize,
+        expected_max: usize,
+        got: usize,
+    },
+    NonFiniteSaturatingTrendTau {
+        index: usize,
+        value: f64,
+    },
+    NonPositiveSaturatingTrendTau {
+        index: usize,
+        value: f64,
+    },
+    NonIncreasingSaturatingTrendTau {
+        index: usize,
+        previous: f64,
+        value: f64,
+    },
     FamilyMismatch {
         expected: CurveFamily,
         got: CurveFamily,
@@ -92,6 +110,28 @@ impl fmt::Display for InputError {
                     "Parameter {index} for family {family} must be finite, got {value}"
                 )
             }
+            Self::WrongSaturatingTrendTauCount {
+                expected_min,
+                expected_max,
+                got,
+            } => write!(
+                f,
+                "Saturating-trend tau grid expects {expected_min}..={expected_max} values, got {got}"
+            ),
+            Self::NonFiniteSaturatingTrendTau { index, value } => {
+                write!(f, "Tau value at index {index} must be finite, got {value}")
+            }
+            Self::NonPositiveSaturatingTrendTau { index, value } => {
+                write!(f, "Tau value at index {index} must be > 0, got {value}")
+            }
+            Self::NonIncreasingSaturatingTrendTau {
+                index,
+                previous,
+                value,
+            } => write!(
+                f,
+                "Tau grid must be strictly increasing: tau[{index}]={value} is not greater than previous {previous}"
+            ),
             Self::FamilyMismatch { expected, got } => {
                 write!(
                     f,

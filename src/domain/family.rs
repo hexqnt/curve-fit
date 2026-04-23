@@ -2,7 +2,10 @@
 
 use std::fmt;
 
-use super::{CurveParams, InputError, Points};
+use super::{
+    CurveParams, DEFAULT_SATURATING_TREND_TAUS_YEARS, InputError, MAX_SATURATING_TREND_TAU_COUNT,
+    MIN_SATURATING_TREND_TAU_COUNT, Points, SaturatingTrendTauGrid,
+};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 /// Поддерживаемые семейства аналитических кривых.
@@ -43,9 +46,15 @@ pub enum CurveFamily {
     Rational55,
     Emg,
     PseudoVoigt,
+    SaturatingTrendBasis1,
+    SaturatingTrendBasis2,
+    SaturatingTrendBasis3,
+    SaturatingTrendBasis4,
+    SaturatingTrendBasis5,
+    SaturatingTrendBasis6,
 }
 
-pub(crate) const CURVE_FAMILY_COUNT: usize = CurveFamily::PseudoVoigt as usize + 1;
+pub(crate) const CURVE_FAMILY_COUNT: usize = CurveFamily::SaturatingTrendBasis6 as usize + 1;
 /// Минимально поддерживаемая степень рациональной модели `n/n`.
 pub const MIN_RATIONAL_DEGREE: usize = 1;
 /// Максимально поддерживаемая степень рациональной модели `n/n`.
@@ -276,6 +285,42 @@ const CURVE_FAMILY_METADATA: [CurveFamilyMetadata; CURVE_FAMILY_COUNT] = [
         min_points: 6,
         requires_positive_x: false,
     },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (1 tau)",
+        parameter_names: &["c", "w1"],
+        min_points: 2,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (2 tau)",
+        parameter_names: &["c", "w1", "w2"],
+        min_points: 3,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (3 tau)",
+        parameter_names: &["c", "w1", "w2", "w3"],
+        min_points: 4,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (4 tau)",
+        parameter_names: &["c", "w1", "w2", "w3", "w4"],
+        min_points: 5,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (5 tau)",
+        parameter_names: &["c", "w1", "w2", "w3", "w4", "w5"],
+        min_points: 6,
+        requires_positive_x: false,
+    },
+    CurveFamilyMetadata {
+        label: "Saturating Trend Basis (6 tau)",
+        parameter_names: &["c", "w1", "w2", "w3", "w4", "w5", "w6"],
+        min_points: 7,
+        requires_positive_x: false,
+    },
 ];
 
 impl CurveFamily {
@@ -317,6 +362,12 @@ impl CurveFamily {
         Self::Rational55,
         Self::Emg,
         Self::PseudoVoigt,
+        Self::SaturatingTrendBasis1,
+        Self::SaturatingTrendBasis2,
+        Self::SaturatingTrendBasis3,
+        Self::SaturatingTrendBasis4,
+        Self::SaturatingTrendBasis5,
+        Self::SaturatingTrendBasis6,
     ];
 
     #[inline]
@@ -363,6 +414,19 @@ impl CurveFamily {
         )
     }
 
+    /// Возвращает `true`, если семейство — saturating basis по префиксу фиксированной сетки `τ`.
+    pub fn is_saturating_trend_basis(self) -> bool {
+        matches!(
+            self,
+            Self::SaturatingTrendBasis1
+                | Self::SaturatingTrendBasis2
+                | Self::SaturatingTrendBasis3
+                | Self::SaturatingTrendBasis4
+                | Self::SaturatingTrendBasis5
+                | Self::SaturatingTrendBasis6
+        )
+    }
+
     /// Возвращает рациональное семейство `n/n` для заданной степени.
     ///
     /// Значение автоматически ограничивается поддерживаемым диапазоном.
@@ -388,6 +452,34 @@ impl CurveFamily {
         }
     }
 
+    /// Возвращает saturating-basis семейство по числу активных `τ`.
+    pub fn from_saturating_trend_tau_count(count: usize) -> Self {
+        match count.clamp(
+            MIN_SATURATING_TREND_TAU_COUNT,
+            MAX_SATURATING_TREND_TAU_COUNT,
+        ) {
+            1 => Self::SaturatingTrendBasis1,
+            2 => Self::SaturatingTrendBasis2,
+            3 => Self::SaturatingTrendBasis3,
+            4 => Self::SaturatingTrendBasis4,
+            5 => Self::SaturatingTrendBasis5,
+            _ => Self::SaturatingTrendBasis6,
+        }
+    }
+
+    /// Возвращает число активных `τ`, если семейство saturating-basis.
+    pub fn saturating_trend_tau_count(self) -> Option<usize> {
+        match self {
+            Self::SaturatingTrendBasis1 => Some(1),
+            Self::SaturatingTrendBasis2 => Some(2),
+            Self::SaturatingTrendBasis3 => Some(3),
+            Self::SaturatingTrendBasis4 => Some(4),
+            Self::SaturatingTrendBasis5 => Some(5),
+            Self::SaturatingTrendBasis6 => Some(6),
+            _ => None,
+        }
+    }
+
     /// Количество параметров модели.
     pub fn parameter_count(self) -> usize {
         self.parameter_names().len()
@@ -401,6 +493,14 @@ impl CurveFamily {
     /// Возвращает `true`, если семейство определено только при `x > 0`.
     pub fn requires_positive_x(self) -> bool {
         self.metadata().requires_positive_x
+    }
+
+    /// Возвращает `true`, если для семейства допустима масштабная нормализация по `x` и `y`.
+    ///
+    /// Для фиксированного saturating-базиса набор `τ` задан в единицах исходного `x`,
+    /// поэтому x-нормализация меняет смысл самих базисных функций.
+    pub fn supports_parametric_normalization(self) -> bool {
+        !self.is_saturating_trend_basis()
     }
 
     /// Проверяет набор точек на совместимость с выбранным семейством.
@@ -657,6 +757,66 @@ impl CurveFamily {
                 gamma: 1.0,
                 eta: 0.0,
                 c: 0.0,
+            },
+            Self::SaturatingTrendBasis1 => CurveParams::SaturatingTrendBasis1 {
+                c: 0.0,
+                w1: 0.0,
+                taus: SaturatingTrendTauGrid::from_values(
+                    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..1],
+                )
+                .expect("default tau grid must be valid"),
+            },
+            Self::SaturatingTrendBasis2 => CurveParams::SaturatingTrendBasis2 {
+                c: 0.0,
+                w1: 0.0,
+                w2: 0.0,
+                taus: SaturatingTrendTauGrid::from_values(
+                    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..2],
+                )
+                .expect("default tau grid must be valid"),
+            },
+            Self::SaturatingTrendBasis3 => CurveParams::SaturatingTrendBasis3 {
+                c: 0.0,
+                w1: 0.0,
+                w2: 0.0,
+                w3: 0.0,
+                taus: SaturatingTrendTauGrid::from_values(
+                    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..3],
+                )
+                .expect("default tau grid must be valid"),
+            },
+            Self::SaturatingTrendBasis4 => CurveParams::SaturatingTrendBasis4 {
+                c: 0.0,
+                w1: 0.0,
+                w2: 0.0,
+                w3: 0.0,
+                w4: 0.0,
+                taus: SaturatingTrendTauGrid::from_values(
+                    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..4],
+                )
+                .expect("default tau grid must be valid"),
+            },
+            Self::SaturatingTrendBasis5 => CurveParams::SaturatingTrendBasis5 {
+                c: 0.0,
+                w1: 0.0,
+                w2: 0.0,
+                w3: 0.0,
+                w4: 0.0,
+                w5: 0.0,
+                taus: SaturatingTrendTauGrid::from_values(
+                    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..5],
+                )
+                .expect("default tau grid must be valid"),
+            },
+            Self::SaturatingTrendBasis6 => CurveParams::SaturatingTrendBasis6 {
+                c: 0.0,
+                w1: 0.0,
+                w2: 0.0,
+                w3: 0.0,
+                w4: 0.0,
+                w5: 0.0,
+                w6: 0.0,
+                taus: SaturatingTrendTauGrid::default_for_count(MAX_SATURATING_TREND_TAU_COUNT),
             },
         }
     }

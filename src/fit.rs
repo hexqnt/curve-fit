@@ -17,7 +17,8 @@ use stochastic_optimizers::{Adam, Optimizer as StochasticOptimizer, SGD};
 
 use crate::domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
-    NewtonCgConfig, OptimizerConfig, Points, SgdConfig, SteepestDescentConfig,
+    NewtonCgConfig, OptimizerConfig, Points, SaturatingTrendTauGrid, SgdConfig,
+    SteepestDescentConfig,
 };
 use crate::models::{
     self, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss, TermGrad, TermHessian,

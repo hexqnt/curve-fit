@@ -84,6 +84,14 @@ fn analytic_raw_hessian_models_match_numerical_reference_on_simd_chunks_and_tail
         5e-5,
         8e-4,
     );
+    assert_family_gradient_and_hessian_match_numerical_reference(
+        CurveFamily::SaturatingTrendBasis6,
+        &x_values,
+        &[0.1, 1.0, -0.2, 0.4, 0.1, -0.1, 0.05],
+        &[0.0, 0.8, -0.1, 0.2, 0.0, -0.1, 0.0],
+        6e-5,
+        2e-3,
+    );
 }
 
 #[test]

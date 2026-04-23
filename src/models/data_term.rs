@@ -1,4 +1,4 @@
-use crate::domain::CurveFamily;
+use crate::domain::{CurveFamily, SaturatingTrendTauGrid};
 
 use super::{
     CentralDiffGradient, CentralDiffHessian, ObjectiveGrad, ObjectiveHessian, ObjectiveValue,
@@ -13,6 +13,7 @@ const OBJECTIVE_HESSIAN_FD_MIN_STEP: f64 = 1e-6;
 /// Data-term для подгонки параметрической кривой по набору точек.
 pub(crate) struct DataTerm<'a, L> {
     family: CurveFamily,
+    saturating_trend_tau_grid: Option<SaturatingTrendTauGrid>,
     x_values: &'a [f64],
     y_values: &'a [f64],
     loss: L,
@@ -23,10 +24,12 @@ impl<'a, L> DataTerm<'a, L> {
         family: CurveFamily,
         x_values: &'a [f64],
         y_values: &'a [f64],
+        saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
         loss: L,
     ) -> Self {
         Self {
             family,
+            saturating_trend_tau_grid: saturating_trend_tau_grid.cloned(),
             x_values,
             y_values,
             loss,
@@ -36,6 +39,7 @@ impl<'a, L> DataTerm<'a, L> {
 
 struct DataValueObjective<'a, L> {
     family: CurveFamily,
+    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
     x_values: &'a [f64],
     y_values: &'a [f64],
     loss: &'a L,
@@ -46,12 +50,21 @@ where
     L: PredictionLoss,
 {
     fn value(&self, param: &Param) -> f64 {
-        dispatch::objective_value(self.family, self.x_values, self.y_values, param, self.loss)
+        dispatch::objective_value(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
+            self.loss,
+        )
     }
 }
 
 struct DataValueGradObjective<'a, L> {
     family: CurveFamily,
+    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
     x_values: &'a [f64],
     y_values: &'a [f64],
     loss: &'a L,
@@ -62,7 +75,15 @@ where
     L: PredictionLoss,
 {
     fn value(&self, param: &Param) -> f64 {
-        dispatch::objective_value(self.family, self.x_values, self.y_values, param, self.loss)
+        dispatch::objective_value(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
+            self.loss,
+        )
     }
 }
 
@@ -76,6 +97,8 @@ where
             self.x_values,
             self.y_values,
             param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
             self.loss,
         ) {
             return (value, gradient);
@@ -83,6 +106,7 @@ where
 
         let objective = DataValueObjective {
             family: self.family,
+            saturating_trend_tau_grid: self.saturating_trend_tau_grid,
             x_values: self.x_values,
             y_values: self.y_values,
             loss: self.loss,
@@ -108,8 +132,16 @@ where
     L: PredictionLoss,
 {
     fn add_value(&self, param: &Param, value: &mut f64) {
-        *value +=
-            dispatch::objective_value(self.family, self.x_values, self.y_values, param, &self.loss);
+        *value += dispatch::objective_value(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .as_ref()
+                .map(SaturatingTrendTauGrid::as_slice),
+            &self.loss,
+        );
     }
 }
 
@@ -123,6 +155,9 @@ where
             self.x_values,
             self.y_values,
             param,
+            self.saturating_trend_tau_grid
+                .as_ref()
+                .map(SaturatingTrendTauGrid::as_slice),
             &self.loss,
         ) {
             *value += local_value;
@@ -132,6 +167,7 @@ where
 
         let objective = DataValueObjective {
             family: self.family,
+            saturating_trend_tau_grid: self.saturating_trend_tau_grid.as_ref(),
             x_values: self.x_values,
             y_values: self.y_values,
             loss: &self.loss,
@@ -164,6 +200,9 @@ where
                 self.x_values,
                 self.y_values,
                 param,
+                self.saturating_trend_tau_grid
+                    .as_ref()
+                    .map(SaturatingTrendTauGrid::as_slice),
                 &self.loss,
             )
         {
@@ -175,6 +214,7 @@ where
 
         let objective = DataValueGradObjective {
             family: self.family,
+            saturating_trend_tau_grid: self.saturating_trend_tau_grid.as_ref(),
             x_values: self.x_values,
             y_values: self.y_values,
             loss: &self.loss,

@@ -7,7 +7,11 @@ use super::*;
 pub(super) struct ParsedInitialParams(CurveParams);
 
 impl ParsedInitialParams {
-    pub(super) fn parse(family: CurveFamily, inputs: &[String]) -> Result<Self, String> {
+    pub(super) fn parse(
+        family: CurveFamily,
+        inputs: &[String],
+        saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
+    ) -> Result<Self, String> {
         let expected_count = family.parameter_count();
         if inputs.len() != expected_count {
             return Err(format!(
@@ -23,11 +27,41 @@ impl ParsedInitialParams {
         }
 
         let params =
-            CurveParams::try_from_values(family, values).map_err(|error| error.to_string())?;
+            CurveParams::try_from_slice_with_tau_grid(family, &values, saturating_trend_tau_grid)
+                .map_err(|error| error.to_string())?;
         Ok(Self(params))
     }
 
     pub(super) fn into_curve_params(self) -> CurveParams {
+        self.0
+    }
+}
+
+/// Уже распарсенная и провалидированная сетка `τ` для saturating trend basis.
+#[derive(Debug, Clone)]
+pub(super) struct ParsedSaturatingTrendTauGrid(SaturatingTrendTauGrid);
+
+impl ParsedSaturatingTrendTauGrid {
+    pub(super) fn parse(inputs: &[String], expected_count: usize) -> Result<Self, String> {
+        if inputs.len() < expected_count {
+            return Err(format!(
+                "Saturating-trend tau grid expects at least {expected_count} values, got {}",
+                inputs.len()
+            ));
+        }
+
+        let mut values = Vec::with_capacity(expected_count);
+        for (index, raw_value) in inputs.iter().take(expected_count).enumerate() {
+            let field = format!("tau[{index}]");
+            values.push(parse_f64(&field, raw_value)?);
+        }
+
+        let grid =
+            SaturatingTrendTauGrid::from_values(&values).map_err(|error| error.to_string())?;
+        Ok(Self(grid))
+    }
+
+    pub(super) fn into_tau_grid(self) -> SaturatingTrendTauGrid {
         self.0
     }
 }
@@ -71,7 +105,23 @@ impl CurveFitApp {
             "Current model is non-parametric and has no initial parameters".to_string()
         })?;
 
-        ParsedInitialParams::parse(family, &self.parameter_inputs)
+        let tau_grid = self.parsed_saturating_trend_tau_grid()?;
+        ParsedInitialParams::parse(family, &self.parameter_inputs, tau_grid.as_ref())
+    }
+
+    pub(super) fn parsed_saturating_trend_tau_grid(
+        &self,
+    ) -> Result<Option<SaturatingTrendTauGrid>, String> {
+        let Some(expected_count) = self
+            .resolved_model()
+            .parametric_family()
+            .and_then(CurveFamily::saturating_trend_tau_count)
+        else {
+            return Ok(None);
+        };
+        ParsedSaturatingTrendTauGrid::parse(&self.saturating_trend_tau_inputs, expected_count)
+            .map(ParsedSaturatingTrendTauGrid::into_tau_grid)
+            .map(Some)
     }
 
     pub(super) fn parse_spline_initial_knot_y(

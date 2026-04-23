@@ -8,11 +8,16 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
     }
 
     let language = app.ui_language;
+    let saturating_trend_tau_grid = app.parsed_saturating_trend_tau_grid().ok().flatten();
     let formula_info = model_formula_info(
         language,
         app.selected_model,
         app.polynomial_degree,
         app.rational_degree,
+        app.saturating_trend_tau_count,
+        saturating_trend_tau_grid
+            .as_ref()
+            .map(SaturatingTrendTauGrid::as_slice),
         app.optimization_loss_metric,
     );
     let mut is_open = app.panel.show_formula_window;

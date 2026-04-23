@@ -2,7 +2,7 @@
 
 use crate::models;
 
-use super::{CurveFamily, InputError};
+use super::{CurveFamily, InputError, SaturatingTrendTauGrid};
 #[derive(Debug, Clone, PartialEq)]
 /// Типобезопасное представление параметров всех поддерживаемых семейств.
 pub enum CurveParams {
@@ -246,6 +246,51 @@ pub enum CurveParams {
         eta: f64,
         c: f64,
     },
+    SaturatingTrendBasis1 {
+        c: f64,
+        w1: f64,
+        taus: SaturatingTrendTauGrid,
+    },
+    SaturatingTrendBasis2 {
+        c: f64,
+        w1: f64,
+        w2: f64,
+        taus: SaturatingTrendTauGrid,
+    },
+    SaturatingTrendBasis3 {
+        c: f64,
+        w1: f64,
+        w2: f64,
+        w3: f64,
+        taus: SaturatingTrendTauGrid,
+    },
+    SaturatingTrendBasis4 {
+        c: f64,
+        w1: f64,
+        w2: f64,
+        w3: f64,
+        w4: f64,
+        taus: SaturatingTrendTauGrid,
+    },
+    SaturatingTrendBasis5 {
+        c: f64,
+        w1: f64,
+        w2: f64,
+        w3: f64,
+        w4: f64,
+        w5: f64,
+        taus: SaturatingTrendTauGrid,
+    },
+    SaturatingTrendBasis6 {
+        c: f64,
+        w1: f64,
+        w2: f64,
+        w3: f64,
+        w4: f64,
+        w5: f64,
+        w6: f64,
+        taus: SaturatingTrendTauGrid,
+    },
 }
 
 // Таблица вариантов `CurveParams` как единый источник правды для family/values/try_from_slice.
@@ -297,6 +342,7 @@ macro_rules! curve_params_family_match {
     ($value:expr, $(($variant:ident, $family:ident, [$($field:ident),+])),+ $(,)?) => {
         match $value {
             $(Self::$variant { .. } => CurveFamily::$family,)+
+            _ => unreachable!("saturating trend variants are handled before the macro match"),
         }
     };
 }
@@ -310,6 +356,7 @@ macro_rules! curve_params_with_values_match {
                     $callback(CurveFamily::$family, &values)
                 }
             )+
+            _ => unreachable!("saturating trend variants are handled before the macro match"),
         }
     };
 }
@@ -329,6 +376,7 @@ macro_rules! curve_params_from_slice_match {
                     }
                 }
             )+
+            _ => unreachable!("saturating trend families are handled before the macro match"),
         }
     };
 }
@@ -336,11 +384,64 @@ macro_rules! curve_params_from_slice_match {
 impl CurveParams {
     /// Определяет семейство по варианту параметров.
     pub fn family(&self) -> CurveFamily {
-        curve_params_variants!(curve_params_family_match, self,)
+        match self {
+            Self::SaturatingTrendBasis1 { .. } => CurveFamily::SaturatingTrendBasis1,
+            Self::SaturatingTrendBasis2 { .. } => CurveFamily::SaturatingTrendBasis2,
+            Self::SaturatingTrendBasis3 { .. } => CurveFamily::SaturatingTrendBasis3,
+            Self::SaturatingTrendBasis4 { .. } => CurveFamily::SaturatingTrendBasis4,
+            Self::SaturatingTrendBasis5 { .. } => CurveFamily::SaturatingTrendBasis5,
+            Self::SaturatingTrendBasis6 { .. } => CurveFamily::SaturatingTrendBasis6,
+            _ => curve_params_variants!(curve_params_family_match, self,),
+        }
     }
 
     fn with_family_values<R>(&self, callback: impl FnOnce(CurveFamily, &[f64]) -> R) -> R {
-        curve_params_variants!(curve_params_with_values_match, self, callback,)
+        match self {
+            Self::SaturatingTrendBasis1 { c, w1, .. } => {
+                let values = [*c, *w1];
+                callback(CurveFamily::SaturatingTrendBasis1, &values)
+            }
+            Self::SaturatingTrendBasis2 { c, w1, w2, .. } => {
+                let values = [*c, *w1, *w2];
+                callback(CurveFamily::SaturatingTrendBasis2, &values)
+            }
+            Self::SaturatingTrendBasis3 { c, w1, w2, w3, .. } => {
+                let values = [*c, *w1, *w2, *w3];
+                callback(CurveFamily::SaturatingTrendBasis3, &values)
+            }
+            Self::SaturatingTrendBasis4 {
+                c, w1, w2, w3, w4, ..
+            } => {
+                let values = [*c, *w1, *w2, *w3, *w4];
+                callback(CurveFamily::SaturatingTrendBasis4, &values)
+            }
+            Self::SaturatingTrendBasis5 {
+                c,
+                w1,
+                w2,
+                w3,
+                w4,
+                w5,
+                ..
+            } => {
+                let values = [*c, *w1, *w2, *w3, *w4, *w5];
+                callback(CurveFamily::SaturatingTrendBasis5, &values)
+            }
+            Self::SaturatingTrendBasis6 {
+                c,
+                w1,
+                w2,
+                w3,
+                w4,
+                w5,
+                w6,
+                ..
+            } => {
+                let values = [*c, *w1, *w2, *w3, *w4, *w5, *w6];
+                callback(CurveFamily::SaturatingTrendBasis6, &values)
+            }
+            _ => curve_params_variants!(curve_params_with_values_match, self, callback,),
+        }
     }
 
     /// Возвращает параметры в виде вектора в каноническом порядке.
@@ -350,13 +451,43 @@ impl CurveParams {
 
     /// Вычисляет значение модели для заданного `x`.
     pub fn evaluate(&self, x: f64) -> f64 {
-        self.with_family_values(|family, values| models::value_at(family, values, x))
+        self.with_family_values(|family, values| {
+            models::value_at_with_saturating_taus(family, values, x, self.saturating_trend_taus())
+        })
+    }
+
+    /// Возвращает сетку `τ`, если параметры принадлежат saturating-базису.
+    pub fn saturating_trend_tau_grid(&self) -> Option<&SaturatingTrendTauGrid> {
+        match self {
+            Self::SaturatingTrendBasis1 { taus, .. }
+            | Self::SaturatingTrendBasis2 { taus, .. }
+            | Self::SaturatingTrendBasis3 { taus, .. }
+            | Self::SaturatingTrendBasis4 { taus, .. }
+            | Self::SaturatingTrendBasis5 { taus, .. }
+            | Self::SaturatingTrendBasis6 { taus, .. } => Some(taus),
+            _ => None,
+        }
+    }
+
+    /// Возвращает активную сетку `τ` как срез.
+    pub fn saturating_trend_taus(&self) -> Option<&[f64]> {
+        self.saturating_trend_tau_grid()
+            .map(SaturatingTrendTauGrid::as_slice)
     }
 
     /// Конструирует параметры семейства из среза значений.
     ///
     /// Проверяет длину и конечность значений на границе ввода.
     pub fn try_from_slice(family: CurveFamily, values: &[f64]) -> Result<Self, InputError> {
+        Self::try_from_slice_with_tau_grid(family, values, None)
+    }
+
+    /// Конструирует параметры с явной сеткой `τ` для saturating-базиса.
+    pub fn try_from_slice_with_tau_grid(
+        family: CurveFamily,
+        values: &[f64],
+        tau_grid: Option<&SaturatingTrendTauGrid>,
+    ) -> Result<Self, InputError> {
         let expected = family.parameter_count();
         if values.len() != expected {
             return Err(InputError::WrongParameterCount {
@@ -379,15 +510,92 @@ impl CurveParams {
             });
         }
 
-        Ok(curve_params_variants!(
-            curve_params_from_slice_match,
-            family,
-            values,
-        ))
+        if family.is_saturating_trend_basis()
+            && let Some(grid) = tau_grid
+            && grid.count() != family.parameter_count() - 1
+        {
+            return Err(InputError::WrongSaturatingTrendTauCount {
+                expected_min: family.parameter_count() - 1,
+                expected_max: family.parameter_count() - 1,
+                got: grid.count(),
+            });
+        }
+
+        let params = match family {
+            CurveFamily::SaturatingTrendBasis1 => Self::SaturatingTrendBasis1 {
+                c: values[0],
+                w1: values[1],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(1)),
+            },
+            CurveFamily::SaturatingTrendBasis2 => Self::SaturatingTrendBasis2 {
+                c: values[0],
+                w1: values[1],
+                w2: values[2],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(2)),
+            },
+            CurveFamily::SaturatingTrendBasis3 => Self::SaturatingTrendBasis3 {
+                c: values[0],
+                w1: values[1],
+                w2: values[2],
+                w3: values[3],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(3)),
+            },
+            CurveFamily::SaturatingTrendBasis4 => Self::SaturatingTrendBasis4 {
+                c: values[0],
+                w1: values[1],
+                w2: values[2],
+                w3: values[3],
+                w4: values[4],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(4)),
+            },
+            CurveFamily::SaturatingTrendBasis5 => Self::SaturatingTrendBasis5 {
+                c: values[0],
+                w1: values[1],
+                w2: values[2],
+                w3: values[3],
+                w4: values[4],
+                w5: values[5],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(5)),
+            },
+            CurveFamily::SaturatingTrendBasis6 => Self::SaturatingTrendBasis6 {
+                c: values[0],
+                w1: values[1],
+                w2: values[2],
+                w3: values[3],
+                w4: values[4],
+                w5: values[5],
+                w6: values[6],
+                taus: tau_grid
+                    .cloned()
+                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(6)),
+            },
+            _ => curve_params_variants!(curve_params_from_slice_match, family, values,),
+        };
+
+        Ok(params)
     }
 
     /// Удобная обертка над [`Self::try_from_slice`] для владения `Vec<f64>`.
     pub fn try_from_values(family: CurveFamily, values: Vec<f64>) -> Result<Self, InputError> {
         Self::try_from_slice(family, &values)
+    }
+
+    /// Реконструирует параметры из оптимизируемого среза, сохраняя метаданные шаблона.
+    pub fn try_from_slice_like(template: &Self, values: &[f64]) -> Result<Self, InputError> {
+        Self::try_from_slice_with_tau_grid(
+            template.family(),
+            values,
+            template.saturating_trend_tau_grid(),
+        )
     }
 }

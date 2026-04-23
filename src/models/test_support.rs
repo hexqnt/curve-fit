@@ -150,7 +150,7 @@ pub(super) fn assert_family_gradient_and_hessian_match_numerical_reference(
         .collect::<Vec<_>>();
 
     let loss = SoftL1Loss;
-    let term = DataTerm::new(family, x_values, &y_values, loss);
+    let term = DataTerm::new(family, x_values, &y_values, None, loss);
     let objective = CurveObjective::new(probe_params.len(), term);
 
     let value = objective.value(probe_params);

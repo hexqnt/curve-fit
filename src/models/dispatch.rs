@@ -1,15 +1,41 @@
-use crate::domain::CurveFamily;
+use crate::domain::{CurveFamily, DEFAULT_SATURATING_TREND_TAUS_YEARS};
 
 use super::{
     Grad, Hessian, Param, PredictionLoss, arctangent_step, arrhenius, bi_exponential,
     damped_sinusoid, emg, exponential_basic, exponential_half_life, exponential_linear,
     falling_exponential, five_pl, four_pl, gaussian, gompertz, hyperbolic_tangent, inverse,
     logistic, lorentzian, michaelis_menten, natural_log, polynomial, power, pseudo_voigt,
-    rational_11, rational_22, rational_nn, softplus,
+    rational_11, rational_22, rational_nn, saturating_trend_basis, softplus,
 };
 
 #[inline]
+fn saturating_trend_taus_for_family(
+    family: CurveFamily,
+    saturating_trend_taus: Option<&[f64]>,
+) -> &[f64] {
+    if let Some(taus) = saturating_trend_taus {
+        return taus;
+    }
+
+    let count = family
+        .saturating_trend_tau_count()
+        .expect("only saturating trend families request tau defaults");
+    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..count]
+}
+
+#[cfg(test)]
+#[inline]
 pub(crate) fn value_at(family: CurveFamily, param: &Param, x: f64) -> f64 {
+    value_at_with_saturating_taus(family, param, x, None)
+}
+
+#[inline]
+pub(crate) fn value_at_with_saturating_taus(
+    family: CurveFamily,
+    param: &Param,
+    x: f64,
+    saturating_trend_taus: Option<&[f64]>,
+) -> f64 {
     if family.is_polynomial() {
         return polynomial::value_at(param, x);
     }
@@ -42,6 +68,15 @@ pub(crate) fn value_at(family: CurveFamily, param: &Param, x: f64) -> f64 {
         }
         CurveFamily::Emg => emg::value_at(param, x),
         CurveFamily::PseudoVoigt => pseudo_voigt::value_at(param, x),
+        CurveFamily::SaturatingTrendBasis1
+        | CurveFamily::SaturatingTrendBasis2
+        | CurveFamily::SaturatingTrendBasis3
+        | CurveFamily::SaturatingTrendBasis4
+        | CurveFamily::SaturatingTrendBasis5
+        | CurveFamily::SaturatingTrendBasis6 => {
+            let taus = saturating_trend_taus_for_family(family, saturating_trend_taus);
+            saturating_trend_basis::value_at(param, x, taus)
+        }
         _ => unreachable!("Polynomial families are handled by the guarded branch above"),
     }
 }
@@ -51,6 +86,7 @@ pub(crate) fn objective_value(
     x_values: &[f64],
     y_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     loss: &dyn PredictionLoss,
 ) -> f64 {
     debug_assert_eq!(x_values.len(), y_values.len());
@@ -61,7 +97,8 @@ pub(crate) fn objective_value(
     let mut sum = 0.0;
     let mut index = 0;
     while index < x_values.len() {
-        let prediction = value_at(family, param, x_values[index]);
+        let prediction =
+            value_at_with_saturating_taus(family, param, x_values[index], saturating_trend_taus);
         let contribution = loss.value(prediction, y_values[index]);
         if !contribution.is_finite() {
             return f64::INFINITY;
@@ -91,6 +128,7 @@ pub(crate) fn add_model_grad_unscaled(
     family: CurveFamily,
     x_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     value_first: &[f64],
     gradient: &mut [f64],
 ) {
@@ -158,6 +196,15 @@ pub(crate) fn add_model_grad_unscaled(
             pseudo_voigt::add_value_grad(x_values, param, value_first, gradient)
         }
         CurveFamily::Emg => emg::add_value_grad(x_values, param, value_first, gradient),
+        CurveFamily::SaturatingTrendBasis1
+        | CurveFamily::SaturatingTrendBasis2
+        | CurveFamily::SaturatingTrendBasis3
+        | CurveFamily::SaturatingTrendBasis4
+        | CurveFamily::SaturatingTrendBasis5
+        | CurveFamily::SaturatingTrendBasis6 => {
+            let taus = saturating_trend_taus_for_family(family, saturating_trend_taus);
+            saturating_trend_basis::add_value_grad(x_values, param, taus, value_first, gradient)
+        }
         _ => unreachable!("Polynomial families are handled by the guarded branch above"),
     }
 }
@@ -167,6 +214,7 @@ pub(crate) fn objective_value_grad_analytic(
     x_values: &[f64],
     y_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     loss: &dyn PredictionLoss,
 ) -> Option<(f64, Grad)> {
     debug_assert_eq!(x_values.len(), y_values.len());
@@ -175,7 +223,14 @@ pub(crate) fn objective_value_grad_analytic(
         return None;
     }
 
-    let value = objective_value(family, x_values, y_values, param, loss);
+    let value = objective_value(
+        family,
+        x_values,
+        y_values,
+        param,
+        saturating_trend_taus,
+        loss,
+    );
     let mut gradient = vec![0.0; param.len()];
     if !x_values.is_empty() {
         // dF/dy_hat для каждой точки, где F — вклад функции потерь.
@@ -184,7 +239,12 @@ pub(crate) fn objective_value_grad_analytic(
         let mut value_first = vec![0.0; x_values.len()];
         let mut index = 0;
         while index < x_values.len() {
-            let prediction = value_at(family, param, x_values[index]);
+            let prediction = value_at_with_saturating_taus(
+                family,
+                param,
+                x_values[index],
+                saturating_trend_taus,
+            );
             let derivative = loss.d_prediction(prediction, y_values[index]);
             if !derivative.is_finite() {
                 return None;
@@ -193,7 +253,14 @@ pub(crate) fn objective_value_grad_analytic(
             index += 1;
         }
 
-        add_model_grad_unscaled(family, x_values, param, &value_first, &mut gradient);
+        add_model_grad_unscaled(
+            family,
+            x_values,
+            param,
+            saturating_trend_taus,
+            &value_first,
+            &mut gradient,
+        );
         let sample_scale = 1.0 / x_values.len() as f64;
         for gradient_value in &mut gradient {
             *gradient_value *= sample_scale;
@@ -209,6 +276,7 @@ pub(crate) fn model_raw_hessian_from_value_derivatives(
     family: CurveFamily,
     x_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     value_first: &[f64],
     value_second: &[f64],
 ) -> Option<Hessian> {
@@ -314,6 +382,18 @@ pub(crate) fn model_raw_hessian_from_value_derivatives(
         CurveFamily::PseudoVoigt => {
             pseudo_voigt::add_value_grad_raw_hessian(x_values, param, value_first, value_second)
         }
+        CurveFamily::SaturatingTrendBasis1
+        | CurveFamily::SaturatingTrendBasis2
+        | CurveFamily::SaturatingTrendBasis3
+        | CurveFamily::SaturatingTrendBasis4
+        | CurveFamily::SaturatingTrendBasis5
+        | CurveFamily::SaturatingTrendBasis6 => saturating_trend_basis::add_value_grad_raw_hessian(
+            x_values,
+            param,
+            saturating_trend_taus_for_family(family, saturating_trend_taus),
+            value_first,
+            value_second,
+        ),
         _ => unreachable!("Polynomial families are handled by the guarded branch above"),
     }
 }
@@ -323,6 +403,7 @@ pub(crate) fn objective_raw_hessian_analytic(
     x_values: &[f64],
     y_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     loss: &dyn PredictionLoss,
 ) -> Option<Hessian> {
     debug_assert_eq!(x_values.len(), y_values.len());
@@ -332,7 +413,8 @@ pub(crate) fn objective_raw_hessian_analytic(
 
     let mut index = 0;
     while index < x_values.len() {
-        let prediction = value_at(family, param, x_values[index]);
+        let prediction =
+            value_at_with_saturating_taus(family, param, x_values[index], saturating_trend_taus);
         let first_derivative = loss.d_prediction(prediction, y_values[index]);
         let second_derivative = loss.d2_prediction(prediction, y_values[index]);
         if !first_derivative.is_finite() || !second_derivative.is_finite() {
@@ -343,7 +425,14 @@ pub(crate) fn objective_raw_hessian_analytic(
         index += 1;
     }
 
-    model_raw_hessian_from_value_derivatives(family, x_values, param, &value_first, &value_second)
+    model_raw_hessian_from_value_derivatives(
+        family,
+        x_values,
+        param,
+        saturating_trend_taus,
+        &value_first,
+        &value_second,
+    )
 }
 
 pub(crate) fn objective_value_grad_raw_hessian_analytic(
@@ -351,11 +440,26 @@ pub(crate) fn objective_value_grad_raw_hessian_analytic(
     x_values: &[f64],
     y_values: &[f64],
     param: &Param,
+    saturating_trend_taus: Option<&[f64]>,
     loss: &dyn PredictionLoss,
 ) -> Option<(f64, Grad, Hessian)> {
     debug_assert_eq!(x_values.len(), y_values.len());
 
-    let (value, gradient) = objective_value_grad_analytic(family, x_values, y_values, param, loss)?;
-    let hessian = objective_raw_hessian_analytic(family, x_values, y_values, param, loss)?;
+    let (value, gradient) = objective_value_grad_analytic(
+        family,
+        x_values,
+        y_values,
+        param,
+        saturating_trend_taus,
+        loss,
+    )?;
+    let hessian = objective_raw_hessian_analytic(
+        family,
+        x_values,
+        y_values,
+        param,
+        saturating_trend_taus,
+        loss,
+    )?;
     Some((value, gradient, hessian))
 }

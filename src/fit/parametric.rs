@@ -4,6 +4,7 @@ use super::*;
 
 pub(super) struct CurveProblem {
     family: CurveFamily,
+    saturating_trend_tau_grid: Option<SaturatingTrendTauGrid>,
     point_x: Box<[f64]>,
     point_y: Box<[f64]>,
     loss_metric: OptimizationLossMetric,
@@ -57,6 +58,7 @@ impl CurveProblemTerm<'_> {
             self.problem.family,
             self.problem.point_x.as_ref(),
             self.problem.point_y.as_ref(),
+            self.problem.saturating_trend_tau_grid.as_ref(),
             loss,
         )
     }
@@ -182,6 +184,7 @@ impl CurveProblem {
     pub(super) fn new_with_metric_quantization(
         family: CurveFamily,
         points: &Points,
+        saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
         loss_metric: OptimizationLossMetric,
         metric_quantization: MetricQuantization,
     ) -> Self {
@@ -193,6 +196,7 @@ impl CurveProblem {
         }
         Self {
             family,
+            saturating_trend_tau_grid: saturating_trend_tau_grid.cloned(),
             point_x: point_x.into_boxed_slice(),
             point_y: point_y.into_boxed_slice(),
             loss_metric,
@@ -236,7 +240,14 @@ impl CurveProblem {
             .copied()
             .zip(self.point_y.iter().copied())
         {
-            let prediction = models::value_at(self.family, param, x);
+            let prediction = models::value_at_with_saturating_taus(
+                self.family,
+                param,
+                x,
+                self.saturating_trend_tau_grid
+                    .as_ref()
+                    .map(SaturatingTrendTauGrid::as_slice),
+            );
             let (prediction, observed) = self.quantized_prediction_target(prediction, y);
             let residual = prediction - observed;
             if !residual.is_finite() {

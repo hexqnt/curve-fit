@@ -893,7 +893,7 @@ impl CurveFitApp {
             active_fit_points,
             optimization_initial_params,
             normalization,
-        ) = if self.normalize_parametric_data {
+        ) = if self.normalize_parametric_data && family.supports_parametric_normalization() {
             let normalization = match ParametricNormalization::try_from_points(&points) {
                 Ok(normalization) => normalization,
                 Err(error) => {

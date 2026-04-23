@@ -234,6 +234,7 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::English, ModelChoice::Rational) => "Rational",
         (UiLanguage::English, ModelChoice::Emg) => "EMG",
         (UiLanguage::English, ModelChoice::PseudoVoigt) => "Pseudo-Voigt",
+        (UiLanguage::English, ModelChoice::SaturatingTrendBasis) => "Saturating Trend Basis",
         (UiLanguage::English, ModelChoice::LinearSpline) => "Linear Spline",
         (UiLanguage::English, ModelChoice::MonotoneCubicSpline) => "Monotone Cubic (PCHIP)",
         (UiLanguage::English, ModelChoice::NaturalCubicSpline) => "Natural Cubic Spline",
@@ -262,6 +263,7 @@ pub(super) fn model_choice_label(language: UiLanguage, model: ModelChoice) -> &'
         (UiLanguage::Russian, ModelChoice::Rational) => "Рациональная",
         (UiLanguage::Russian, ModelChoice::Emg) => "EMG",
         (UiLanguage::Russian, ModelChoice::PseudoVoigt) => "Псевдо-Фойгт",
+        (UiLanguage::Russian, ModelChoice::SaturatingTrendBasis) => "Базис насыщаемых трендов",
         (UiLanguage::Russian, ModelChoice::LinearSpline) => "Линейный сплайн",
         (UiLanguage::Russian, ModelChoice::MonotoneCubicSpline) => "Монотонный кубический (PCHIP)",
         (UiLanguage::Russian, ModelChoice::NaturalCubicSpline) => "Натуральный кубический сплайн",
@@ -307,6 +309,24 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::English, CurveFamily::Rational55) => "Rational (5/5)",
         (UiLanguage::English, CurveFamily::Emg) => "EMG",
         (UiLanguage::English, CurveFamily::PseudoVoigt) => "Pseudo-Voigt",
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis1) => {
+            "Saturating Trend Basis (1 tau)"
+        }
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis2) => {
+            "Saturating Trend Basis (2 tau)"
+        }
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis3) => {
+            "Saturating Trend Basis (3 tau)"
+        }
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis4) => {
+            "Saturating Trend Basis (4 tau)"
+        }
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis5) => {
+            "Saturating Trend Basis (5 tau)"
+        }
+        (UiLanguage::English, CurveFamily::SaturatingTrendBasis6) => {
+            "Saturating Trend Basis (6 tau)"
+        }
         (UiLanguage::Russian, CurveFamily::Linear) => "Линейная",
         (UiLanguage::Russian, CurveFamily::Quadratic) => "Квадратичная",
         (UiLanguage::Russian, CurveFamily::Cubic) => "Кубическая",
@@ -343,5 +363,23 @@ pub(super) fn family_label(language: UiLanguage, family: CurveFamily) -> &'stati
         (UiLanguage::Russian, CurveFamily::Rational55) => "Рациональная (5/5)",
         (UiLanguage::Russian, CurveFamily::Emg) => "EMG",
         (UiLanguage::Russian, CurveFamily::PseudoVoigt) => "Псевдо-Фойгт",
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis1) => {
+            "Базис насыщаемых трендов (1 tau)"
+        }
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis2) => {
+            "Базис насыщаемых трендов (2 tau)"
+        }
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis3) => {
+            "Базис насыщаемых трендов (3 tau)"
+        }
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis4) => {
+            "Базис насыщаемых трендов (4 tau)"
+        }
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis5) => {
+            "Базис насыщаемых трендов (5 tau)"
+        }
+        (UiLanguage::Russian, CurveFamily::SaturatingTrendBasis6) => {
+            "Базис насыщаемых трендов (6 tau)"
+        }
     }
 }

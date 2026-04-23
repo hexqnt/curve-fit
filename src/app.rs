@@ -98,11 +98,13 @@ use self::types::dialog_directory_from_path;
 use self::types::{
     ExtendedMetrics, FormulaReferenceSection, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod,
     PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
+    tau_grid_to_input_strings,
 };
 use crate::domain::{
-    AdamConfig, CurveFamily, CurveParams, FitResult, LbfgsConfig, MAX_RATIONAL_DEGREE,
-    MIN_RATIONAL_DEGREE, NelderMeadConfig, NewtonCgConfig, OptimizerConfig, OptimizerMethod, Point,
-    Points, SgdConfig, SteepestDescentConfig,
+    AdamConfig, CurveFamily, CurveParams, DEFAULT_SATURATING_TREND_TAUS_YEARS, FitResult,
+    LbfgsConfig, MAX_RATIONAL_DEGREE, MAX_SATURATING_TREND_TAU_COUNT, MIN_RATIONAL_DEGREE,
+    MIN_SATURATING_TREND_TAU_COUNT, NelderMeadConfig, NewtonCgConfig, OptimizerConfig,
+    OptimizerMethod, Point, Points, SaturatingTrendTauGrid, SgdConfig, SteepestDescentConfig,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::fit::FitError;

@@ -10,12 +10,14 @@ fn prediction_loss_adapter_respects_metric_and_quantization() {
         let raw_problem = CurveProblem::new_with_metric_quantization(
             CurveFamily::Linear,
             &points,
+            None,
             metric,
             MetricQuantization::Disabled,
         );
         let quantized_problem = CurveProblem::new_with_metric_quantization(
             CurveFamily::Linear,
             &points,
+            None,
             metric,
             quantization(2),
         );
@@ -149,12 +151,14 @@ fn quantized_objective_differs_from_raw_objective() {
     let raw_problem = CurveProblem::new_with_metric_quantization(
         CurveFamily::Linear,
         &points,
+        None,
         OptimizationLossMetric::Mse,
         MetricQuantization::Disabled,
     );
     let quantized_problem = CurveProblem::new_with_metric_quantization(
         CurveFamily::Linear,
         &points,
+        None,
         OptimizationLossMetric::Mse,
         quantization(2),
     );

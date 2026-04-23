@@ -61,6 +61,8 @@ struct FitExportMetrics {
 enum FitExportResult {
     Parametric {
         parameter_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tau_grid_years: Option<Vec<f64>>,
         parameters: Vec<FitExportParameter>,
     },
     Spline {
@@ -77,7 +79,7 @@ struct FitExportNamedId {
 
 #[derive(Debug, Clone, Serialize)]
 struct FitExportParameter {
-    name: &'static str,
+    name: String,
     value: f64,
 }
 
@@ -178,7 +180,10 @@ impl CurveFitApp {
             .iter()
             .copied()
             .zip(result.params.values())
-            .map(|(name, value)| FitExportParameter { name, value })
+            .map(|(name, value)| FitExportParameter {
+                name: name.to_string(),
+                value,
+            })
             .collect();
 
         let metrics = if let Some(metrics) = self.result_metrics {
@@ -186,15 +191,21 @@ impl CurveFitApp {
         } else {
             FitExportMetrics::from_basic_metrics(result.mse, result.rmse)
         };
-        self.fit_export_record = Some(self.build_fit_export_record(
-            result.iterations,
-            point_count,
-            metrics,
-            FitExportResult::Parametric {
-                parameter_count: parameters.len(),
-                parameters,
-            },
-        ));
+        self.fit_export_record = Some(
+            self.build_fit_export_record(
+                result.iterations,
+                point_count,
+                metrics,
+                FitExportResult::Parametric {
+                    parameter_count: parameters.len(),
+                    tau_grid_years: result
+                        .params
+                        .saturating_trend_taus()
+                        .map(|taus| taus.to_vec()),
+                    parameters,
+                },
+            ),
+        );
     }
 
     pub(super) fn store_spline_fit_export_record(
@@ -368,6 +379,12 @@ fn curve_family_id(family: CurveFamily) -> &'static str {
         CurveFamily::Rational55 => "rational_55",
         CurveFamily::Emg => "emg",
         CurveFamily::PseudoVoigt => "pseudo_voigt",
+        CurveFamily::SaturatingTrendBasis1 => "saturating_trend_basis_1",
+        CurveFamily::SaturatingTrendBasis2 => "saturating_trend_basis_2",
+        CurveFamily::SaturatingTrendBasis3 => "saturating_trend_basis_3",
+        CurveFamily::SaturatingTrendBasis4 => "saturating_trend_basis_4",
+        CurveFamily::SaturatingTrendBasis5 => "saturating_trend_basis_5",
+        CurveFamily::SaturatingTrendBasis6 => "saturating_trend_basis_6",
     }
 }
 
@@ -411,6 +428,7 @@ fn model_choice_id(model: ModelChoice) -> &'static str {
         ModelChoice::Rational => "rational",
         ModelChoice::Emg => "emg",
         ModelChoice::PseudoVoigt => "pseudo_voigt",
+        ModelChoice::SaturatingTrendBasis => "saturating_trend_basis",
         ModelChoice::LinearSpline => "linear_spline",
         ModelChoice::MonotoneCubicSpline => "monotone_cubic_spline",
         ModelChoice::NaturalCubicSpline => "natural_cubic_spline",

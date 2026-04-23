@@ -10,7 +10,11 @@ use ratex_types::display_item::DisplayList;
 
 use super::i18n::tr;
 use super::{FormulaReferenceSection, ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
-use crate::domain::{MAX_RATIONAL_DEGREE, MIN_RATIONAL_DEGREE};
+use crate::domain::DEFAULT_SATURATING_TREND_TAUS_YEARS;
+use crate::domain::{
+    MAX_RATIONAL_DEGREE, MAX_SATURATING_TREND_TAU_COUNT, MIN_RATIONAL_DEGREE,
+    MIN_SATURATING_TREND_TAU_COUNT,
+};
 use crate::fit::OptimizationLossMetric;
 
 // Держим размер формулы на уровне основного текста интерфейса.
@@ -75,6 +79,8 @@ fn model_formula_source(
     model: ModelChoice,
     polynomial_degree: usize,
     rational_degree: usize,
+    saturating_trend_tau_count: usize,
+    saturating_trend_taus: Option<&[f64]>,
 ) -> FormulaSource {
     match model {
         ModelChoice::Polynomial => {
@@ -147,6 +153,10 @@ L(x; x_0, \gamma) &= \frac{1}{1 + (\frac{x - x_0}{\gamma})^{2}}
 G(x; x_0, σ) = exp(-((x - x_0)^2)∕(2·σ^2))\n\
 L(x; x_0, γ) = 1∕(1 + ((x - x_0)∕γ)^2)",
         ),
+        ModelChoice::SaturatingTrendBasis => FormulaSource::explicit(
+            &saturating_trend_formula_latex(saturating_trend_tau_count, saturating_trend_taus),
+            &saturating_trend_formula_plain_text(saturating_trend_tau_count, saturating_trend_taus),
+        ),
         ModelChoice::LinearSpline => FormulaSource::single(
             r"y(x) = y_{i} + \frac{y_{i+1} - y_{i}}{x_{i+1} - x_{i}} \cdot (x - x_{i})",
         ),
@@ -170,9 +180,17 @@ pub(super) fn model_formula_info(
     model: ModelChoice,
     polynomial_degree: usize,
     rational_degree: usize,
+    saturating_trend_tau_count: usize,
+    saturating_trend_taus: Option<&[f64]>,
     optimization_metric: OptimizationLossMetric,
 ) -> ModelFormulaInfo {
-    let model_formula = model_formula_source(model, polynomial_degree, rational_degree);
+    let model_formula = model_formula_source(
+        model,
+        polynomial_degree,
+        rational_degree,
+        saturating_trend_tau_count,
+        saturating_trend_taus,
+    );
     let model_section = FormulaReferenceSection {
         title: tr(language, "Model equation", "Уравнение модели").to_string(),
         render_latex: model_formula.render_latex.clone(),
@@ -182,6 +200,7 @@ pub(super) fn model_formula_info(
             model,
             polynomial_degree,
             rational_degree,
+            saturating_trend_tau_count,
         ),
     };
 
@@ -253,8 +272,14 @@ fn model_reference_description(
     model: ModelChoice,
     polynomial_degree: usize,
     rational_degree: usize,
+    saturating_trend_tau_count: usize,
 ) -> String {
-    let min_points = model_min_points(model, polynomial_degree, rational_degree);
+    let min_points = model_min_points(
+        model,
+        polynomial_degree,
+        rational_degree,
+        saturating_trend_tau_count,
+    );
     let mut description = format!(
         "{}: {min_points}\n{}: x - {}, y - {}",
         tr(language, "Minimum points", "Минимум точек"),
@@ -366,13 +391,67 @@ fn reference_plain_text(sections: &[FormulaReferenceSection]) -> String {
     output
 }
 
-fn model_min_points(model: ModelChoice, polynomial_degree: usize, rational_degree: usize) -> usize {
-    match ResolvedModel::from_choice(model, polynomial_degree, rational_degree) {
+fn model_min_points(
+    model: ModelChoice,
+    polynomial_degree: usize,
+    rational_degree: usize,
+    saturating_trend_tau_count: usize,
+) -> usize {
+    match ResolvedModel::from_choice(
+        model,
+        polynomial_degree,
+        rational_degree,
+        saturating_trend_tau_count,
+    ) {
         ResolvedModel::Parametric(family) => family.min_points(),
         ResolvedModel::LinearSpline | ResolvedModel::MonotoneCubicSpline => 2,
         ResolvedModel::NaturalCubicSpline => 3,
         ResolvedModel::AkimaSpline => 5,
     }
+}
+
+fn saturating_trend_tau_values(tau_count: usize) -> &'static [f64] {
+    let clamped = tau_count.clamp(
+        MIN_SATURATING_TREND_TAU_COUNT,
+        MAX_SATURATING_TREND_TAU_COUNT,
+    );
+    &DEFAULT_SATURATING_TREND_TAUS_YEARS[..clamped]
+}
+
+fn saturating_trend_formula_latex(tau_count: usize, custom_taus: Option<&[f64]>) -> String {
+    let taus = custom_taus.unwrap_or_else(|| saturating_trend_tau_values(tau_count));
+    let taus = taus
+        .iter()
+        .map(|tau| trim_float_for_formula(*tau))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let count = custom_taus
+        .unwrap_or_else(|| saturating_trend_tau_values(tau_count))
+        .len();
+    format!(
+        r"y = c + \sum_{{i=1}}^{{{count}}} w_{{i}} \cdot (1 - \exp(-\frac{{x}}{{\tau_i}})), \quad \tau_i \in \{{{taus}\}}"
+    )
+}
+
+fn saturating_trend_formula_plain_text(tau_count: usize, custom_taus: Option<&[f64]>) -> String {
+    let taus = custom_taus.unwrap_or_else(|| saturating_trend_tau_values(tau_count));
+    let taus = taus
+        .iter()
+        .map(|tau| trim_float_for_formula(*tau))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let count = custom_taus
+        .unwrap_or_else(|| saturating_trend_tau_values(tau_count))
+        .len();
+    format!("y = c + sum_{{i=1..{count}}}(w_i·(1 - exp(-x/τ_i))), τ_i in {{{taus}}}")
+}
+
+fn trim_float_for_formula(value: f64) -> String {
+    let formatted = format!("{value:.2}");
+    formatted
+        .trim_end_matches('0')
+        .trim_end_matches('.')
+        .to_string()
 }
 
 fn model_constraint_note(language: UiLanguage, model: ModelChoice) -> Option<&'static str> {
@@ -428,6 +507,9 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         }
         (UiLanguage::English, ModelChoice::PseudoVoigt) => {
             "Mixture of Gaussian and Lorentzian peaks with learnable blend."
+        }
+        (UiLanguage::English, ModelChoice::SaturatingTrendBasis) => {
+            "Fixed saturating basis over a preset tau grid; x is interpreted in years."
         }
         (UiLanguage::English, ModelChoice::HyperbolicTangent) => {
             "Smooth S-curve transition with bounded tails."
@@ -489,6 +571,9 @@ fn model_ml_note(language: UiLanguage, model: ModelChoice) -> &'static str {
         }
         (UiLanguage::Russian, ModelChoice::PseudoVoigt) => {
             "Смесь гауссового и лоренцевого пиков с обучаемой долей."
+        }
+        (UiLanguage::Russian, ModelChoice::SaturatingTrendBasis) => {
+            "Фиксированный базис насыщения по сетке tau; x интерпретируется как годы."
         }
         (UiLanguage::Russian, ModelChoice::HyperbolicTangent) => {
             "Гладкий S-переход с ограниченными хвостами."
@@ -856,18 +941,34 @@ mod tests {
     #[test]
     fn every_model_formula_renders_as_svg() {
         for model in ModelChoice::ALL {
-            let degree_pairs = if model.is_polynomial() {
-                [(1_usize, 1_usize), (9, 1)].as_slice()
+            let degree_triplets = if model.is_polynomial() {
+                [
+                    (1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT),
+                    (9, 1, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
             } else if model.is_rational() {
-                [(1_usize, 1_usize), (1, 5)].as_slice()
+                [
+                    (1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT),
+                    (1, 5, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
+            } else if model.is_saturating_trend_basis() {
+                [
+                    (1_usize, 1_usize, MIN_SATURATING_TREND_TAU_COUNT),
+                    (1, 1, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
             } else {
-                [(1_usize, 1_usize)].as_slice()
+                [(1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT)].as_slice()
             };
-            for &(polynomial_degree, rational_degree) in degree_pairs {
+            for &(polynomial_degree, rational_degree, tau_count) in degree_triplets {
                 let degree = if model.is_polynomial() {
                     polynomial_degree
                 } else if model.is_rational() {
                     rational_degree
+                } else if model.is_saturating_trend_basis() {
+                    tau_count
                 } else {
                     1
                 };
@@ -876,6 +977,8 @@ mod tests {
                     model,
                     polynomial_degree,
                     rational_degree,
+                    tau_count,
+                    None,
                     OptimizationLossMetric::Mse,
                 );
                 for section in &formula.sections {
@@ -907,18 +1010,34 @@ mod tests {
     #[test]
     fn every_model_plain_text_stays_readable() {
         for model in ModelChoice::ALL {
-            let degree_pairs = if model.is_polynomial() {
-                [(1_usize, 1_usize), (9, 1)].as_slice()
+            let degree_triplets = if model.is_polynomial() {
+                [
+                    (1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT),
+                    (9, 1, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
             } else if model.is_rational() {
-                [(1_usize, 1_usize), (1, 5)].as_slice()
+                [
+                    (1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT),
+                    (1, 5, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
+            } else if model.is_saturating_trend_basis() {
+                [
+                    (1_usize, 1_usize, MIN_SATURATING_TREND_TAU_COUNT),
+                    (1, 1, MAX_SATURATING_TREND_TAU_COUNT),
+                ]
+                .as_slice()
             } else {
-                [(1_usize, 1_usize)].as_slice()
+                [(1_usize, 1_usize, MAX_SATURATING_TREND_TAU_COUNT)].as_slice()
             };
-            for &(polynomial_degree, rational_degree) in degree_pairs {
+            for &(polynomial_degree, rational_degree, tau_count) in degree_triplets {
                 let degree = if model.is_polynomial() {
                     polynomial_degree
                 } else if model.is_rational() {
                     rational_degree
+                } else if model.is_saturating_trend_basis() {
+                    tau_count
                 } else {
                     1
                 };
@@ -927,6 +1046,8 @@ mod tests {
                     model,
                     polynomial_degree,
                     rational_degree,
+                    tau_count,
+                    None,
                     OptimizationLossMetric::Mse,
                 );
                 let plain_text = formula.model_plain_text.trim();
@@ -958,8 +1079,15 @@ mod tests {
     #[test]
     fn every_optimization_metric_formula_renders_as_svg() {
         for metric in OptimizationLossMetric::ALL {
-            let formula =
-                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, 1, metric);
+            let formula = model_formula_info(
+                UiLanguage::English,
+                ModelChoice::Polynomial,
+                3,
+                1,
+                MAX_SATURATING_TREND_TAU_COUNT,
+                None,
+                metric,
+            );
             let metric_section = formula
                 .sections
                 .iter()
@@ -983,6 +1111,8 @@ mod tests {
             ModelChoice::Polynomial,
             3,
             1,
+            MAX_SATURATING_TREND_TAU_COUNT,
+            None,
             OptimizationLossMetric::SoftL1,
         );
         let titles: Vec<&str> = formula
@@ -1013,6 +1143,8 @@ mod tests {
             ModelChoice::Polynomial,
             3,
             1,
+            MAX_SATURATING_TREND_TAU_COUNT,
+            None,
             OptimizationLossMetric::Mse,
         );
         let metric_section = formula
@@ -1034,8 +1166,15 @@ mod tests {
     #[test]
     fn optimization_metric_reference_omits_loss_derivative_formulas() {
         for metric in OptimizationLossMetric::ALL {
-            let formula =
-                model_formula_info(UiLanguage::English, ModelChoice::Polynomial, 3, 1, metric);
+            let formula = model_formula_info(
+                UiLanguage::English,
+                ModelChoice::Polynomial,
+                3,
+                1,
+                MAX_SATURATING_TREND_TAU_COUNT,
+                None,
+                metric,
+            );
             let metric_section = formula
                 .sections
                 .iter()
@@ -1076,6 +1215,8 @@ mod tests {
             ModelChoice::PseudoVoigt,
             1,
             1,
+            MAX_SATURATING_TREND_TAU_COUNT,
+            None,
             OptimizationLossMetric::Mse,
         );
         let model_section = formula
@@ -1096,6 +1237,8 @@ mod tests {
             ModelChoice::PseudoVoigt,
             1,
             1,
+            MAX_SATURATING_TREND_TAU_COUNT,
+            None,
             OptimizationLossMetric::Mse,
         );
 

@@ -1,6 +1,7 @@
 //! Эвристики и служебные функции для построения стартовых параметров моделей.
 
-use crate::domain::{CurveFamily, CurveParams, Points};
+use crate::domain::{CurveFamily, CurveParams, Points, SaturatingTrendTauGrid};
+use crate::models::SATURATING_TREND_PARAM_COUNT;
 
 const PARAM_INIT_SPAN_EPS: f64 = 1e-9;
 
@@ -36,6 +37,12 @@ pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
                 | CurveFamily::Power
                 | CurveFamily::Emg
                 | CurveFamily::PseudoVoigt
+                | CurveFamily::SaturatingTrendBasis1
+                | CurveFamily::SaturatingTrendBasis2
+                | CurveFamily::SaturatingTrendBasis3
+                | CurveFamily::SaturatingTrendBasis4
+                | CurveFamily::SaturatingTrendBasis5
+                | CurveFamily::SaturatingTrendBasis6
         )
 }
 
@@ -45,12 +52,16 @@ pub(super) fn is_advanced_param_init_supported(family: CurveFamily) -> bool {
 pub(super) fn data_based_params_for_family(
     family: CurveFamily,
     points: &Points,
+    saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
 ) -> Result<CurveParams, String> {
     if family.is_polynomial() {
         return data_based_polynomial_params(family, points);
     }
     if family.is_rational() {
         return data_based_rational_params(family, points);
+    }
+    if family.is_saturating_trend_basis() {
+        return data_based_saturating_trend_basis_params(family, points, saturating_trend_tau_grid);
     }
 
     match family {
@@ -69,8 +80,13 @@ pub(super) fn data_based_params_for_family(
     }
 }
 
-fn build_curve_params(family: CurveFamily, values: Vec<f64>) -> Result<CurveParams, String> {
-    CurveParams::try_from_values(family, values).map_err(|error| error.to_string())
+fn build_curve_params(
+    family: CurveFamily,
+    values: Vec<f64>,
+    saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
+) -> Result<CurveParams, String> {
+    CurveParams::try_from_slice_with_tau_grid(family, &values, saturating_trend_tau_grid)
+        .map_err(|error| error.to_string())
 }
 
 fn data_based_polynomial_params(
@@ -82,17 +98,17 @@ fn data_based_polynomial_params(
     let mut values = vec![0.0; parameter_count];
     values[parameter_count - 2] = slope;
     values[parameter_count - 1] = intercept;
-    build_curve_params(family, values)
+    build_curve_params(family, values, None)
 }
 
 fn data_based_logistic_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    build_curve_params(CurveFamily::Logistic, vec![a, b, c])
+    build_curve_params(CurveFamily::Logistic, vec![a, b, c], None)
 }
 
 fn data_based_gompertz_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    build_curve_params(CurveFamily::Gompertz, vec![a, b, c])
+    build_curve_params(CurveFamily::Gompertz, vec![a, b, c], None)
 }
 
 fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, String> {
@@ -109,7 +125,7 @@ fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, Stri
     let k2 = 0.5 / x_span;
     let c = y_at_max_x;
 
-    build_curve_params(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c])
+    build_curve_params(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c], None)
 }
 
 fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, String> {
@@ -136,6 +152,7 @@ fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, Str
     build_curve_params(
         CurveFamily::DampedSinusoid,
         vec![amplitude, k, omega, phi, center],
+        None,
     )
 }
 
@@ -143,7 +160,7 @@ fn data_based_gaussian_params(points: &Points) -> Result<CurveParams, String> {
     let (x_min, x_max, _, y_max, x_at_y_max) = point_extrema(points);
     let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
     let sigma = (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
-    build_curve_params(CurveFamily::Gaussian, vec![y_max, x_at_y_max, sigma])
+    build_curve_params(CurveFamily::Gaussian, vec![y_max, x_at_y_max, sigma], None)
 }
 
 fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, String> {
@@ -156,6 +173,7 @@ fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, S
     build_curve_params(
         CurveFamily::ExponentialBasic,
         vec![y_min, amplitude, 1.0 / x_span],
+        None,
     )
 }
 
@@ -169,7 +187,7 @@ fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
         }
         Ok((point.x().ln(), point.y().ln()))
     })?;
-    build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope])
+    build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope], None)
 }
 
 fn data_based_rational_params(family: CurveFamily, points: &Points) -> Result<CurveParams, String> {
@@ -179,13 +197,17 @@ fn data_based_rational_params(family: CurveFamily, points: &Points) -> Result<Cu
 
     let (slope, intercept) = linear_regression(points)?;
     if degree == 1 {
-        return build_curve_params(CurveFamily::Rational11, vec![slope, intercept, 0.0, 0.0]);
+        return build_curve_params(
+            CurveFamily::Rational11,
+            vec![slope, intercept, 0.0, 0.0],
+            None,
+        );
     }
 
     let mut values = vec![0.0; family.parameter_count()];
     values[degree - 1] = slope;
     values[degree] = intercept;
-    build_curve_params(family, values)
+    build_curve_params(family, values, None)
 }
 
 fn data_based_emg_params(points: &Points) -> Result<CurveParams, String> {
@@ -200,6 +222,7 @@ fn data_based_emg_params(points: &Points) -> Result<CurveParams, String> {
     build_curve_params(
         CurveFamily::Emg,
         vec![a, x_at_y_max, x_span / 6.0, tau, y_min],
+        None,
     )
 }
 
@@ -211,7 +234,163 @@ fn data_based_pseudo_voigt_params(points: &Points) -> Result<CurveParams, String
     build_curve_params(
         CurveFamily::PseudoVoigt,
         vec![y_span, x_at_y_max, width, width, 0.0, y_min],
+        None,
     )
+}
+
+fn data_based_saturating_trend_basis_params(
+    family: CurveFamily,
+    points: &Points,
+    saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
+) -> Result<CurveParams, String> {
+    let active_count = family.parameter_count();
+    let tau_grid = saturating_trend_tau_grid
+        .cloned()
+        .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(active_count - 1));
+    let mut normal = [[0.0; SATURATING_TREND_PARAM_COUNT]; SATURATING_TREND_PARAM_COUNT];
+    let mut rhs = [0.0; SATURATING_TREND_PARAM_COUNT];
+    let mut basis = [0.0; SATURATING_TREND_PARAM_COUNT];
+
+    for point in points.as_slice().iter().copied() {
+        saturating_trend_basis_row(point.x(), tau_grid.as_slice(), &mut basis);
+
+        let mut row = 0;
+        while row < active_count {
+            rhs[row] += basis[row] * point.y();
+
+            let mut column = row;
+            while column < active_count {
+                normal[row][column] += basis[row] * basis[column];
+                column += 1;
+            }
+            row += 1;
+        }
+    }
+
+    let mut row = 0;
+    while row < SATURATING_TREND_PARAM_COUNT {
+        let mut column = 0;
+        while column < row {
+            normal[row][column] = normal[column][row];
+            column += 1;
+        }
+        row += 1;
+    }
+
+    let solution = solve_regularized_sym_system(normal, rhs)?;
+    build_curve_params(family, solution[..active_count].to_vec(), Some(&tau_grid))
+}
+
+fn saturating_trend_basis_row(
+    x: f64,
+    taus: &[f64],
+    basis: &mut [f64; SATURATING_TREND_PARAM_COUNT],
+) {
+    basis.fill(0.0);
+    basis[0] = 1.0;
+    for (index, tau) in taus.iter().copied().enumerate() {
+        basis[index + 1] = 1.0 - (-x / tau).exp();
+    }
+}
+
+fn solve_regularized_sym_system<const N: usize>(
+    normal: [[f64; N]; N],
+    rhs: [f64; N],
+) -> Result<[f64; N], String> {
+    let trace = (0..N).map(|index| normal[index][index]).sum::<f64>();
+    let base_ridge = (trace.abs().max(1.0)) * 1e-10;
+
+    for attempt in 0..8 {
+        let ridge = base_ridge * 10_f64.powi(attempt);
+        if let Some(solution) = cholesky_solve_with_ridge(normal, rhs, ridge) {
+            return Ok(solution);
+        }
+    }
+
+    Err("Failed to solve regularized normal equations for data-based initialization".to_string())
+}
+
+fn cholesky_solve_with_ridge<const N: usize>(
+    mut matrix: [[f64; N]; N],
+    rhs: [f64; N],
+    ridge: f64,
+) -> Option<[f64; N]> {
+    let mut index = 0;
+    while index < N {
+        matrix[index][index] += ridge;
+        index += 1;
+    }
+
+    let mut lower = [[0.0; N]; N];
+    let mut row = 0;
+    while row < N {
+        let mut column = 0;
+        while column <= row {
+            let mut sum = matrix[row][column];
+            let mut inner = 0;
+            while inner < column {
+                sum -= lower[row][inner] * lower[column][inner];
+                inner += 1;
+            }
+
+            if row == column {
+                if !sum.is_finite() || sum <= PARAM_INIT_SPAN_EPS {
+                    return None;
+                }
+                lower[row][column] = sum.sqrt();
+            } else {
+                let diagonal = lower[column][column];
+                if diagonal.abs() <= PARAM_INIT_SPAN_EPS {
+                    return None;
+                }
+                lower[row][column] = sum / diagonal;
+            }
+            column += 1;
+        }
+        row += 1;
+    }
+
+    let mut y = [0.0; N];
+    row = 0;
+    while row < N {
+        let mut sum = rhs[row];
+        let mut column = 0;
+        while column < row {
+            sum -= lower[row][column] * y[column];
+            column += 1;
+        }
+
+        let diagonal = lower[row][row];
+        if diagonal.abs() <= PARAM_INIT_SPAN_EPS {
+            return None;
+        }
+        y[row] = sum / diagonal;
+        row += 1;
+    }
+
+    let mut solution = [0.0; N];
+    let mut reverse = N;
+    while reverse > 0 {
+        reverse -= 1;
+        let mut sum = y[reverse];
+        let mut column = reverse + 1;
+        while column < N {
+            sum -= lower[column][reverse] * solution[column];
+            column += 1;
+        }
+
+        let diagonal = lower[reverse][reverse];
+        if diagonal.abs() <= PARAM_INIT_SPAN_EPS {
+            return None;
+        }
+        solution[reverse] = sum / diagonal;
+    }
+
+    if solution.iter().all(|value| value.is_finite()) {
+        Some(solution)
+    } else {
+        None
+    }
 }
 
 fn data_based_sigmoid_abc(points: &Points) -> (f64, f64, f64) {
