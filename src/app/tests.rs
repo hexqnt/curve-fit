@@ -154,3 +154,20 @@ fn wait_fit_completion(app: &mut CurveFitApp) {
     }
     panic!("fit did not complete in time");
 }
+
+#[test]
+fn saturating_trend_tau_inputs_are_padded_to_selected_count() {
+    let mut app = CurveFitApp {
+        selected_model: ModelChoice::SaturatingTrendBasis,
+        saturating_trend_tau_count: 3,
+        saturating_trend_tau_inputs: vec!["0.25".to_string(), "0.5".to_string()],
+        ..Default::default()
+    };
+
+    app.ensure_saturating_trend_tau_inputs_cover_count();
+
+    assert_eq!(app.saturating_trend_tau_inputs.len(), 3);
+    assert_eq!(app.saturating_trend_tau_inputs[0], "0.25");
+    assert_eq!(app.saturating_trend_tau_inputs[1], "0.5");
+    assert_eq!(app.saturating_trend_tau_inputs[2], "1");
+}

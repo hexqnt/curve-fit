@@ -4,6 +4,7 @@ use crate::domain::{
     AdamConfig, LbfgsConfig, NelderMeadConfig, NewtonCgConfig, OptimizerMethod, SgdConfig,
     SteepestDescentConfig,
 };
+use std::hash::{Hash, Hasher};
 
 use super::{C1_MIN, C2_MAX, STEP_MAX_MAX, STEP_MIN_MIN, UiLanguage};
 
@@ -86,6 +87,30 @@ fn normalize_wolfe_line_search_inputs(
     *c2 = (*c2).clamp(*c1 + 1e-4, C2_MAX);
     *step_min = (*step_min).clamp(STEP_MIN_MIN, STEP_MAX_MAX - 1e-6);
     *step_max = (*step_max).clamp(*step_min + 1e-6, STEP_MAX_MAX);
+}
+
+fn hash_f64_normalized<H: Hasher>(hasher: &mut H, value: f64) {
+    let normalized_bits = if value == 0.0 {
+        0.0f64.to_bits()
+    } else {
+        value.to_bits()
+    };
+    normalized_bits.hash(hasher);
+}
+
+fn hash_wolfe_line_search_inputs<H: Hasher>(
+    hasher: &mut H,
+    c1: f64,
+    c2: f64,
+    step_min: f64,
+    step_max: f64,
+    width_tolerance: f64,
+) {
+    hash_f64_normalized(hasher, c1);
+    hash_f64_normalized(hasher, c2);
+    hash_f64_normalized(hasher, step_min);
+    hash_f64_normalized(hasher, step_max);
+    hash_f64_normalized(hasher, width_tolerance);
 }
 
 pub(super) fn lbfgs_config_from_preset(preset: OptimizerPreset) -> LbfgsConfig {
@@ -247,6 +272,21 @@ impl LbfgsInputState {
         )
         .map_err(|error| error.to_string())
     }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.history_size.hash(hasher);
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.tol_grad);
+        hash_f64_normalized(hasher, self.tol_cost);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -294,6 +334,16 @@ impl NelderMeadInputState {
         )
         .map_err(|error| error.to_string())
     }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.simplex_scale);
+        hash_f64_normalized(hasher, self.sd_tolerance);
+        hash_f64_normalized(hasher, self.alpha);
+        hash_f64_normalized(hasher, self.gamma);
+        hash_f64_normalized(hasher, self.rho);
+        hash_f64_normalized(hasher, self.sigma);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -337,6 +387,18 @@ impl SteepestDescentInputState {
             self.width_tolerance,
         )
         .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
     }
 }
 
@@ -391,6 +453,20 @@ impl NewtonCgInputState {
         )
         .map_err(|error| error.to_string())
     }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.tol);
+        hash_f64_normalized(hasher, self.curvature_threshold);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -414,6 +490,11 @@ impl SgdInputState {
     pub(super) fn to_config(&self) -> Result<SgdConfig, String> {
         SgdConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
     }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.learning_rate);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -436,5 +517,10 @@ impl AdamInputState {
 
     pub(super) fn to_config(&self) -> Result<AdamConfig, String> {
         AdamConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.learning_rate);
     }
 }

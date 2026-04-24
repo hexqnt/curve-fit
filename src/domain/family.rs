@@ -517,7 +517,6 @@ impl CurveFamily {
 
         if self.requires_positive_x()
             && let Some((index, point)) = points
-                .as_slice()
                 .iter()
                 .copied()
                 .enumerate()

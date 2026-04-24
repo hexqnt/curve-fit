@@ -382,6 +382,18 @@ macro_rules! curve_params_from_slice_match {
 }
 
 impl CurveParams {
+    fn resolve_saturating_trend_tau_grid(
+        family: CurveFamily,
+        tau_grid: Option<&SaturatingTrendTauGrid>,
+    ) -> SaturatingTrendTauGrid {
+        let count = family
+            .saturating_trend_tau_count()
+            .expect("helper is only called for saturating-trend families");
+        tau_grid
+            .cloned()
+            .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(count))
+    }
+
     /// Определяет семейство по варианту параметров.
     pub fn family(&self) -> CurveFamily {
         match self {
@@ -444,9 +456,22 @@ impl CurveParams {
         }
     }
 
+    /// Передает канонический срез значений параметров в callback без промежуточной аллокации.
+    pub fn with_values<R>(&self, callback: impl FnOnce(&[f64]) -> R) -> R {
+        self.with_family_values(|_, values| callback(values))
+    }
+
+    /// Передает имена и значения параметров в каноническом порядке без промежуточной аллокации.
+    pub fn with_names_and_values<R>(
+        &self,
+        callback: impl FnOnce(&[&'static str], &[f64]) -> R,
+    ) -> R {
+        self.with_family_values(|family, values| callback(family.parameter_names(), values))
+    }
+
     /// Возвращает параметры в виде вектора в каноническом порядке.
     pub fn values(&self) -> Vec<f64> {
-        self.with_family_values(|_family, values| values.to_vec())
+        self.with_values(|values| values.to_vec())
     }
 
     /// Вычисляет значение модели для заданного `x`.
@@ -510,13 +535,13 @@ impl CurveParams {
             });
         }
 
-        if family.is_saturating_trend_basis()
+        if let Some(expected_tau_count) = family.saturating_trend_tau_count()
             && let Some(grid) = tau_grid
-            && grid.count() != family.parameter_count() - 1
+            && grid.count() != expected_tau_count
         {
             return Err(InputError::WrongSaturatingTrendTauCount {
-                expected_min: family.parameter_count() - 1,
-                expected_max: family.parameter_count() - 1,
+                expected_min: expected_tau_count,
+                expected_max: expected_tau_count,
                 got: grid.count(),
             });
         }
@@ -525,26 +550,20 @@ impl CurveParams {
             CurveFamily::SaturatingTrendBasis1 => Self::SaturatingTrendBasis1 {
                 c: values[0],
                 w1: values[1],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(1)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             CurveFamily::SaturatingTrendBasis2 => Self::SaturatingTrendBasis2 {
                 c: values[0],
                 w1: values[1],
                 w2: values[2],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(2)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             CurveFamily::SaturatingTrendBasis3 => Self::SaturatingTrendBasis3 {
                 c: values[0],
                 w1: values[1],
                 w2: values[2],
                 w3: values[3],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(3)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             CurveFamily::SaturatingTrendBasis4 => Self::SaturatingTrendBasis4 {
                 c: values[0],
@@ -552,9 +571,7 @@ impl CurveParams {
                 w2: values[2],
                 w3: values[3],
                 w4: values[4],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(4)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             CurveFamily::SaturatingTrendBasis5 => Self::SaturatingTrendBasis5 {
                 c: values[0],
@@ -563,9 +580,7 @@ impl CurveParams {
                 w3: values[3],
                 w4: values[4],
                 w5: values[5],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(5)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             CurveFamily::SaturatingTrendBasis6 => Self::SaturatingTrendBasis6 {
                 c: values[0],
@@ -575,9 +590,7 @@ impl CurveParams {
                 w4: values[4],
                 w5: values[5],
                 w6: values[6],
-                taus: tau_grid
-                    .cloned()
-                    .unwrap_or_else(|| SaturatingTrendTauGrid::default_for_count(6)),
+                taus: Self::resolve_saturating_trend_tau_grid(family, tau_grid),
             },
             _ => curve_params_variants!(curve_params_from_slice_match, family, values,),
         };

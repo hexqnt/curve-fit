@@ -163,11 +163,10 @@ impl CurveFitApp {
             r2: metrics.r2,
             max_abs_error: metrics.max_abs_error,
         };
-        let mut residual_plot_points = Vec::with_capacity(points.len());
-        for point in points.as_slice() {
-            let residual = params.evaluate(point.x()) - point.y();
-            residual_plot_points.push(PlotPoint::new(point.x(), residual));
-        }
+        let residual_plot_points = points
+            .iter()
+            .map(|point| PlotPoint::new(point.x(), params.evaluate(point.x()) - point.y()))
+            .collect();
 
         (metrics, result_metrics, residual_plot_points)
     }

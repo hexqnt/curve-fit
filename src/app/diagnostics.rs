@@ -56,16 +56,17 @@ impl IterationDiagnostics {
             self.reset_for_family(family);
         }
 
-        let values = params.values();
-        if values.len() != self.parameter_series.len() {
+        if family.parameter_count() != self.parameter_series.len() {
             self.reset_for_family(family);
         }
 
         let iteration = iteration as f64;
         self.upsert_metrics(iteration, metrics);
-        for (series, value) in self.parameter_series.iter_mut().zip(values) {
-            upsert_iteration_point(series, iteration, value);
-        }
+        params.with_values(|values| {
+            for (series, value) in self.parameter_series.iter_mut().zip(values.iter().copied()) {
+                upsert_iteration_point(series, iteration, value);
+            }
+        });
     }
 
     pub(super) fn append_spline(

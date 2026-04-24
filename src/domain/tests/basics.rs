@@ -45,7 +45,7 @@ fn points_require_at_least_two_values() {
 
 #[test]
 fn family_validation_checks_min_points_and_domain() {
-    let points = Points::try_from(vec![
+    let points = Points::try_from([
         Point::try_new(-1.0, 1.0).unwrap(),
         Point::try_new(1.0, 2.0).unwrap(),
     ])
@@ -75,7 +75,7 @@ fn family_validation_checks_min_points_and_domain() {
         }
     ));
 
-    let short_points = Points::try_from(vec![
+    let short_points = Points::try_from([
         Point::try_new(1.0, 1.0).unwrap(),
         Point::try_new(2.0, 2.0).unwrap(),
     ])
@@ -103,6 +103,20 @@ fn family_validation_checks_min_points_and_domain() {
             min_required: 6
         }
     ));
+}
+
+#[test]
+fn points_support_array_construction_and_iteration() {
+    let points = Points::try_from([
+        Point::try_new(-2.0, 1.0).unwrap(),
+        Point::try_new(4.0, 3.0).unwrap(),
+    ])
+    .unwrap();
+
+    let xs = points.iter().map(|point| point.x()).collect::<Vec<_>>();
+
+    assert_eq!(xs, vec![-2.0, 4.0]);
+    assert_eq!(points.x_bounds(), (-2.0, 4.0));
 }
 
 #[test]

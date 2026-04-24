@@ -2,6 +2,72 @@
 
 use super::InputError;
 
+type ConfigError = fn(&'static str) -> InputError;
+
+fn validate_non_zero(
+    name: &'static str,
+    value: usize,
+    error: ConfigError,
+) -> Result<(), InputError> {
+    if value == 0 {
+        return Err(error(match name {
+            "history_size" => "history_size must be greater than 0",
+            _ => "value must be greater than 0",
+        }));
+    }
+    Ok(())
+}
+
+fn validate_max_iters(max_iters: u64, error: ConfigError) -> Result<(), InputError> {
+    if max_iters == 0 {
+        return Err(error("max_iters must be greater than 0"));
+    }
+    Ok(())
+}
+
+fn validate_finite_non_negative(
+    value: f64,
+    message: &'static str,
+    error: ConfigError,
+) -> Result<(), InputError> {
+    if !value.is_finite() || value < 0.0 {
+        return Err(error(message));
+    }
+    Ok(())
+}
+
+fn validate_finite_positive(
+    value: f64,
+    message: &'static str,
+    error: ConfigError,
+) -> Result<(), InputError> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(error(message));
+    }
+    Ok(())
+}
+
+fn validate_wolfe_line_search(
+    c1: f64,
+    c2: f64,
+    step_min: f64,
+    step_max: f64,
+    width_tolerance: f64,
+    error: ConfigError,
+) -> Result<(), InputError> {
+    if !c1.is_finite() || !c2.is_finite() || c1 <= 0.0 || c1 >= c2 || c2 >= 1.0 {
+        return Err(error("c1 and c2 must satisfy 0 < c1 < c2 < 1"));
+    }
+    if !step_min.is_finite() || !step_max.is_finite() || step_min < 0.0 || step_max <= step_min {
+        return Err(error("step bounds must satisfy 0 <= step_min < step_max"));
+    }
+    validate_finite_non_negative(
+        width_tolerance,
+        "width_tolerance must be finite and >= 0",
+        error,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq)]
 /// Параметры L-BFGS и line-search с проверяемыми инвариантами.
 pub struct LbfgsConfig {
@@ -46,51 +112,19 @@ impl LbfgsConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.history_size == 0 {
-            return Err(InputError::InvalidLbfgsConfig(
-                "history_size must be greater than 0",
-            ));
-        }
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidLbfgsConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.tol_grad.is_finite() || self.tol_grad < 0.0 {
-            return Err(InputError::InvalidLbfgsConfig(
-                "tol_grad must be finite and >= 0",
-            ));
-        }
-        if !self.tol_cost.is_finite() || self.tol_cost < 0.0 {
-            return Err(InputError::InvalidLbfgsConfig(
-                "tol_cost must be finite and >= 0",
-            ));
-        }
-        if !self.c1.is_finite()
-            || !self.c2.is_finite()
-            || self.c1 <= 0.0
-            || self.c1 >= self.c2
-            || self.c2 >= 1.0
-        {
-            return Err(InputError::InvalidLbfgsConfig(
-                "c1 and c2 must satisfy 0 < c1 < c2 < 1",
-            ));
-        }
-        if !self.step_min.is_finite()
-            || !self.step_max.is_finite()
-            || self.step_min < 0.0
-            || self.step_max <= self.step_min
-        {
-            return Err(InputError::InvalidLbfgsConfig(
-                "step bounds must satisfy 0 <= step_min < step_max",
-            ));
-        }
-        if !self.width_tolerance.is_finite() || self.width_tolerance < 0.0 {
-            return Err(InputError::InvalidLbfgsConfig(
-                "width_tolerance must be finite and >= 0",
-            ));
-        }
-        Ok(())
+        let error = InputError::InvalidLbfgsConfig;
+        validate_non_zero("history_size", self.history_size, error)?;
+        validate_max_iters(self.max_iters, error)?;
+        validate_finite_non_negative(self.tol_grad, "tol_grad must be finite and >= 0", error)?;
+        validate_finite_non_negative(self.tol_cost, "tol_cost must be finite and >= 0", error)?;
+        validate_wolfe_line_search(
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+            error,
+        )
     }
 }
 
@@ -148,40 +182,27 @@ impl NelderMeadConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.simplex_scale.is_finite() || self.simplex_scale <= 0.0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "simplex_scale must be finite and > 0",
-            ));
-        }
-        if !self.sd_tolerance.is_finite() || self.sd_tolerance < 0.0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "sd_tolerance must be finite and >= 0",
-            ));
-        }
-        if !self.alpha.is_finite() || self.alpha <= 0.0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "alpha must be finite and > 0",
-            ));
-        }
+        let error = InputError::InvalidNelderMeadConfig;
+        validate_max_iters(self.max_iters, error)?;
+        validate_finite_positive(
+            self.simplex_scale,
+            "simplex_scale must be finite and > 0",
+            error,
+        )?;
+        validate_finite_non_negative(
+            self.sd_tolerance,
+            "sd_tolerance must be finite and >= 0",
+            error,
+        )?;
+        validate_finite_positive(self.alpha, "alpha must be finite and > 0", error)?;
         if !self.gamma.is_finite() || self.gamma <= 1.0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "gamma must be finite and > 1",
-            ));
+            return Err(error("gamma must be finite and > 1"));
         }
         if !self.rho.is_finite() || self.rho <= 0.0 || self.rho > 0.5 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "rho must be finite and in (0, 0.5]",
-            ));
+            return Err(error("rho must be finite and in (0, 0.5]"));
         }
         if !self.sigma.is_finite() || self.sigma <= 0.0 || self.sigma > 1.0 {
-            return Err(InputError::InvalidNelderMeadConfig(
-                "sigma must be finite and in (0, 1]",
-            ));
+            return Err(error("sigma must be finite and in (0, 1]"));
         }
         Ok(())
     }
@@ -236,36 +257,15 @@ impl SteepestDescentConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidSteepestDescentConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.c1.is_finite()
-            || !self.c2.is_finite()
-            || self.c1 <= 0.0
-            || self.c1 >= self.c2
-            || self.c2 >= 1.0
-        {
-            return Err(InputError::InvalidSteepestDescentConfig(
-                "c1 and c2 must satisfy 0 < c1 < c2 < 1",
-            ));
-        }
-        if !self.step_min.is_finite()
-            || !self.step_max.is_finite()
-            || self.step_min < 0.0
-            || self.step_max <= self.step_min
-        {
-            return Err(InputError::InvalidSteepestDescentConfig(
-                "step bounds must satisfy 0 <= step_min < step_max",
-            ));
-        }
-        if !self.width_tolerance.is_finite() || self.width_tolerance < 0.0 {
-            return Err(InputError::InvalidSteepestDescentConfig(
-                "width_tolerance must be finite and >= 0",
-            ));
-        }
-        Ok(())
+        validate_max_iters(self.max_iters, InputError::InvalidSteepestDescentConfig)?;
+        validate_wolfe_line_search(
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+            InputError::InvalidSteepestDescentConfig,
+        )
     }
 }
 
@@ -323,46 +323,22 @@ impl NewtonCgConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.tol.is_finite() || self.tol <= 0.0 {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "tol must be finite and > 0",
-            ));
-        }
-        if !self.curvature_threshold.is_finite() || self.curvature_threshold < 0.0 {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "curvature_threshold must be finite and >= 0",
-            ));
-        }
-        if !self.c1.is_finite()
-            || !self.c2.is_finite()
-            || self.c1 <= 0.0
-            || self.c1 >= self.c2
-            || self.c2 >= 1.0
-        {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "c1 and c2 must satisfy 0 < c1 < c2 < 1",
-            ));
-        }
-        if !self.step_min.is_finite()
-            || !self.step_max.is_finite()
-            || self.step_min < 0.0
-            || self.step_max <= self.step_min
-        {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "step bounds must satisfy 0 <= step_min < step_max",
-            ));
-        }
-        if !self.width_tolerance.is_finite() || self.width_tolerance < 0.0 {
-            return Err(InputError::InvalidNewtonCgConfig(
-                "width_tolerance must be finite and >= 0",
-            ));
-        }
-        Ok(())
+        let error = InputError::InvalidNewtonCgConfig;
+        validate_max_iters(self.max_iters, error)?;
+        validate_finite_positive(self.tol, "tol must be finite and > 0", error)?;
+        validate_finite_non_negative(
+            self.curvature_threshold,
+            "curvature_threshold must be finite and >= 0",
+            error,
+        )?;
+        validate_wolfe_line_search(
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+            error,
+        )
     }
 }
 
@@ -400,17 +376,12 @@ impl SgdConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidSgdConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.learning_rate.is_finite() || self.learning_rate <= 0.0 {
-            return Err(InputError::InvalidSgdConfig(
-                "learning_rate must be finite and > 0",
-            ));
-        }
-        Ok(())
+        validate_max_iters(self.max_iters, InputError::InvalidSgdConfig)?;
+        validate_finite_positive(
+            self.learning_rate,
+            "learning_rate must be finite and > 0",
+            InputError::InvalidSgdConfig,
+        )
     }
 }
 
@@ -442,17 +413,12 @@ impl AdamConfig {
     }
 
     fn validate(&self) -> Result<(), InputError> {
-        if self.max_iters == 0 {
-            return Err(InputError::InvalidAdamConfig(
-                "max_iters must be greater than 0",
-            ));
-        }
-        if !self.learning_rate.is_finite() || self.learning_rate <= 0.0 {
-            return Err(InputError::InvalidAdamConfig(
-                "learning_rate must be finite and > 0",
-            ));
-        }
-        Ok(())
+        validate_max_iters(self.max_iters, InputError::InvalidAdamConfig)?;
+        validate_finite_positive(
+            self.learning_rate,
+            "learning_rate must be finite and > 0",
+            InputError::InvalidAdamConfig,
+        )
     }
 }
 

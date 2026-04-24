@@ -55,6 +55,17 @@ impl ActiveOptimizerView<'_> {
             Self::Adam { inputs, .. } => inputs.to_config().map(OptimizerConfig::Adam),
         }
     }
+
+    fn hash_inputs_into<H: Hasher>(self, hasher: &mut H) {
+        match self {
+            Self::Lbfgs { inputs, .. } => inputs.hash_into(hasher),
+            Self::NelderMead { inputs, .. } => inputs.hash_into(hasher),
+            Self::SteepestDescent { inputs, .. } => inputs.hash_into(hasher),
+            Self::NewtonCg { inputs, .. } => inputs.hash_into(hasher),
+            Self::Sgd { inputs, .. } => inputs.hash_into(hasher),
+            Self::Adam { inputs, .. } => inputs.hash_into(hasher),
+        }
+    }
 }
 
 /// Изменяемое представление выбранного оптимизатора для применения preset-ов.
@@ -295,14 +306,12 @@ pub struct CurveFitApp {
 
 impl CurveFitApp {
     fn randomized_init_values(&mut self, count: usize) -> Vec<f64> {
-        let mut values = Vec::with_capacity(count);
-        for _ in 0..count {
-            let random = self.next_unit_random();
-            let value =
-                PARAM_INIT_RANDOM_MIN + (PARAM_INIT_RANDOM_MAX - PARAM_INIT_RANDOM_MIN) * random;
-            values.push(value);
-        }
-        values
+        (0..count)
+            .map(|_| {
+                let random = self.next_unit_random();
+                PARAM_INIT_RANDOM_MIN + (PARAM_INIT_RANDOM_MAX - PARAM_INIT_RANDOM_MIN) * random
+            })
+            .collect()
     }
 
     fn resolved_parametric_family_for_init(&mut self) -> Option<CurveFamily> {
@@ -439,65 +448,9 @@ impl CurveFitApp {
         self.active_optimizer_view().config()
     }
 
-    fn hash_f64<H: Hasher>(hasher: &mut H, value: f64) {
-        let normalized_bits = if value == 0.0 {
-            0.0f64.to_bits()
-        } else {
-            value.to_bits()
-        };
-        normalized_bits.hash(hasher);
-    }
-
     fn hash_active_optimizer_inputs<H: Hasher>(&self, hasher: &mut H) {
         std::mem::discriminant(&self.optimizer_method).hash(hasher);
-        match self.optimizer_method {
-            OptimizerMethod::Lbfgs => {
-                self.lbfgs_inputs.history_size.hash(hasher);
-                self.lbfgs_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.lbfgs_inputs.tol_grad);
-                Self::hash_f64(hasher, self.lbfgs_inputs.tol_cost);
-                Self::hash_f64(hasher, self.lbfgs_inputs.c1);
-                Self::hash_f64(hasher, self.lbfgs_inputs.c2);
-                Self::hash_f64(hasher, self.lbfgs_inputs.step_min);
-                Self::hash_f64(hasher, self.lbfgs_inputs.step_max);
-                Self::hash_f64(hasher, self.lbfgs_inputs.width_tolerance);
-            }
-            OptimizerMethod::NelderMead => {
-                self.nelder_mead_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.simplex_scale);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.sd_tolerance);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.alpha);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.gamma);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.rho);
-                Self::hash_f64(hasher, self.nelder_mead_inputs.sigma);
-            }
-            OptimizerMethod::SteepestDescent => {
-                self.steepest_descent_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.steepest_descent_inputs.c1);
-                Self::hash_f64(hasher, self.steepest_descent_inputs.c2);
-                Self::hash_f64(hasher, self.steepest_descent_inputs.step_min);
-                Self::hash_f64(hasher, self.steepest_descent_inputs.step_max);
-                Self::hash_f64(hasher, self.steepest_descent_inputs.width_tolerance);
-            }
-            OptimizerMethod::NewtonCg => {
-                self.newton_cg_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.newton_cg_inputs.tol);
-                Self::hash_f64(hasher, self.newton_cg_inputs.curvature_threshold);
-                Self::hash_f64(hasher, self.newton_cg_inputs.c1);
-                Self::hash_f64(hasher, self.newton_cg_inputs.c2);
-                Self::hash_f64(hasher, self.newton_cg_inputs.step_min);
-                Self::hash_f64(hasher, self.newton_cg_inputs.step_max);
-                Self::hash_f64(hasher, self.newton_cg_inputs.width_tolerance);
-            }
-            OptimizerMethod::Sgd => {
-                self.sgd_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.sgd_inputs.learning_rate);
-            }
-            OptimizerMethod::Adam => {
-                self.adam_inputs.max_iters.hash(hasher);
-                Self::hash_f64(hasher, self.adam_inputs.learning_rate);
-            }
-        }
+        self.active_optimizer_view().hash_inputs_into(hasher);
     }
 
     pub(super) fn capture_right_panel_fit_snapshot(&self) -> RightPanelFitFingerprint {
@@ -656,6 +609,7 @@ impl CurveFitApp {
     }
 
     pub(super) fn sync_parameter_inputs(&mut self) {
+        self.ensure_saturating_trend_tau_inputs_cover_count();
         if let Some(family) = self.resolved_model().parametric_family() {
             let default_params = family.default_params();
             self.set_parameter_inputs_from_params(&default_params);
@@ -668,8 +622,32 @@ impl CurveFitApp {
         self.parameter_inputs = params_to_input_strings(params);
     }
 
+    /// Гарантирует, что UI-список `τ` покрывает текущее число активных базисных функций.
+    ///
+    /// Уже введенные пользователем значения сохраняются, а недостающий хвост
+    /// дополняется дефолтной возрастающей сеткой.
+    pub(super) fn ensure_saturating_trend_tau_inputs_cover_count(&mut self) {
+        let clamped_count = self.saturating_trend_tau_count.clamp(
+            MIN_SATURATING_TREND_TAU_COUNT,
+            MAX_SATURATING_TREND_TAU_COUNT,
+        );
+        self.saturating_trend_tau_count = clamped_count;
+
+        if self.saturating_trend_tau_inputs.len() >= clamped_count {
+            return;
+        }
+
+        self.saturating_trend_tau_inputs.extend(
+            DEFAULT_SATURATING_TREND_TAUS_YEARS
+                [self.saturating_trend_tau_inputs.len()..clamped_count]
+                .iter()
+                .map(|value| value.to_string()),
+        );
+    }
+
     pub(super) fn set_saturating_trend_tau_inputs(&mut self, values: &[f64]) {
         self.saturating_trend_tau_inputs = tau_grid_to_input_strings(values);
+        self.ensure_saturating_trend_tau_inputs_cover_count();
     }
 
     pub(super) fn sync_spline_initial_knot_y_inputs(&mut self, knot_count: usize) {
@@ -748,6 +726,15 @@ impl CurveFitApp {
         self.randomized_init_values(knot_count)
     }
 
+    fn build_default_initial_params(&self, family: CurveFamily) -> Result<CurveParams, String> {
+        let default_params = family.default_params();
+        let tau_grid = self.parsed_saturating_trend_tau_grid()?;
+        default_params.with_values(|values| {
+            CurveParams::try_from_slice_with_tau_grid(family, values, tau_grid.as_ref())
+                .map_err(|error| error.to_string())
+        })
+    }
+
     pub(super) fn build_data_based_initial_params(
         &mut self,
         family: CurveFamily,
@@ -764,6 +751,15 @@ impl CurveFitApp {
             .map_err(|error| error.to_string())?;
         let tau_grid = self.parsed_saturating_trend_tau_grid()?;
         data_based_params_for_family(family, &points, tau_grid.as_ref())
+    }
+
+    fn build_data_based_spline_initial_knot_y(
+        &mut self,
+        family: SplineFamilyKind,
+        config: SplineConfig,
+    ) -> Result<Vec<f64>, String> {
+        let points = self.parse_points_strict()?;
+        default_spline_initial_knot_y(&points, family, config).map_err(|error| error.to_string())
     }
 
     pub(super) fn build_randomized_initial_params(
@@ -827,17 +823,7 @@ impl CurveFitApp {
         }
 
         let params_result = match method {
-            ParamInitMethod::Default => {
-                self.parsed_saturating_trend_tau_grid()
-                    .and_then(|tau_grid| {
-                        CurveParams::try_from_slice_with_tau_grid(
-                            family,
-                            &family.default_params().values(),
-                            tau_grid.as_ref(),
-                        )
-                        .map_err(|error| error.to_string())
-                    })
-            }
+            ParamInitMethod::Default => self.build_default_initial_params(family),
             ParamInitMethod::DataBased => self.build_data_based_initial_params(family),
             ParamInitMethod::Randomized => self.build_randomized_initial_params(family),
         };
@@ -854,15 +840,7 @@ impl CurveFitApp {
         let values_result = match method {
             ParamInitMethod::Default => Ok(vec![0.0; config.knots]),
             ParamInitMethod::DataBased => {
-                let points = match self.parse_points_strict() {
-                    Ok(points) => points,
-                    Err(error) => {
-                        self.status = Some(StatusMessage::Error(error));
-                        return;
-                    }
-                };
-                default_spline_initial_knot_y(&points, family, config)
-                    .map_err(|error| error.to_string())
+                self.build_data_based_spline_initial_knot_y(family, config)
             }
             ParamInitMethod::Randomized => {
                 Ok(self.build_randomized_spline_initial_knot_y(config.knots))

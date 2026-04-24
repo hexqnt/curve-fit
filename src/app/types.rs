@@ -61,11 +61,7 @@ pub(super) fn dialog_directory_from_path(path: &Path) -> Option<PathBuf> {
 }
 
 pub(super) fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
-    params
-        .values()
-        .into_iter()
-        .map(|value| value.to_string())
-        .collect()
+    params.with_values(|values| values.iter().map(|value| value.to_string()).collect())
 }
 
 pub(super) fn tau_grid_to_input_strings(values: &[f64]) -> Vec<String> {

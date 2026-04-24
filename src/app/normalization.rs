@@ -55,12 +55,9 @@ pub(super) struct ParametricNormalization {
 impl ParametricNormalization {
     /// Строит коэффициенты нормализации по максимальным абсолютным значениям `x` и `y`.
     pub(super) fn try_from_points(points: &Points) -> Result<Self, String> {
-        let mut max_abs_x = 0.0_f64;
-        let mut max_abs_y = 0.0_f64;
-        for point in points.as_slice() {
-            max_abs_x = max_abs_x.max(point.x().abs());
-            max_abs_y = max_abs_y.max(point.y().abs());
-        }
+        let (max_abs_x, max_abs_y) = points.iter().fold((0.0_f64, 0.0_f64), |acc, point| {
+            (acc.0.max(point.x().abs()), acc.1.max(point.y().abs()))
+        });
 
         let x_scale = max_abs_x.max(NORMALIZATION_SCALE_EPS);
         let y_scale = max_abs_y.max(NORMALIZATION_SCALE_EPS);
@@ -73,14 +70,13 @@ impl ParametricNormalization {
 
     /// Нормализует точки для внутреннего фиттинга.
     pub(super) fn normalize_points(self, points: &Points) -> Result<Points, String> {
-        let mut normalized = Vec::with_capacity(points.len());
-        for point in points.as_slice() {
-            let x = point.x() / self.x_scale;
-            let y = point.y() / self.y_scale;
-            let normalized_point = Point::try_new(x, y)
-                .map_err(|error| format!("Normalized point must be finite: {error}"))?;
-            normalized.push(normalized_point);
-        }
+        let normalized = points
+            .iter()
+            .map(|point| {
+                Point::try_new(point.x() / self.x_scale, point.y() / self.y_scale)
+                    .map_err(|error| format!("Normalized point must be finite: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
 
         Points::try_from(normalized)
             .map_err(|error| format!("Normalized points are invalid: {error}"))

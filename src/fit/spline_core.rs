@@ -116,7 +116,6 @@ pub(super) fn sorted_points_with_duplicate_policy(
     policy: SplineDuplicateXPolicy,
 ) -> Result<Vec<[f64; 2]>, FitError> {
     let mut sorted = points
-        .as_slice()
         .iter()
         .map(|point| [point.x(), point.y()])
         .collect::<Vec<_>>();
@@ -336,7 +335,7 @@ impl SplineProblem {
         }
 
         materialize_spline_knots_into(self.knot_x.as_ref(), knot_y, knot_buffer);
-        self.evaluate_objective_from_knots(knot_buffer.as_slice())
+        self.evaluate_objective_from_knots(knot_buffer)
     }
 
     fn evaluate_objective_from_knots(&self, knots: &[[f64; 2]]) -> f64 {
@@ -350,7 +349,7 @@ impl SplineProblem {
     fn accumulate_objective(&self, mut evaluate: impl FnMut(f64) -> f64) -> f64 {
         let mut objective_sum = 0.0;
         let mut max_abs_residual = 0.0_f64;
-        for point in self.points.as_slice() {
+        for point in &self.points {
             let prediction = self.residual_quantizer.quantize_value(evaluate(point.x()));
             let observed = self.residual_quantizer.quantize_value(point.y());
             let residual = prediction - observed;

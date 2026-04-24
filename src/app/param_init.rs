@@ -82,10 +82,10 @@ pub(super) fn data_based_params_for_family(
 
 fn build_curve_params(
     family: CurveFamily,
-    values: Vec<f64>,
+    values: impl AsRef<[f64]>,
     saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
 ) -> Result<CurveParams, String> {
-    CurveParams::try_from_slice_with_tau_grid(family, &values, saturating_trend_tau_grid)
+    CurveParams::try_from_slice_with_tau_grid(family, values.as_ref(), saturating_trend_tau_grid)
         .map_err(|error| error.to_string())
 }
 
@@ -103,12 +103,12 @@ fn data_based_polynomial_params(
 
 fn data_based_logistic_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    build_curve_params(CurveFamily::Logistic, vec![a, b, c], None)
+    build_curve_params(CurveFamily::Logistic, [a, b, c], None)
 }
 
 fn data_based_gompertz_params(points: &Points) -> Result<CurveParams, String> {
     let (a, b, c) = data_based_sigmoid_abc(points);
-    build_curve_params(CurveFamily::Gompertz, vec![a, b, c], None)
+    build_curve_params(CurveFamily::Gompertz, [a, b, c], None)
 }
 
 fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, String> {
@@ -125,7 +125,7 @@ fn data_based_bi_exponential_params(points: &Points) -> Result<CurveParams, Stri
     let k2 = 0.5 / x_span;
     let c = y_at_max_x;
 
-    build_curve_params(CurveFamily::BiExponential, vec![a1, k1, a2, k2, c], None)
+    build_curve_params(CurveFamily::BiExponential, [a1, k1, a2, k2, c], None)
 }
 
 fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, String> {
@@ -151,7 +151,7 @@ fn data_based_damped_sinusoid_params(points: &Points) -> Result<CurveParams, Str
 
     build_curve_params(
         CurveFamily::DampedSinusoid,
-        vec![amplitude, k, omega, phi, center],
+        [amplitude, k, omega, phi, center],
         None,
     )
 }
@@ -160,7 +160,7 @@ fn data_based_gaussian_params(points: &Points) -> Result<CurveParams, String> {
     let (x_min, x_max, _, y_max, x_at_y_max) = point_extrema(points);
     let x_span = (x_max - x_min).max(PARAM_INIT_SPAN_EPS);
     let sigma = (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
-    build_curve_params(CurveFamily::Gaussian, vec![y_max, x_at_y_max, sigma], None)
+    build_curve_params(CurveFamily::Gaussian, [y_max, x_at_y_max, sigma], None)
 }
 
 fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, String> {
@@ -172,7 +172,7 @@ fn data_based_exponential_basic_params(points: &Points) -> Result<CurveParams, S
     }
     build_curve_params(
         CurveFamily::ExponentialBasic,
-        vec![y_min, amplitude, 1.0 / x_span],
+        [y_min, amplitude, 1.0 / x_span],
         None,
     )
 }
@@ -187,7 +187,7 @@ fn data_based_power_params(points: &Points) -> Result<CurveParams, String> {
         }
         Ok((point.x().ln(), point.y().ln()))
     })?;
-    build_curve_params(CurveFamily::Power, vec![intercept.exp(), slope], None)
+    build_curve_params(CurveFamily::Power, [intercept.exp(), slope], None)
 }
 
 fn data_based_rational_params(family: CurveFamily, points: &Points) -> Result<CurveParams, String> {
@@ -197,11 +197,7 @@ fn data_based_rational_params(family: CurveFamily, points: &Points) -> Result<Cu
 
     let (slope, intercept) = linear_regression(points)?;
     if degree == 1 {
-        return build_curve_params(
-            CurveFamily::Rational11,
-            vec![slope, intercept, 0.0, 0.0],
-            None,
-        );
+        return build_curve_params(CurveFamily::Rational11, [slope, intercept, 0.0, 0.0], None);
     }
 
     let mut values = vec![0.0; family.parameter_count()];
@@ -221,7 +217,7 @@ fn data_based_emg_params(points: &Points) -> Result<CurveParams, String> {
     let a = y_span * tau.abs();
     build_curve_params(
         CurveFamily::Emg,
-        vec![a, x_at_y_max, x_span / 6.0, tau, y_min],
+        [a, x_at_y_max, x_span / 6.0, tau, y_min],
         None,
     )
 }
@@ -233,7 +229,7 @@ fn data_based_pseudo_voigt_params(points: &Points) -> Result<CurveParams, String
     let width = (x_span / 6.0).max(PARAM_INIT_SPAN_EPS);
     build_curve_params(
         CurveFamily::PseudoVoigt,
-        vec![y_span, x_at_y_max, width, width, 0.0, y_min],
+        [y_span, x_at_y_max, width, width, 0.0, y_min],
         None,
     )
 }
@@ -251,7 +247,7 @@ fn data_based_saturating_trend_basis_params(
     let mut rhs = [0.0; SATURATING_TREND_PARAM_COUNT];
     let mut basis = [0.0; SATURATING_TREND_PARAM_COUNT];
 
-    for point in points.as_slice().iter().copied() {
+    for point in points.iter().copied() {
         saturating_trend_basis_row(point.x(), tau_grid.as_slice(), &mut basis);
 
         let mut row = 0;
@@ -278,7 +274,7 @@ fn data_based_saturating_trend_basis_params(
     }
 
     let solution = solve_regularized_sym_system(normal, rhs)?;
-    build_curve_params(family, solution[..active_count].to_vec(), Some(&tau_grid))
+    build_curve_params(family, &solution[..active_count], Some(&tau_grid))
 }
 
 fn saturating_trend_basis_row(
@@ -411,19 +407,14 @@ where
         return Err("Linear regression requires at least two points".to_string());
     }
 
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    let mut sum_xx = 0.0;
-    let mut sum_xy = 0.0;
     let sample_count = points.len() as f64;
-
-    for point in points.as_slice().iter().copied() {
-        let (x, y) = map_point(point)?;
-        sum_x += x;
-        sum_y += y;
-        sum_xx += x * x;
-        sum_xy += x * y;
-    }
+    let (sum_x, sum_y, sum_xx, sum_xy) = points.iter().copied().try_fold(
+        (0.0, 0.0, 0.0, 0.0),
+        |(sum_x, sum_y, sum_xx, sum_xy), point| {
+            let (x, y) = map_point(point)?;
+            Ok::<_, String>((sum_x + x, sum_y + y, sum_xx + x * x, sum_xy + x * y))
+        },
+    )?;
 
     let denominator = sample_count * sum_xx - sum_x * sum_x;
     let slope = if denominator.abs() <= PARAM_INIT_SPAN_EPS {
@@ -436,68 +427,78 @@ where
 }
 
 fn point_extrema(points: &Points) -> (f64, f64, f64, f64, f64) {
-    let first = points.as_slice()[0];
-    let mut x_min = first.x();
-    let mut x_max = first.x();
-    let mut y_min = first.y();
-    let mut y_max = first.y();
-    let mut x_at_y_max = first.x();
-
-    for point in points.as_slice().iter().skip(1) {
-        x_min = x_min.min(point.x());
-        x_max = x_max.max(point.x());
-        y_min = y_min.min(point.y());
-        if point.y() > y_max {
-            y_max = point.y();
-            x_at_y_max = point.x();
-        }
-    }
-
-    (x_min, x_max, y_min, y_max, x_at_y_max)
+    let (first, rest) = points
+        .split_first()
+        .expect("Points invariant guarantees at least two points");
+    rest.iter().fold(
+        (first.x(), first.x(), first.y(), first.y(), first.x()),
+        |(x_min, x_max, y_min, y_max, x_at_y_max), point| {
+            let next_y_max = y_max.max(point.y());
+            let next_x_at_y_max = if point.y() > y_max {
+                point.x()
+            } else {
+                x_at_y_max
+            };
+            (
+                x_min.min(point.x()),
+                x_max.max(point.x()),
+                y_min.min(point.y()),
+                next_y_max,
+                next_x_at_y_max,
+            )
+        },
+    )
 }
 
 fn y_at_x_bounds(points: &Points) -> (f64, f64) {
-    let first = points.as_slice()[0];
-    let mut min_x = first.x();
-    let mut max_x = first.x();
-    let mut y_at_min_x = first.y();
-    let mut y_at_max_x = first.y();
-
-    for point in points.as_slice().iter().skip(1) {
-        if point.x() < min_x {
-            min_x = point.x();
-            y_at_min_x = point.y();
-        }
-        if point.x() > max_x {
-            max_x = point.x();
-            y_at_max_x = point.y();
-        }
-    }
-
+    let (first, rest) = points
+        .split_first()
+        .expect("Points invariant guarantees at least two points");
+    let (_, _, y_at_min_x, y_at_max_x) = rest.iter().fold(
+        (first.x(), first.x(), first.y(), first.y()),
+        |(min_x, max_x, y_at_min_x, y_at_max_x), point| {
+            let (next_min_x, next_y_at_min_x) = if point.x() < min_x {
+                (point.x(), point.y())
+            } else {
+                (min_x, y_at_min_x)
+            };
+            let (next_max_x, next_y_at_max_x) = if point.x() > max_x {
+                (point.x(), point.y())
+            } else {
+                (max_x, y_at_max_x)
+            };
+            (next_min_x, next_max_x, next_y_at_min_x, next_y_at_max_x)
+        },
+    );
     (y_at_min_x, y_at_max_x)
 }
 
 fn mean_y(points: &Points) -> f64 {
-    points.as_slice().iter().map(|point| point.y()).sum::<f64>() / points.len() as f64
+    points.iter().map(|point| point.y()).sum::<f64>() / points.len() as f64
 }
 
 fn sorted_by_x(points: &Points) -> Vec<crate::domain::Point> {
-    let mut sorted = points.as_slice().to_vec();
+    let mut sorted = points.to_vec();
     sorted.sort_by(|left, right| left.x().total_cmp(&right.x()));
     sorted
 }
 
 fn count_centered_sign_changes(sorted: &[crate::domain::Point], center: f64) -> usize {
-    let mut sign_changes = 0_usize;
-    let mut previous = sorted[0].y() - center;
-    for point in sorted.iter().skip(1) {
-        let current = point.y() - center;
-        if previous * current < 0.0 {
-            sign_changes += 1;
-        }
-        if current.abs() > PARAM_INIT_SPAN_EPS {
-            previous = current;
-        }
-    }
+    let (first, rest) = sorted
+        .split_first()
+        .expect("sorted point list inherits Points invariant");
+    let (_, sign_changes) = rest.iter().fold(
+        (first.y() - center, 0_usize),
+        |(previous, sign_changes), point| {
+            let current = point.y() - center;
+            let next_sign_changes = sign_changes + usize::from(previous * current < 0.0);
+            let next_previous = if current.abs() > PARAM_INIT_SPAN_EPS {
+                current
+            } else {
+                previous
+            };
+            (next_previous, next_sign_changes)
+        },
+    );
     sign_changes
 }

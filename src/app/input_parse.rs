@@ -2,6 +2,14 @@
 
 use super::*;
 
+fn parse_indexed_f64_inputs(inputs: &[String], field_prefix: &str) -> Result<Vec<f64>, String> {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(index, raw_value)| parse_f64(&format!("{field_prefix}[{index}]"), raw_value))
+        .collect()
+}
+
 /// Уже распарсенные и типизированные начальные параметры параметрической модели.
 #[derive(Debug, Clone)]
 pub(super) struct ParsedInitialParams(CurveParams);
@@ -20,11 +28,7 @@ impl ParsedInitialParams {
             ));
         }
 
-        let mut values = Vec::with_capacity(expected_count);
-        for (index, raw_value) in inputs.iter().enumerate() {
-            let field = format!("parameter[{index}]");
-            values.push(parse_f64(&field, raw_value)?);
-        }
+        let values = parse_indexed_f64_inputs(inputs, "parameter")?;
 
         let params =
             CurveParams::try_from_slice_with_tau_grid(family, &values, saturating_trend_tau_grid)
@@ -50,11 +54,7 @@ impl ParsedSaturatingTrendTauGrid {
             ));
         }
 
-        let mut values = Vec::with_capacity(expected_count);
-        for (index, raw_value) in inputs.iter().take(expected_count).enumerate() {
-            let field = format!("tau[{index}]");
-            values.push(parse_f64(&field, raw_value)?);
-        }
+        let values = parse_indexed_f64_inputs(&inputs[..expected_count], "tau")?;
 
         let grid =
             SaturatingTrendTauGrid::from_values(&values).map_err(|error| error.to_string())?;
@@ -81,13 +81,9 @@ impl ParsedSplineInitialKnotY {
             ));
         }
 
-        let mut values = Vec::with_capacity(expected_count);
-        for (index, raw_value) in inputs.iter().enumerate() {
-            let field = format!("spline_knot_y[{index}]");
-            values.push(parse_f64(&field, raw_value)?);
-        }
-
-        Ok(Self { values })
+        Ok(Self {
+            values: parse_indexed_f64_inputs(inputs, "spline_knot_y")?,
+        })
     }
 
     pub(super) fn as_slice(&self) -> &[f64] {

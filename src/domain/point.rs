@@ -1,6 +1,7 @@
 //! Типы точки и набора точек с инвариантами на конечность координат и минимальный размер.
 
 use super::InputError;
+use std::ops::Deref;
 use std::sync::Arc;
 
 const MIN_POINTS: usize = 2;
@@ -53,6 +54,11 @@ impl Points {
         &self.points
     }
 
+    /// Возвращает итератор по точкам.
+    pub fn iter(&self) -> std::slice::Iter<'_, Point> {
+        self.points.iter()
+    }
+
     /// Число точек в наборе.
     pub fn len(&self) -> usize {
         self.points.len()
@@ -69,11 +75,12 @@ impl Points {
     ///
     /// Предполагается, что инвариант минимального размера уже соблюден.
     pub fn x_bounds(&self) -> (f64, f64) {
-        let first = self.points[0].x();
-        self.points
-            .iter()
-            .skip(1)
-            .fold((first, first), |(min_x, max_x), point| {
+        let (first, rest) = self
+            .points
+            .split_first()
+            .expect("Points invariant guarantees a non-empty collection");
+        rest.iter()
+            .fold((first.x(), first.x()), |(min_x, max_x), point| {
                 (min_x.min(point.x()), max_x.max(point.x()))
             })
     }
@@ -92,5 +99,36 @@ impl TryFrom<Vec<Point>> for Points {
         Ok(Self {
             points: Arc::from(points),
         })
+    }
+}
+
+impl<const N: usize> TryFrom<[Point; N]> for Points {
+    type Error = InputError;
+
+    fn try_from(points: [Point; N]) -> Result<Self, Self::Error> {
+        Self::try_from(Vec::from(points))
+    }
+}
+
+impl AsRef<[Point]> for Points {
+    fn as_ref(&self) -> &[Point] {
+        self.as_slice()
+    }
+}
+
+impl Deref for Points {
+    type Target = [Point];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a Points {
+    type Item = &'a Point;
+    type IntoIter = std::slice::Iter<'a, Point>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }

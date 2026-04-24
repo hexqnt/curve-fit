@@ -174,17 +174,17 @@ impl CurveFitApp {
         result: &FitResult,
         point_count: usize,
     ) {
-        let parameters: Vec<FitExportParameter> = result
-            .family
-            .parameter_names()
-            .iter()
-            .copied()
-            .zip(result.params.values())
-            .map(|(name, value)| FitExportParameter {
-                name: name.to_string(),
-                value,
-            })
-            .collect();
+        let parameters = result.params.with_names_and_values(|names, values| {
+            names
+                .iter()
+                .copied()
+                .zip(values.iter().copied())
+                .map(|(name, value)| FitExportParameter {
+                    name: name.to_string(),
+                    value,
+                })
+                .collect::<Vec<_>>()
+        });
 
         let metrics = if let Some(metrics) = self.result_metrics {
             FitExportMetrics::from_complete_metrics(metrics)

@@ -188,12 +188,8 @@ impl CurveProblem {
         loss_metric: OptimizationLossMetric,
         metric_quantization: MetricQuantization,
     ) -> Self {
-        let mut point_x = Vec::with_capacity(points.len());
-        let mut point_y = Vec::with_capacity(points.len());
-        for point in points.as_slice() {
-            point_x.push(point.x());
-            point_y.push(point.y());
-        }
+        let (point_x, point_y): (Vec<_>, Vec<_>) =
+            points.iter().map(|point| (point.x(), point.y())).unzip();
         Self {
             family,
             saturating_trend_tau_grid: saturating_trend_tau_grid.cloned(),

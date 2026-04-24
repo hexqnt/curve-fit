@@ -59,6 +59,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         if previous_count != app.saturating_trend_tau_count {
             params_need_sync = true;
         }
+        app.ensure_saturating_trend_tau_inputs_cover_count();
         ui.horizontal(|ui| {
             let reset_tau_grid = ui.add_enabled(
                 can_edit_params,

@@ -6,6 +6,53 @@ const COMPACT_FIT_BUTTON_WIDTH: f32 = 118.0;
 const COMPACT_FIT_BUTTON_HEIGHT: f32 = 30.0;
 const FULL_FIT_BUTTON_HEIGHT: f32 = 34.0;
 
+fn summary_row(ui: &mut egui::Ui, label: &str, value: impl std::fmt::Display) {
+    ui.label(label);
+    ui.monospace(value.to_string());
+    ui.end_row();
+}
+
+fn ui_log_slider(
+    ui: &mut egui::Ui,
+    value: &mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    text: &'static str,
+) {
+    ui.add(egui::Slider::new(value, range).logarithmic(true).text(text));
+}
+
+fn ui_wolfe_line_search_sliders(
+    ui: &mut egui::Ui,
+    c1: &mut f64,
+    c2: &mut f64,
+    step_min: &mut f64,
+    step_max: &mut f64,
+    width_tolerance: &mut f64,
+) {
+    ui_log_slider(ui, c1, C1_MIN..=0.2, "c1");
+    ui.add(egui::Slider::new(c2, 0.1..=C2_MAX).text("c2"));
+    ui_log_slider(ui, step_min, STEP_MIN_MIN..=1.0, "step_min");
+    ui_log_slider(ui, step_max, 1e-6..=STEP_MAX_MAX, "step_max");
+    ui_log_slider(ui, width_tolerance, 1e-14..=1e-3, "width_tolerance");
+}
+
+fn edit_optimizer_inputs<T>(
+    ui: &mut egui::Ui,
+    inputs: &mut T,
+    preset: &mut OptimizerPreset,
+    edit_ui: impl FnOnce(&mut egui::Ui, &mut T),
+    normalize: impl FnOnce(&mut T),
+) where
+    T: Clone + PartialEq,
+{
+    let before = inputs.clone();
+    edit_ui(ui, inputs);
+    normalize(inputs);
+    if *inputs != before {
+        *preset = OptimizerPreset::Custom;
+    }
+}
+
 pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let icon_tint = ui.visuals().text_color();
@@ -77,292 +124,186 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(8.0, 4.0))
             .show(ui, |ui| match app.optimizer_method {
                 OptimizerMethod::Lbfgs => {
-                    ui.label("history_size");
-                    ui.monospace(app.lbfgs_inputs.history_size.to_string());
-                    ui.end_row();
-                    ui.label("max_iters");
-                    ui.monospace(app.lbfgs_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("tol_grad");
-                    ui.monospace(format!("{:.2e}", app.lbfgs_inputs.tol_grad));
-                    ui.end_row();
-                    ui.label("tol_cost");
-                    ui.monospace(format!("{:.2e}", app.lbfgs_inputs.tol_cost));
-                    ui.end_row();
+                    summary_row(ui, "history_size", app.lbfgs_inputs.history_size);
+                    summary_row(ui, "max_iters", app.lbfgs_inputs.max_iters);
+                    summary_row(ui, "tol_grad", format!("{:.2e}", app.lbfgs_inputs.tol_grad));
+                    summary_row(ui, "tol_cost", format!("{:.2e}", app.lbfgs_inputs.tol_cost));
                 }
                 OptimizerMethod::NelderMead => {
-                    ui.label("max_iters");
-                    ui.monospace(app.nelder_mead_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("simplex_scale");
-                    ui.monospace(format!("{:.3}", app.nelder_mead_inputs.simplex_scale));
-                    ui.end_row();
-                    ui.label("sd_tolerance");
-                    ui.monospace(format!("{:.2e}", app.nelder_mead_inputs.sd_tolerance));
-                    ui.end_row();
+                    summary_row(ui, "max_iters", app.nelder_mead_inputs.max_iters);
+                    summary_row(
+                        ui,
+                        "simplex_scale",
+                        format!("{:.3}", app.nelder_mead_inputs.simplex_scale),
+                    );
+                    summary_row(
+                        ui,
+                        "sd_tolerance",
+                        format!("{:.2e}", app.nelder_mead_inputs.sd_tolerance),
+                    );
                 }
                 OptimizerMethod::SteepestDescent => {
-                    ui.label("max_iters");
-                    ui.monospace(app.steepest_descent_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("c1");
-                    ui.monospace(format!("{:.2e}", app.steepest_descent_inputs.c1));
-                    ui.end_row();
-                    ui.label("c2");
-                    ui.monospace(format!("{:.3}", app.steepest_descent_inputs.c2));
-                    ui.end_row();
-                    ui.label("width_tolerance");
-                    ui.monospace(format!(
-                        "{:.2e}",
-                        app.steepest_descent_inputs.width_tolerance
-                    ));
-                    ui.end_row();
+                    summary_row(ui, "max_iters", app.steepest_descent_inputs.max_iters);
+                    summary_row(ui, "c1", format!("{:.2e}", app.steepest_descent_inputs.c1));
+                    summary_row(ui, "c2", format!("{:.3}", app.steepest_descent_inputs.c2));
+                    summary_row(
+                        ui,
+                        "width_tolerance",
+                        format!("{:.2e}", app.steepest_descent_inputs.width_tolerance),
+                    );
                 }
                 OptimizerMethod::NewtonCg => {
-                    ui.label("max_iters");
-                    ui.monospace(app.newton_cg_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("tol");
-                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.tol));
-                    ui.end_row();
-                    ui.label("curvature_threshold");
-                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.curvature_threshold));
-                    ui.end_row();
-                    ui.label("c1");
-                    ui.monospace(format!("{:.2e}", app.newton_cg_inputs.c1));
-                    ui.end_row();
-                    ui.label("c2");
-                    ui.monospace(format!("{:.3}", app.newton_cg_inputs.c2));
-                    ui.end_row();
+                    summary_row(ui, "max_iters", app.newton_cg_inputs.max_iters);
+                    summary_row(ui, "tol", format!("{:.2e}", app.newton_cg_inputs.tol));
+                    summary_row(
+                        ui,
+                        "curvature_threshold",
+                        format!("{:.2e}", app.newton_cg_inputs.curvature_threshold),
+                    );
+                    summary_row(ui, "c1", format!("{:.2e}", app.newton_cg_inputs.c1));
+                    summary_row(ui, "c2", format!("{:.3}", app.newton_cg_inputs.c2));
                 }
                 OptimizerMethod::Sgd => {
-                    ui.label("max_iters");
-                    ui.monospace(app.sgd_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("learning_rate");
-                    ui.monospace(format!("{:.2e}", app.sgd_inputs.learning_rate));
-                    ui.end_row();
+                    summary_row(ui, "max_iters", app.sgd_inputs.max_iters);
+                    summary_row(
+                        ui,
+                        "learning_rate",
+                        format!("{:.2e}", app.sgd_inputs.learning_rate),
+                    );
                 }
                 OptimizerMethod::Adam => {
-                    ui.label("max_iters");
-                    ui.monospace(app.adam_inputs.max_iters.to_string());
-                    ui.end_row();
-                    ui.label("learning_rate");
-                    ui.monospace(format!("{:.2e}", app.adam_inputs.learning_rate));
-                    ui.end_row();
+                    summary_row(ui, "max_iters", app.adam_inputs.max_iters);
+                    summary_row(
+                        ui,
+                        "learning_rate",
+                        format!("{:.2e}", app.adam_inputs.learning_rate),
+                    );
                 }
             });
     } else {
         match app.optimizer_method {
             OptimizerMethod::Lbfgs => {
-                let before = app.lbfgs_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.history_size, 1..=50)
-                        .text("history_size"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.lbfgs_inputs,
+                    &mut app.lbfgs_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.history_size, 1..=50)
+                                .text("history_size"),
+                        );
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_log_slider(ui, &mut inputs.tol_grad, 1e-12..=1e-2, "tol_grad");
+                        ui_log_slider(ui, &mut inputs.tol_cost, 1e-14..=1e-4, "tol_cost");
+                        ui_wolfe_line_search_sliders(
+                            ui,
+                            &mut inputs.c1,
+                            &mut inputs.c2,
+                            &mut inputs.step_min,
+                            &mut inputs.step_max,
+                            &mut inputs.width_tolerance,
+                        );
+                    },
+                    LbfgsInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.max_iters, 10..=10_000)
-                        .text("max_iters"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.tol_grad, 1e-12..=1e-2)
-                        .logarithmic(true)
-                        .text("tol_grad"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.tol_cost, 1e-14..=1e-4)
-                        .logarithmic(true)
-                        .text("tol_cost"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.c1, C1_MIN..=0.2)
-                        .logarithmic(true)
-                        .text("c1"),
-                );
-                ui.add(egui::Slider::new(&mut app.lbfgs_inputs.c2, 0.1..=C2_MAX).text("c2"));
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.step_min, STEP_MIN_MIN..=1.0)
-                        .logarithmic(true)
-                        .text("step_min"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.step_max, 1e-6..=STEP_MAX_MAX)
-                        .logarithmic(true)
-                        .text("step_max"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.lbfgs_inputs.width_tolerance, 1e-14..=1e-3)
-                        .logarithmic(true)
-                        .text("width_tolerance"),
-                );
-
-                app.lbfgs_inputs.normalize_after_ui();
-                if app.lbfgs_inputs != before {
-                    app.lbfgs_preset = OptimizerPreset::Custom;
-                }
             }
             OptimizerMethod::NelderMead => {
-                let before = app.nelder_mead_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.max_iters, 10..=10_000)
-                        .text("max_iters"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.nelder_mead_inputs,
+                    &mut app.nelder_mead_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_log_slider(ui, &mut inputs.simplex_scale, 1e-4..=1.0, "simplex_scale");
+                        ui_log_slider(ui, &mut inputs.sd_tolerance, 1e-14..=1e-2, "sd_tolerance");
+                        ui_log_slider(ui, &mut inputs.alpha, 1e-3..=5.0, "alpha");
+                        ui_log_slider(ui, &mut inputs.gamma, 1.0001..=5.0, "gamma");
+                        ui_log_slider(ui, &mut inputs.rho, 1e-4..=0.5, "rho");
+                        ui_log_slider(ui, &mut inputs.sigma, 1e-4..=1.0, "sigma");
+                    },
+                    NelderMeadInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.simplex_scale, 1e-4..=1.0)
-                        .logarithmic(true)
-                        .text("simplex_scale"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.sd_tolerance, 1e-14..=1e-2)
-                        .logarithmic(true)
-                        .text("sd_tolerance"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.alpha, 1e-3..=5.0)
-                        .logarithmic(true)
-                        .text("alpha"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.gamma, 1.0001..=5.0)
-                        .logarithmic(true)
-                        .text("gamma"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.rho, 1e-4..=0.5)
-                        .logarithmic(true)
-                        .text("rho"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.nelder_mead_inputs.sigma, 1e-4..=1.0)
-                        .logarithmic(true)
-                        .text("sigma"),
-                );
-
-                app.nelder_mead_inputs.normalize_after_ui();
-                if app.nelder_mead_inputs != before {
-                    app.nelder_mead_preset = OptimizerPreset::Custom;
-                }
             }
             OptimizerMethod::SteepestDescent => {
-                let before = app.steepest_descent_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.steepest_descent_inputs.max_iters, 10..=10_000)
-                        .text("max_iters"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.steepest_descent_inputs,
+                    &mut app.steepest_descent_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_wolfe_line_search_sliders(
+                            ui,
+                            &mut inputs.c1,
+                            &mut inputs.c2,
+                            &mut inputs.step_min,
+                            &mut inputs.step_max,
+                            &mut inputs.width_tolerance,
+                        );
+                    },
+                    SteepestDescentInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.steepest_descent_inputs.c1, C1_MIN..=0.2)
-                        .logarithmic(true)
-                        .text("c1"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.steepest_descent_inputs.c2, 0.1..=C2_MAX).text("c2"),
-                );
-                ui.add(
-                    egui::Slider::new(
-                        &mut app.steepest_descent_inputs.step_min,
-                        STEP_MIN_MIN..=1.0,
-                    )
-                    .logarithmic(true)
-                    .text("step_min"),
-                );
-                ui.add(
-                    egui::Slider::new(
-                        &mut app.steepest_descent_inputs.step_max,
-                        1e-6..=STEP_MAX_MAX,
-                    )
-                    .logarithmic(true)
-                    .text("step_max"),
-                );
-                ui.add(
-                    egui::Slider::new(
-                        &mut app.steepest_descent_inputs.width_tolerance,
-                        1e-14..=1e-3,
-                    )
-                    .logarithmic(true)
-                    .text("width_tolerance"),
-                );
-
-                app.steepest_descent_inputs.normalize_after_ui();
-                if app.steepest_descent_inputs != before {
-                    app.steepest_descent_preset = OptimizerPreset::Custom;
-                }
             }
             OptimizerMethod::NewtonCg => {
-                let before = app.newton_cg_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.max_iters, 10..=10_000)
-                        .text("max_iters"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.newton_cg_inputs,
+                    &mut app.newton_cg_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_log_slider(ui, &mut inputs.tol, 1e-14..=1e-2, "tol");
+                        ui.add(
+                            egui::Slider::new(&mut inputs.curvature_threshold, 0.0..=1e-2)
+                                .logarithmic(true)
+                                .smallest_positive(1e-14)
+                                .text("curvature_threshold"),
+                        );
+                        ui_wolfe_line_search_sliders(
+                            ui,
+                            &mut inputs.c1,
+                            &mut inputs.c2,
+                            &mut inputs.step_min,
+                            &mut inputs.step_max,
+                            &mut inputs.width_tolerance,
+                        );
+                    },
+                    NewtonCgInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.tol, 1e-14..=1e-2)
-                        .logarithmic(true)
-                        .text("tol"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.curvature_threshold, 0.0..=1e-2)
-                        .logarithmic(true)
-                        .smallest_positive(1e-14)
-                        .text("curvature_threshold"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.c1, C1_MIN..=0.2)
-                        .logarithmic(true)
-                        .text("c1"),
-                );
-                ui.add(egui::Slider::new(&mut app.newton_cg_inputs.c2, 0.1..=C2_MAX).text("c2"));
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.step_min, STEP_MIN_MIN..=1.0)
-                        .logarithmic(true)
-                        .text("step_min"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.step_max, 1e-6..=STEP_MAX_MAX)
-                        .logarithmic(true)
-                        .text("step_max"),
-                );
-                ui.add(
-                    egui::Slider::new(&mut app.newton_cg_inputs.width_tolerance, 1e-14..=1e-3)
-                        .logarithmic(true)
-                        .text("width_tolerance"),
-                );
-
-                app.newton_cg_inputs.normalize_after_ui();
-                if app.newton_cg_inputs != before {
-                    app.newton_cg_preset = OptimizerPreset::Custom;
-                }
             }
             OptimizerMethod::Sgd => {
-                let before = app.sgd_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.sgd_inputs.max_iters, 10..=10_000).text("max_iters"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.sgd_inputs,
+                    &mut app.sgd_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_log_slider(ui, &mut inputs.learning_rate, 1e-6..=1.0, "learning_rate");
+                    },
+                    SgdInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.sgd_inputs.learning_rate, 1e-6..=1.0)
-                        .logarithmic(true)
-                        .text("learning_rate"),
-                );
-
-                app.sgd_inputs.normalize_after_ui();
-                if app.sgd_inputs != before {
-                    app.sgd_preset = OptimizerPreset::Custom;
-                }
             }
             OptimizerMethod::Adam => {
-                let before = app.adam_inputs.clone();
-                ui.add(
-                    egui::Slider::new(&mut app.adam_inputs.max_iters, 10..=10_000)
-                        .text("max_iters"),
+                edit_optimizer_inputs(
+                    ui,
+                    &mut app.adam_inputs,
+                    &mut app.adam_preset,
+                    |ui, inputs| {
+                        ui.add(
+                            egui::Slider::new(&mut inputs.max_iters, 10..=10_000).text("max_iters"),
+                        );
+                        ui_log_slider(ui, &mut inputs.learning_rate, 1e-6..=1.0, "learning_rate");
+                    },
+                    AdamInputState::normalize_after_ui,
                 );
-                ui.add(
-                    egui::Slider::new(&mut app.adam_inputs.learning_rate, 1e-6..=1.0)
-                        .logarithmic(true)
-                        .text("learning_rate"),
-                );
-
-                app.adam_inputs.normalize_after_ui();
-                if app.adam_inputs != before {
-                    app.adam_preset = OptimizerPreset::Custom;
-                }
             }
         }
     }

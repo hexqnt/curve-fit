@@ -26,6 +26,16 @@ pub(super) fn parse_f64(field_name: &str, raw_value: &str) -> Result<f64, String
         .map_err(|error| format!("Failed to parse '{field_name}' as f64: {error}"))
 }
 
+fn parse_line_coordinate(line_number: usize, axis: &str, raw_value: &str) -> Result<f64, String> {
+    parse_f64(&format!("line {line_number} {axis}"), raw_value)
+}
+
+fn parse_line_point_values(line_number: usize, x_raw: &str, y_raw: &str) -> Result<Point, String> {
+    let x = parse_line_coordinate(line_number, "x", x_raw)?;
+    let y = parse_line_coordinate(line_number, "y", y_raw)?;
+    Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))
+}
+
 fn parse_point_line(line_number: usize, raw_line: &str) -> Result<Option<Point>, String> {
     let line = raw_line.trim();
     if line.is_empty() {
@@ -48,10 +58,7 @@ fn parse_point_line(line_number: usize, raw_line: &str) -> Result<Option<Point>,
         ));
     }
 
-    let x = parse_f64(&format!("line {line_number} x"), x_raw)?;
-    let y = parse_f64(&format!("line {line_number} y"), y_raw)?;
-    let point = Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))?;
-    Ok(Some(point))
+    parse_line_point_values(line_number, x_raw, y_raw).map(Some)
 }
 
 fn is_word_byte(byte: u8) -> bool {
@@ -118,45 +125,63 @@ fn parse_numeric_token_end(bytes: &[u8], start: usize) -> Option<usize> {
     Some(index)
 }
 
-fn clipboard_numeric_tokens(line: &str) -> Vec<&str> {
-    // Сканируем строку по байтам без regex, чтобы дешевле отсеивать числа внутри
-    // идентификаторов вроде `row-1`, `v1.2` или `sample_3`.
-    let bytes = line.as_bytes();
-    let mut tokens = Vec::with_capacity(4);
-    let mut index = 0;
+struct ClipboardNumericTokens<'a> {
+    line: &'a str,
+    bytes: &'a [u8],
+    index: usize,
+}
 
-    while index < bytes.len() {
-        let current = bytes[index];
-        if !is_number_start_byte(current) {
-            index += 1;
-            continue;
+impl<'a> ClipboardNumericTokens<'a> {
+    fn new(line: &'a str) -> Self {
+        Self {
+            line,
+            bytes: line.as_bytes(),
+            index: 0,
         }
-
-        if is_digit_after_disallowed_prefix(bytes, index) {
-            index += 1;
-            continue;
-        }
-
-        let previous_is_word = index > 0 && is_word_byte(bytes[index - 1]);
-        if previous_is_word {
-            index += 1;
-            continue;
-        }
-
-        let Some(end) = parse_numeric_token_end(bytes, index) else {
-            index += 1;
-            continue;
-        };
-        if end <= index {
-            index += 1;
-            continue;
-        }
-
-        tokens.push(&line[index..end]);
-        index = end;
     }
+}
 
-    tokens
+impl<'a> Iterator for ClipboardNumericTokens<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Сканируем строку по байтам без regex и без промежуточного `Vec`,
+        // чтобы дешево отсеивать числа внутри идентификаторов вроде `row-1`,
+        // `v1.2` или `sample_3`.
+        while self.index < self.bytes.len() {
+            let start = self.index;
+            let current = self.bytes[start];
+            if !is_number_start_byte(current) || is_digit_after_disallowed_prefix(self.bytes, start)
+            {
+                self.index += 1;
+                continue;
+            }
+
+            let previous_is_word = start > 0 && is_word_byte(self.bytes[start - 1]);
+            if previous_is_word {
+                self.index += 1;
+                continue;
+            }
+
+            let Some(end) = parse_numeric_token_end(self.bytes, start) else {
+                self.index += 1;
+                continue;
+            };
+            if end <= start {
+                self.index += 1;
+                continue;
+            }
+
+            self.index = end;
+            return Some(&self.line[start..end]);
+        }
+
+        None
+    }
+}
+
+fn clipboard_numeric_tokens(line: &str) -> ClipboardNumericTokens<'_> {
+    ClipboardNumericTokens::new(line)
 }
 
 /// Парсит одну строку/запись в режиме `Clipboard-like`:
@@ -172,35 +197,27 @@ where
     S: AsRef<str>,
 {
     let mut numeric_count = 0usize;
-    let mut first_token = None::<String>;
-    let mut second_token = None::<String>;
+    let mut values = [0.0_f64; 2];
 
     for fragment in fragments {
         for token in clipboard_numeric_tokens(fragment.as_ref()) {
-            numeric_count += 1;
-            if numeric_count == 1 {
-                first_token = Some(token.to_string());
-            } else if numeric_count == 2 {
-                second_token = Some(token.to_string());
+            if let Some(slot) = values.get_mut(numeric_count) {
+                let axis = match numeric_count {
+                    0 => "x",
+                    1 => "y",
+                    _ => unreachable!("only the first two numeric fields are parsed"),
+                };
+                *slot = parse_line_coordinate(line_number, axis, token)?;
             }
+            numeric_count += 1;
         }
     }
 
     match numeric_count {
         0 => Ok(None),
-        2 => {
-            let x_raw = first_token
-                .as_deref()
-                .expect("first numeric token must exist for count=2");
-            let y_raw = second_token
-                .as_deref()
-                .expect("second numeric token must exist for count=2");
-            let x = parse_f64(&format!("line {line_number} x"), x_raw)?;
-            let y = parse_f64(&format!("line {line_number} y"), y_raw)?;
-            let point =
-                Point::try_new(x, y).map_err(|error| format!("Line {line_number}: {error}"))?;
-            Ok(Some(point))
-        }
+        2 => Point::try_new(values[0], values[1])
+            .map(Some)
+            .map_err(|error| format!("Line {line_number}: {error}")),
         count => Err(format!(
             "Line {line_number}: expected exactly two numeric values, got {count}"
         )),

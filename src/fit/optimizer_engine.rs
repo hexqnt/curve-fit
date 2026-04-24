@@ -248,7 +248,7 @@ where
     Ok(StochasticState {
         current_param: initial_param.clone(),
         best_param: initial_param,
-        gradient_buffer: Vec::with_capacity(parameter_count),
+        gradient_buffer: vec![0.0; parameter_count],
         param_buffer,
         best_cost: finite_cost_or_large(cost),
         iter: 0,
@@ -260,13 +260,9 @@ fn stochastic_state_is_terminated(state: &StochasticState) -> bool {
     state.iter >= state.max_iters
 }
 
-fn overwrite_vec_from_slice(target: &mut Vec<f64>, source: &[f64]) {
-    if target.len() == source.len() {
-        target.copy_from_slice(source);
-    } else {
-        target.clear();
-        target.extend_from_slice(source);
-    }
+fn overwrite_fixed_len_vec(target: &mut [f64], source: &[f64]) {
+    debug_assert_eq!(target.len(), source.len());
+    target.copy_from_slice(source);
 }
 
 fn stochastic_step<O>(
@@ -282,10 +278,9 @@ where
     let gradient = problem
         .gradient(&state.param_buffer)
         .map_err(optimizer_error)?;
-    state.gradient_buffer.clear();
     state
         .gradient_buffer
-        .extend_from_slice(array1_as_slice(&gradient));
+        .copy_from_slice(array1_as_slice(&gradient));
     solver.step(&state.gradient_buffer);
 
     let current_param = solver.parameters();
@@ -295,9 +290,9 @@ where
 
     if current_cost < state.best_cost {
         state.best_cost = current_cost;
-        overwrite_vec_from_slice(&mut state.best_param, current_param.as_slice());
+        overwrite_fixed_len_vec(state.best_param.as_mut_slice(), current_param.as_slice());
     }
-    overwrite_vec_from_slice(&mut state.current_param, current_param.as_slice());
+    overwrite_fixed_len_vec(state.current_param.as_mut_slice(), current_param.as_slice());
 
     Ok(())
 }

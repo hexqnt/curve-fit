@@ -44,3 +44,20 @@ fn rational_curve_params_roundtrip_for_new_families() {
         assert_eq!(params.values(), values);
     }
 }
+
+#[test]
+fn curve_params_callback_access_matches_allocating_view() {
+    let params = CurveParams::Linear { a: 2.5, b: -1.0 };
+
+    let values = params.with_values(|values| values.to_vec());
+    let named_values = params.with_names_and_values(|names, values| {
+        names
+            .iter()
+            .copied()
+            .zip(values.iter().copied())
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(values, params.values());
+    assert_eq!(named_values, vec![("a", 2.5), ("b", -1.0)]);
+}

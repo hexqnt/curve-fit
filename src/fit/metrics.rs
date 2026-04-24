@@ -286,7 +286,6 @@ where
     let quantizer = ResidualQuantizer::new(metric_quantization);
     let sample_count = points.len() as f64;
     let y_mean = points
-        .as_slice()
         .iter()
         .map(|point| quantizer.quantize_value(point.y()))
         .sum::<f64>()
@@ -297,7 +296,7 @@ where
     let mut soft_l1_sum = 0.0;
     let mut msle_sum = 0.0;
     let mut max_abs_error = 0.0_f64;
-    for point in points.as_slice() {
+    for point in points {
         let predicted = quantizer.quantize_value(evaluate(point.x()));
         let observed = quantizer.quantize_value(point.y());
         let residual = predicted - observed;
@@ -310,7 +309,6 @@ where
     }
 
     let sst = points
-        .as_slice()
         .iter()
         .map(|point| {
             let centered = quantizer.quantize_value(point.y()) - y_mean;
@@ -361,11 +359,10 @@ where
     let scalar =
         calculate_scalar_metrics_from_evaluator(points, metric_quantization, &mut evaluate);
 
-    let mut residuals = Vec::with_capacity(points.len());
-    for point in points.as_slice() {
-        let residual = evaluate(point.x()) - point.y();
-        residuals.push([point.x(), residual]);
-    }
+    let residuals = points
+        .iter()
+        .map(|point| [point.x(), evaluate(point.x()) - point.y()])
+        .collect();
 
     EvaluatorMetrics {
         mse: scalar.mse,
