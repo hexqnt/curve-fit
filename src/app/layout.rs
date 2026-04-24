@@ -57,8 +57,7 @@ impl eframe::App for CurveFitApp {
                 .frame(Self::side_panel_frame(panel_style))
                 .show_inside(ui, |ui| {
                     let language = self.ui_language;
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                    ui.set_width(ui.available_width());
+                    Self::setup_side_panel_content(ui);
                     Self::panel_card_collapsible(
                         ui,
                         "left_section_tools",
@@ -86,40 +85,40 @@ impl eframe::App for CurveFitApp {
                 .frame(Self::side_panel_frame(panel_style))
                 .show_inside(ui, |ui| {
                     let language = self.ui_language;
-                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-                    ui.set_width(ui.available_width());
-                    Self::panel_card_collapsible_with_collapsed_trailing(
-                        self,
-                        ui,
-                        "right_section_model",
-                        tr(language, "Model", "Модель"),
-                        CurveFitApp::ui_family_and_params,
-                        CurveFitApp::ui_model_selector_compact,
-                    );
-                    Self::panel_card_collapsible_with_collapsed_trailing(
-                        self,
-                        ui,
-                        "right_section_metric",
-                        tr(language, "Optimization metric", "Метрика оптимизации"),
-                        CurveFitApp::ui_optimization_metric,
-                        CurveFitApp::ui_optimization_metric_selector_compact,
-                    );
-                    Self::panel_card_collapsible_with_collapsed_trailing(
-                        self,
-                        ui,
-                        "right_section_optimizer",
-                        tr(language, "Optimizer", "Оптимизатор"),
-                        CurveFitApp::ui_optimizer,
-                        CurveFitApp::ui_optimizer_action_button_compact,
-                    );
-                    Self::panel_card_collapsible(
-                        ui,
-                        "right_section_result",
-                        tr(language, "Result", "Результат"),
-                        |ui| {
-                            self.ui_result(ui);
-                        },
-                    );
+                    Self::right_side_panel_scroll_area(ui, |ui| {
+                        Self::panel_card_collapsible_with_collapsed_trailing(
+                            self,
+                            ui,
+                            "right_section_model",
+                            tr(language, "Model", "Модель"),
+                            CurveFitApp::ui_family_and_params,
+                            CurveFitApp::ui_model_selector_compact,
+                        );
+                        Self::panel_card_collapsible_with_collapsed_trailing(
+                            self,
+                            ui,
+                            "right_section_metric",
+                            tr(language, "Optimization metric", "Метрика оптимизации"),
+                            CurveFitApp::ui_optimization_metric,
+                            CurveFitApp::ui_optimization_metric_selector_compact,
+                        );
+                        Self::panel_card_collapsible_with_collapsed_trailing(
+                            self,
+                            ui,
+                            "right_section_optimizer",
+                            tr(language, "Optimizer", "Оптимизатор"),
+                            CurveFitApp::ui_optimizer,
+                            CurveFitApp::ui_optimizer_action_button_compact,
+                        );
+                        Self::panel_card_collapsible(
+                            ui,
+                            "right_section_result",
+                            tr(language, "Result", "Результат"),
+                            |ui| {
+                                self.ui_result(ui);
+                            },
+                        );
+                    });
                 });
             self.track_right_panel_fit_changes_and_maybe_refit();
         }

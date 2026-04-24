@@ -16,10 +16,13 @@ const PANEL_CARD_CORNER_RADIUS: u8 = 7;
 const PANEL_CARD_OUTER_MARGIN_Y: i8 = 4;
 const PANEL_CARD_INNER_MARGIN_X: i8 = 10;
 const PANEL_CARD_INNER_MARGIN_Y: i8 = 8;
+const SIDE_PANEL_ITEM_SPACING_X: f32 = 10.0;
+const SIDE_PANEL_ITEM_SPACING_Y: f32 = 8.0;
 const SPLINE_KNOT_INPUTS_MAX_HEIGHT: f32 = 180.0;
 const RESULT_PARAMS_MAX_HEIGHT: f32 = 190.0;
 const COLLAPSING_ICON_SCALE: f32 = 1.5;
 const COLLAPSING_HEADER_TEXT_OFFSET_X: f32 = 4.0;
+const SETTINGS_PANEL_SCROLL_ID: &str = "settings_panel_scroll";
 const DIAGNOSTICS_SERIES_ID_LOSS: &str = "diagnostics_series_loss";
 const DIAGNOSTICS_SERIES_ID_MSE: &str = "diagnostics_series_mse";
 const DIAGNOSTICS_SERIES_ID_RMSE: &str = "diagnostics_series_rmse";
@@ -33,6 +36,25 @@ const DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_PARAMS: &str =
     "diagnostics_selected_iteration_marker_params";
 
 impl CurveFitApp {
+    pub(super) fn setup_side_panel_content(ui: &mut egui::Ui) {
+        ui.spacing_mut().item_spacing =
+            egui::vec2(SIDE_PANEL_ITEM_SPACING_X, SIDE_PANEL_ITEM_SPACING_Y);
+        ui.set_width(ui.available_width());
+    }
+
+    pub(super) fn right_side_panel_scroll_area(
+        ui: &mut egui::Ui,
+        add_contents: impl FnOnce(&mut egui::Ui),
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt(SETTINGS_PANEL_SCROLL_ID)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                Self::setup_side_panel_content(ui);
+                add_contents(ui);
+            });
+    }
+
     pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::symmetric(
