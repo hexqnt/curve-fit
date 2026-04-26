@@ -320,6 +320,10 @@ impl CurveFitApp {
         points_editor_panel::ui_tools(self, ui);
     }
 
+    pub(super) fn ui_point_layers(&mut self, ui: &mut egui::Ui) {
+        points_editor_panel::ui_point_layers(self, ui);
+    }
+
     pub(super) fn ui_points_editor(&mut self, ui: &mut egui::Ui) {
         points_editor_panel::ui_points_editor(self, ui);
     }

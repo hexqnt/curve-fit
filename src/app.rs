@@ -22,6 +22,7 @@ mod bootstrap;
 mod layout;
 mod model_catalog;
 mod panel_state;
+mod point_layers;
 mod state;
 mod status;
 mod style;
@@ -52,12 +53,13 @@ use self::i18n::file_import_icon_image;
 use self::i18n::{
     actions_icon_image, center_origin_icon_image, clear_icon_image, clipboard_import_icon_image,
     family_label, fit_icon_image, fit_to_content_icon_image, github_mark_image,
-    language_flag_image, model_choice_label, open_formula_icon_image,
-    optimization_loss_metric_label, origin_bottom_left_icon_image, panels_icon_image,
-    param_init_method_disabled_label, param_init_method_label, param_init_method_name_en,
-    redo_icon_image, replay_pause_icon_image, replay_play_icon_image, reset_icon_image,
-    spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label, stop_icon_image,
-    tool_icon_image, tr, undo_icon_image, view_icon_image,
+    language_flag_image, layer_delete_icon_image, layer_duplicate_icon_image,
+    layer_hidden_icon_image, layer_new_icon_image, layer_visible_icon_image, model_choice_label,
+    open_formula_icon_image, optimization_loss_metric_label, origin_bottom_left_icon_image,
+    panels_icon_image, param_init_method_disabled_label, param_init_method_label,
+    param_init_method_name_en, redo_icon_image, replay_pause_icon_image, replay_play_icon_image,
+    reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
+    stop_icon_image, tool_icon_image, tr, undo_icon_image, view_icon_image,
 };
 use self::model_catalog::{
     ModelChoice, ModelGroup, ResolvedModel, model_group, model_group_label,
@@ -78,7 +80,11 @@ use self::param_init::{
     rational_family,
 };
 use self::plot_utils::{fit_bounds_for_content, plot_domain};
-use self::points_state::{ParsedPointsCache, PointsEditorState};
+use self::point_layers::{PointLayer, PointLayerId, PointLayersState};
+use self::points_state::{
+    ParsedPointsCache, PointsEditorState, points_editor_cache_with_policy,
+    set_points_editor_cache_from_valid_points,
+};
 use self::points_text::{
     parse_f64, parse_points_from_clipboard_text, parse_points_text_cache, points_to_text,
 };
@@ -145,6 +151,7 @@ const DIAGNOSTICS_PANEL_DEFAULT_HEIGHT: f32 = 230.0;
 const DIAGNOSTICS_PANEL_MIN_HEIGHT: f32 = 120.0;
 const LEFT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
 const LEFT_PANEL_MIN_WIDTH: f32 = 320.0;
+const LEFT_PANEL_MAX_WIDTH: f32 = 460.0;
 const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 280.0;
 const RIGHT_PANEL_MIN_WIDTH: f32 = 280.0;
 const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;

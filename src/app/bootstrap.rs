@@ -28,7 +28,7 @@ impl Default for CurveFitApp {
         let default_adam = AdamConfig::default();
 
         Self {
-            points: PointsEditorState::default(),
+            point_layers: PointLayersState::default(),
             #[cfg(not(target_arch = "wasm32"))]
             points_file_import_dialog: FileDialog::new()
                 .title("Import points from file")

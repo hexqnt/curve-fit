@@ -185,7 +185,7 @@ impl CurveFitApp {
     ) -> Result<usize, String> {
         let points = parse_points_from_clipboard_text(text)?;
         let imported_count = points.len();
-        self.write_points_text(&points, true);
+        self.create_point_layer_from_points(&points);
         Ok(imported_count)
     }
 

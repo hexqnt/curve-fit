@@ -728,8 +728,7 @@ fn apply_param_init_updates_inputs_and_clears_fit_state() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points.text = "0 1\n1 3\n2 5\n3 7\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "0 1\n1 3\n2 5\n3 7\n");
 
     app.fit_result = Some(FitResult {
         family: CurveFamily::Cubic,
@@ -860,8 +859,7 @@ fn apply_param_init_sets_error_status_on_failure() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points.text = "1 0\n2 2\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "1 0\n2 2\n");
 
     app.apply_param_init_method(ParamInitMethod::DataBased);
 

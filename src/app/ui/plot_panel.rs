@@ -184,8 +184,12 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
 
 pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
     let language = app.ui_language;
-    let points = Arc::clone(&app.points_cache().plot_points);
-    let points_slice = points.as_ref();
+    let point_layers = app.visible_point_layer_plot_data();
+    let mut visible_points = Vec::new();
+    for layer in &point_layers {
+        visible_points.extend(layer.plot_points.iter().copied());
+    }
+    let points_slice = visible_points.as_slice();
     let (x_min, x_max) = plot_domain(points_slice);
     let navigation_mode = matches!(app.plot_tool, PlotTool::None);
     let spline_curve = app.spline_plot_curve.clone();
@@ -261,16 +265,10 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
         None
     };
     let locked_tool_bounds = app.active_tool_bounds;
-    let (samples_color, fitted_color) = if ui.visuals().dark_mode {
-        (
-            egui::Color32::from_rgb(232, 140, 96),
-            egui::Color32::from_rgb(96, 204, 238),
-        )
+    let fitted_color = if ui.visuals().dark_mode {
+        egui::Color32::from_rgb(96, 204, 238)
     } else {
-        (
-            egui::Color32::from_rgb(184, 87, 53),
-            egui::Color32::from_rgb(24, 126, 165),
-        )
+        egui::Color32::from_rgb(24, 126, 165)
     };
 
     let plot_response = Plot::new("fit_plot")
@@ -296,12 +294,14 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
             if let Some(bounds) = origin_bottom_left_bounds {
                 plot_ui.set_plot_bounds(bounds);
             }
-            if !points_slice.is_empty() {
-                plot_ui.points(
-                    PlotPointsItem::new(tr(language, "Samples", "Точки"), points_slice)
-                        .radius(2.8_f32)
-                        .color(samples_color),
-                );
+            for layer in &point_layers {
+                if !layer.plot_points.is_empty() {
+                    plot_ui.points(
+                        PlotPointsItem::new(layer.name.clone(), layer.plot_points.as_ref())
+                            .radius(2.8_f32)
+                            .color(layer.color),
+                    );
+                }
             }
             if let Some(fitted) = spline_curve_slice {
                 plot_ui.line(

@@ -437,8 +437,7 @@ fn run_fit_invalid_input_does_not_seed_iteration_diagnostics() {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points.text = "-1 2\n1 3\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "-1 2\n1 3\n");
 
     app.run_fit();
 
@@ -462,16 +461,14 @@ fn points_edit_parse_error_status_restores_completed_when_fixed() {
         ..Default::default()
     };
 
-    app.points.text = "1 2 3\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "1 2 3\n");
     app.refresh_status_after_points_edit();
     assert!(matches!(
         app.status.as_ref(),
         Some(StatusMessage::Error(message)) if message.starts_with(super::POINTS_PARSE_ERROR_PREFIX)
     ));
 
-    app.points.text = "1 2\n2 3\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "1 2\n2 3\n");
     app.refresh_status_after_points_edit();
     assert!(matches!(app.status, Some(StatusMessage::FitCompleted)));
     assert_eq!(

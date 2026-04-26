@@ -203,7 +203,7 @@ pub(super) enum WasmFitJob {
 
 /// Состояние и UI-логика интерактивного приложения для подгонки кривых.
 pub struct CurveFitApp {
-    pub(super) points: PointsEditorState,
+    pub(super) point_layers: PointLayersState,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) points_file_import_dialog: FileDialog,
     #[cfg(not(target_arch = "wasm32"))]
@@ -745,7 +745,7 @@ impl CurveFitApp {
             ));
         }
 
-        let points = self.parse_points_strict()?;
+        let points = self.parse_visible_points_strict()?;
         family
             .validate_points(&points)
             .map_err(|error| error.to_string())?;
@@ -758,7 +758,7 @@ impl CurveFitApp {
         family: SplineFamilyKind,
         config: SplineConfig,
     ) -> Result<Vec<f64>, String> {
-        let points = self.parse_points_strict()?;
+        let points = self.parse_visible_points_strict()?;
         default_spline_initial_knot_y(&points, family, config).map_err(|error| error.to_string())
     }
 

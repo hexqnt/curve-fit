@@ -64,6 +64,17 @@ fn parsed_point_pairs(app: &mut CurveFitApp) -> Vec<(f64, f64)> {
         .collect::<Vec<_>>()
 }
 
+fn app_with_points_editor_state(points: PointsEditorState) -> CurveFitApp {
+    let mut app = CurveFitApp::default();
+    app.selected_layer_mut().points = points;
+    app
+}
+
+fn set_selected_points_text(app: &mut CurveFitApp, text: impl Into<String>) {
+    app.selected_points_editor_mut().text = text.into();
+    app.invalidate_points_cache();
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn write_temp_points_csv(contents: &[u8]) -> PathBuf {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -126,8 +137,7 @@ fn make_linear_fit_app() -> CurveFitApp {
         ..Default::default()
     };
     app.sync_parameter_inputs();
-    app.points.text = "0 1\n1 3\n2 5\n3 7\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(&mut app, "0 1\n1 3\n2 5\n3 7\n");
     app
 }
 
@@ -137,8 +147,10 @@ fn make_linear_spline_fit_app() -> CurveFitApp {
         selected_model: ModelChoice::LinearSpline,
         ..Default::default()
     };
-    app.points.text = "0 1\n1 3\n2 5\n3 7\n4 9\n5 11\n6 13\n7 15\n8 17\n9 19\n".to_string();
-    app.invalidate_points_cache();
+    set_selected_points_text(
+        &mut app,
+        "0 1\n1 3\n2 5\n3 7\n4 9\n5 11\n6 13\n7 15\n8 17\n9 19\n",
+    );
     app
 }
 

@@ -53,6 +53,7 @@ impl eframe::App for CurveFitApp {
             egui::Panel::left("points_panel")
                 .default_size(LEFT_PANEL_DEFAULT_WIDTH)
                 .min_size(LEFT_PANEL_MIN_WIDTH)
+                .max_size(LEFT_PANEL_MAX_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
                 .show_inside(ui, |ui| {
@@ -64,6 +65,14 @@ impl eframe::App for CurveFitApp {
                         tr(language, "Tools", "Инструменты"),
                         |ui| {
                             self.ui_tools(ui);
+                        },
+                    );
+                    Self::panel_card_collapsible(
+                        ui,
+                        "left_section_layers",
+                        tr(language, "Layers", "Слои"),
+                        |ui| {
+                            self.ui_point_layers(ui);
                         },
                     );
                     Self::panel_card_collapsible(

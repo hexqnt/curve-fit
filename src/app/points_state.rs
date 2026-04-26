@@ -10,6 +10,14 @@ pub(super) struct ParsedPointsCache {
     pub(super) plot_points: Arc<[PlotPoint]>,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct VisiblePointLayerPlotData {
+    /// Имя слоя для легенды графика.
+    pub(super) name: String,
+    pub(super) color: egui::Color32,
+    pub(super) plot_points: Arc<[PlotPoint]>,
+}
+
 /// Локальное состояние текстового редактора точек, включая debounce и историю изменений.
 #[derive(Debug, Clone)]
 pub(super) struct PointsEditorState {
@@ -36,45 +44,111 @@ impl Default for PointsEditorState {
     }
 }
 
+pub(super) fn invalidate_points_editor_cache(points: &mut PointsEditorState) {
+    points.cache_dirty = true;
+    points.text_sync_pending = false;
+    // Небольшой debounce уменьшает число парсингов во время быстрого ввода текста.
+    points.parse_debounce_deadline =
+        Some(Instant::now() + Duration::from_millis(POINTS_PARSE_DEBOUNCE_MS));
+}
+
+pub(super) fn points_editor_cache_with_policy(
+    points: &mut PointsEditorState,
+    force: bool,
+) -> &ParsedPointsCache {
+    // Политика пересчета кэша:
+    // - сразу, если кэша нет;
+    // - по force;
+    // - или после окончания debounce.
+    let should_parse = if points.cache.is_none() {
+        true
+    } else if !points.cache_dirty {
+        false
+    } else if force {
+        true
+    } else {
+        points
+            .parse_debounce_deadline
+            .map(|deadline| Instant::now() >= deadline)
+            .unwrap_or(true)
+    };
+
+    if should_parse || points.cache.is_none() {
+        // Текст парсим ровно один раз на пакет правок, а дальше работаем из кэша.
+        points.cache = Some(parse_points_text_cache(&points.text));
+        points.cache_dirty = false;
+        points.text_sync_pending = false;
+        points.parse_debounce_deadline = None;
+    }
+    points.cache.get_or_insert_with(|| ParsedPointsCache {
+        parsed_points: Err("Internal error: points cache is unavailable".to_string()),
+        parse_error_line: None,
+        plot_points: Vec::<PlotPoint>::new().into(),
+    })
+}
+
+pub(super) fn flush_points_editor_text_from_cache_if_pending(points: &mut PointsEditorState) {
+    if !points.text_sync_pending {
+        return;
+    }
+
+    // Лениво сериализуем точки обратно в текст только тогда, когда это реально нужно UI.
+    let synced_text = points.cache.as_ref().and_then(|cache| {
+        cache
+            .parsed_points
+            .as_ref()
+            .ok()
+            .map(|points| points_to_text(points))
+    });
+    if let Some(synced_text) = synced_text {
+        points.text = synced_text;
+    }
+    points.text_sync_pending = false;
+}
+
+pub(super) fn set_points_editor_cache_from_valid_points(
+    points: &mut PointsEditorState,
+    valid_points: &[Point],
+) {
+    let parsed_points = valid_points.to_vec();
+    let plot_points: Arc<[PlotPoint]> = parsed_points
+        .iter()
+        .map(|point| PlotPoint::new(point.x(), point.y()))
+        .collect::<Vec<_>>()
+        .into();
+    points.cache = Some(ParsedPointsCache {
+        parsed_points: Ok(parsed_points),
+        parse_error_line: None,
+        plot_points,
+    });
+    points.cache_dirty = false;
+    points.text_sync_pending = false;
+    points.parse_debounce_deadline = None;
+}
+
 impl CurveFitApp {
+    pub(super) fn selected_layer(&self) -> &PointLayer {
+        self.point_layers.selected()
+    }
+
+    pub(super) fn selected_layer_mut(&mut self) -> &mut PointLayer {
+        self.point_layers.selected_mut()
+    }
+
+    pub(super) fn selected_points_editor(&self) -> &PointsEditorState {
+        &self.selected_layer().points
+    }
+
+    pub(super) fn selected_points_editor_mut(&mut self) -> &mut PointsEditorState {
+        &mut self.selected_layer_mut().points
+    }
+
     pub(super) fn invalidate_points_cache(&mut self) {
-        self.points.cache_dirty = true;
-        self.points.text_sync_pending = false;
-        // Небольшой debounce уменьшает число парсингов во время быстрого ввода текста.
-        self.points.parse_debounce_deadline =
-            Some(Instant::now() + Duration::from_millis(POINTS_PARSE_DEBOUNCE_MS));
+        invalidate_points_editor_cache(self.selected_points_editor_mut());
     }
 
     pub(super) fn points_cache_with_policy(&mut self, force: bool) -> &ParsedPointsCache {
-        // Политика пересчета кэша:
-        // - сразу, если кэша нет;
-        // - по force;
-        // - или после окончания debounce.
-        let should_parse = if self.points.cache.is_none() {
-            true
-        } else if !self.points.cache_dirty {
-            false
-        } else if force {
-            true
-        } else {
-            self.points
-                .parse_debounce_deadline
-                .map(|deadline| Instant::now() >= deadline)
-                .unwrap_or(true)
-        };
-
-        if should_parse || self.points.cache.is_none() {
-            // Текст парсим ровно один раз на пакет правок, а дальше работаем из кэша.
-            self.points.cache = Some(parse_points_text_cache(&self.points.text));
-            self.points.cache_dirty = false;
-            self.points.text_sync_pending = false;
-            self.points.parse_debounce_deadline = None;
-        }
-        self.points.cache.get_or_insert_with(|| ParsedPointsCache {
-            parsed_points: Err("Internal error: points cache is unavailable".to_string()),
-            parse_error_line: None,
-            plot_points: Vec::<PlotPoint>::new().into(),
-        })
+        points_editor_cache_with_policy(self.selected_points_editor_mut(), force)
     }
 
     pub(super) fn points_cache(&mut self) -> &ParsedPointsCache {
@@ -82,14 +156,21 @@ impl CurveFitApp {
     }
 
     pub(super) fn maybe_refresh_points_cache_after_debounce(&mut self) {
-        if self.points.cache_dirty
-            && self
-                .points
-                .parse_debounce_deadline
-                .map(|deadline| Instant::now() >= deadline)
-                .unwrap_or(true)
-        {
-            self.points_cache_with_policy(true);
+        let now = Instant::now();
+        let mut refreshed_any = false;
+        for layer in &mut self.point_layers.layers {
+            if layer.points.cache_dirty
+                && layer
+                    .points
+                    .parse_debounce_deadline
+                    .map(|deadline| now >= deadline)
+                    .unwrap_or(true)
+            {
+                points_editor_cache_with_policy(&mut layer.points, true);
+                refreshed_any = true;
+            }
+        }
+        if refreshed_any {
             self.refresh_status_after_points_edit();
         }
     }
@@ -103,12 +184,7 @@ impl CurveFitApp {
     }
 
     pub(super) fn refresh_status_after_points_edit(&mut self) {
-        let parse_error = match &self.points_cache_with_policy(true).parsed_points {
-            Ok(_) => None,
-            Err(error) => Some(error.clone()),
-        };
-
-        if let Some(error) = parse_error {
+        if let Some(error) = self.first_visible_points_parse_error() {
             self.status = Some(StatusMessage::Error(format!(
                 "{POINTS_PARSE_ERROR_PREFIX}{error}"
             )));
@@ -123,45 +199,46 @@ impl CurveFitApp {
         }
     }
 
+    fn first_visible_points_parse_error(&mut self) -> Option<String> {
+        for layer in &mut self.point_layers.layers {
+            if !layer.visible {
+                continue;
+            }
+
+            let display_name = layer.display_name().to_owned();
+            let cache = points_editor_cache_with_policy(&mut layer.points, true);
+            if let Err(error) = &cache.parsed_points {
+                return Some(format!("Layer '{display_name}': {error}"));
+            }
+        }
+
+        None
+    }
+
     pub(super) fn push_points_undo_snapshot(&mut self, snapshot: String) {
-        if self
-            .points
+        let points = self.selected_points_editor_mut();
+        if points
             .undo_stack
             .last()
             .is_some_and(|last| *last == snapshot)
         {
             return;
         }
-        self.points.undo_stack.push(snapshot);
+        points.undo_stack.push(snapshot);
         // Ограничиваем историю фиксированным размером, чтобы не раздувать память.
-        if self.points.undo_stack.len() > POINTS_HISTORY_LIMIT {
-            let overflow = self.points.undo_stack.len() - POINTS_HISTORY_LIMIT;
-            self.points.undo_stack.drain(0..overflow);
+        if points.undo_stack.len() > POINTS_HISTORY_LIMIT {
+            let overflow = points.undo_stack.len() - POINTS_HISTORY_LIMIT;
+            points.undo_stack.drain(0..overflow);
         }
     }
 
     pub(super) fn flush_points_text_from_cache_if_pending(&mut self) {
-        if !self.points.text_sync_pending {
-            return;
-        }
-
-        // Лениво сериализуем точки обратно в текст только тогда, когда это реально нужно UI.
-        let synced_text = self.points.cache.as_ref().and_then(|cache| {
-            cache
-                .parsed_points
-                .as_ref()
-                .ok()
-                .map(|points| points_to_text(points))
-        });
-        if let Some(synced_text) = synced_text {
-            self.points.text = synced_text;
-        }
-        self.points.text_sync_pending = false;
+        flush_points_editor_text_from_cache_if_pending(self.selected_points_editor_mut());
     }
 
     pub(super) fn push_current_points_undo_snapshot(&mut self) {
         self.flush_points_text_from_cache_if_pending();
-        self.push_points_undo_snapshot(self.points.text.clone());
+        self.push_points_undo_snapshot(self.selected_points_editor().text.clone());
     }
 
     pub(super) fn edit_valid_points_in_cache<F>(
@@ -184,10 +261,11 @@ impl CurveFitApp {
         if record_undo {
             self.push_current_points_undo_snapshot();
         }
-        self.points.redo_stack.clear();
+        self.selected_points_editor_mut().redo_stack.clear();
 
         let maybe_synced_text = {
-            let Some(cache) = self.points.cache.as_mut() else {
+            let points_state = self.selected_points_editor_mut();
+            let Some(cache) = points_state.cache.as_mut() else {
                 return Err("Internal error: points cache is unavailable".to_string());
             };
             // Мутируем уже проверенные точки прямо в кэше, чтобы не гонять повторный parse/format.
@@ -206,30 +284,26 @@ impl CurveFitApp {
         };
 
         if let Some(synced_text) = maybe_synced_text {
-            self.points.text = synced_text;
-            self.points.text_sync_pending = false;
+            let points_state = self.selected_points_editor_mut();
+            points_state.text = synced_text;
+            points_state.text_sync_pending = false;
         } else {
-            self.points.text_sync_pending = true;
+            self.selected_points_editor_mut().text_sync_pending = true;
         }
 
-        if matches!(
-            self.status.as_ref(),
-            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
-        ) {
-            self.status = Some(self.idle_status_after_points_edit());
-        }
+        self.refresh_status_after_points_edit();
 
         Ok(())
     }
 
     pub(super) fn apply_points_text_change(&mut self, new_text: String, keep_redo: bool) {
-        if self.points.text == new_text {
+        if self.selected_points_editor().text == new_text {
             return;
         }
-        self.points.text = new_text;
+        self.selected_points_editor_mut().text = new_text;
         self.invalidate_points_cache();
         if !keep_redo {
-            self.points.redo_stack.clear();
+            self.selected_points_editor_mut().redo_stack.clear();
         }
     }
 
@@ -237,10 +311,13 @@ impl CurveFitApp {
         if self.fit_in_progress {
             return;
         }
-        let Some(previous) = self.points.undo_stack.pop() else {
+        let Some(previous) = self.selected_points_editor_mut().undo_stack.pop() else {
             return;
         };
-        self.points.redo_stack.push(self.points.text.clone());
+        let current_text = self.selected_points_editor().text.clone();
+        self.selected_points_editor_mut()
+            .redo_stack
+            .push(current_text);
         self.apply_points_text_change(previous, true);
         self.refresh_status_after_points_edit();
     }
@@ -249,7 +326,7 @@ impl CurveFitApp {
         if self.fit_in_progress {
             return;
         }
-        let Some(next) = self.points.redo_stack.pop() else {
+        let Some(next) = self.selected_points_editor_mut().redo_stack.pop() else {
             return;
         };
         self.push_current_points_undo_snapshot();
@@ -257,68 +334,92 @@ impl CurveFitApp {
         self.refresh_status_after_points_edit();
     }
 
-    pub(super) fn parse_points_strict(&mut self) -> Result<Points, String> {
-        let parsed_points = match &self.points_cache_with_policy(true).parsed_points {
-            Ok(points) => points.clone(),
-            Err(error) => return Err(error.clone()),
-        };
+    pub(super) fn parse_visible_points_strict(&mut self) -> Result<Points, String> {
+        let mut parsed_points = Vec::new();
+        for layer in &mut self.point_layers.layers {
+            if !layer.visible {
+                continue;
+            }
+            let display_name = layer.display_name().to_owned();
+            let cache = points_editor_cache_with_policy(&mut layer.points, true);
+            match &cache.parsed_points {
+                Ok(points) => parsed_points.extend(points.iter().copied()),
+                Err(error) => return Err(format!("Layer '{display_name}': {error}")),
+            }
+        }
         Points::try_from(parsed_points).map_err(|error| error.to_string())
     }
 
+    pub(super) fn create_empty_point_layer(&mut self) -> PointLayerId {
+        self.point_layers.create_empty_layer()
+    }
+
+    pub(super) fn create_point_layer_from_points(&mut self, points: &[Point]) -> PointLayerId {
+        self.point_layers.create_layer_from_points(points)
+    }
+
+    pub(super) fn duplicate_selected_point_layer(&mut self) -> PointLayerId {
+        self.point_layers.duplicate_selected_layer()
+    }
+
+    pub(super) fn delete_selected_point_layer(&mut self) {
+        self.point_layers.delete_selected_layer();
+        self.refresh_status_after_points_edit();
+    }
+
+    pub(super) fn visible_point_layer_plot_data(&mut self) -> Vec<VisiblePointLayerPlotData> {
+        self.point_layers
+            .layers
+            .iter_mut()
+            .filter(|layer| layer.visible)
+            .filter_map(|layer| {
+                let name = layer.display_name().to_owned();
+                let color = layer.color;
+                let cache = points_editor_cache_with_policy(&mut layer.points, false);
+                if cache.plot_points.is_empty() {
+                    return None;
+                }
+                Some(VisiblePointLayerPlotData {
+                    name,
+                    color,
+                    plot_points: Arc::clone(&cache.plot_points),
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn set_points_cache_from_valid_points(&mut self, points: &[Point]) {
-        let parsed_points = points.to_vec();
-        let plot_points: Arc<[PlotPoint]> = parsed_points
-            .iter()
-            .map(|point| PlotPoint::new(point.x(), point.y()))
-            .collect::<Vec<_>>()
-            .into();
-        self.points.cache = Some(ParsedPointsCache {
-            parsed_points: Ok(parsed_points),
-            parse_error_line: None,
-            plot_points,
-        });
-        self.points.cache_dirty = false;
-        self.points.text_sync_pending = false;
-        self.points.parse_debounce_deadline = None;
+        set_points_editor_cache_from_valid_points(self.selected_points_editor_mut(), points);
     }
 
     pub(super) fn clear_points_text(&mut self, record_undo: bool) {
         self.flush_points_text_from_cache_if_pending();
-        if self.points.text.is_empty() {
+        if self.selected_points_editor().text.is_empty() {
             return;
         }
-        let previous = std::mem::take(&mut self.points.text);
+        let previous = std::mem::take(&mut self.selected_points_editor_mut().text);
         if record_undo {
             self.push_points_undo_snapshot(previous);
         }
-        self.points.redo_stack.clear();
+        self.selected_points_editor_mut().redo_stack.clear();
         self.set_points_cache_from_valid_points(&[]);
-        if matches!(
-            self.status.as_ref(),
-            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
-        ) {
-            self.status = Some(self.idle_status_after_points_edit());
-        }
+        self.refresh_status_after_points_edit();
     }
 
     pub(super) fn write_points_text(&mut self, points: &[Point], record_undo: bool) {
         self.flush_points_text_from_cache_if_pending();
         let new_text = points_to_text(points);
-        if self.points.text == new_text {
+        if self.selected_points_editor().text == new_text {
             return;
         }
         if record_undo {
             self.push_current_points_undo_snapshot();
         }
-        self.points.text = new_text;
-        self.points.redo_stack.clear();
+        let points_state = self.selected_points_editor_mut();
+        points_state.text = new_text;
+        points_state.redo_stack.clear();
         self.set_points_cache_from_valid_points(points);
-        if matches!(
-            self.status.as_ref(),
-            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
-        ) {
-            self.status = Some(self.idle_status_after_points_edit());
-        }
+        self.refresh_status_after_points_edit();
     }
 
     pub(super) fn can_move_points_to_positive_xy(&mut self) -> bool {

@@ -467,15 +467,15 @@ mod tests {
     fn file_import_replaces_points_text_pushes_undo_and_clears_redo() {
         let previous_text = "0 1\n1 2\n";
         let mut app = CurveFitApp {
-            points: super::PointsEditorState {
-                text: previous_text.to_string(),
-                redo_stack: vec!["stale redo entry".to_string()],
-                ..Default::default()
-            },
             status: Some(StatusMessage::Error(format!(
                 "{}previous error",
                 super::FILE_IMPORT_ERROR_PREFIX
             ))),
+            ..Default::default()
+        };
+        app.selected_layer_mut().points = super::PointsEditorState {
+            text: previous_text.to_string(),
+            redo_stack: vec!["stale redo entry".to_string()],
             ..Default::default()
         };
         let path = write_temp_file("csv", b"10;20\n30;40\n");
@@ -484,22 +484,23 @@ mod tests {
         cleanup_temp_file(&path);
 
         assert_eq!(
-            app.points.text,
+            app.selected_points_editor().text,
             "10.00000000 20.00000000\n30.00000000 40.00000000\n"
         );
-        assert_eq!(app.points.undo_stack, vec![previous_text.to_string()]);
-        assert!(app.points.redo_stack.is_empty());
+        assert_eq!(
+            app.selected_points_editor().undo_stack,
+            vec![previous_text.to_string()]
+        );
+        assert!(app.selected_points_editor().redo_stack.is_empty());
         assert!(matches!(app.status, Some(StatusMessage::Ready)));
     }
 
     #[test]
     fn file_import_error_keeps_existing_points_text() {
         let previous_text = "0 1\n1 2\n";
-        let mut app = CurveFitApp {
-            points: super::PointsEditorState {
-                text: previous_text.to_string(),
-                ..Default::default()
-            },
+        let mut app = CurveFitApp::default();
+        app.selected_layer_mut().points = super::PointsEditorState {
+            text: previous_text.to_string(),
             ..Default::default()
         };
         let path = write_temp_file("csv", b"1,2,3\n");
@@ -507,8 +508,8 @@ mod tests {
         app.handle_points_file_import_path(&path);
         cleanup_temp_file(&path);
 
-        assert_eq!(app.points.text, previous_text);
-        assert!(app.points.undo_stack.is_empty());
+        assert_eq!(app.selected_points_editor().text, previous_text);
+        assert!(app.selected_points_editor().undo_stack.is_empty());
         assert!(matches!(
             app.status.as_ref(),
             Some(StatusMessage::Error(message)) if message.starts_with(super::FILE_IMPORT_ERROR_PREFIX)

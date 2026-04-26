@@ -76,6 +76,26 @@ pub(super) fn clear_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/clear-all.svg", tint)
 }
 
+pub(super) fn layer_new_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/plus.svg", tint)
+}
+
+pub(super) fn layer_duplicate_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/copy.svg", tint)
+}
+
+pub(super) fn layer_delete_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/trash.svg", tint)
+}
+
+pub(super) fn layer_visible_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/eye.svg", tint)
+}
+
+pub(super) fn layer_hidden_icon_image(tint: egui::Color32) -> egui::Image<'static> {
+    tabler_icon!("../../assets/icons/tabler/eye-x.svg", tint)
+}
+
 pub(super) fn actions_icon_image(tint: egui::Color32) -> egui::Image<'static> {
     tabler_icon!("../../assets/icons/tabler/dots.svg", tint)
 }
