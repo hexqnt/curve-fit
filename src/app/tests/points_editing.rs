@@ -208,6 +208,34 @@ fn selected_layer_only_editing_preserves_other_layers() {
 }
 
 #[test]
+fn points_data_change_clears_stale_fit_outputs() {
+    let mut app = CurveFitApp {
+        fit_result: Some(FitResult {
+            family: CurveFamily::Linear,
+            params: CurveParams::Linear { a: 1.0, b: 0.0 },
+            mse: 0.0,
+            rmse: 0.0,
+            iterations: 1,
+        }),
+        last_fit_duration: Some(std::time::Duration::from_millis(42)),
+        status: Some(StatusMessage::FitCompleted),
+        ..Default::default()
+    };
+
+    app.write_points_text(
+        &[
+            Point::try_new(10.0, 20.0).unwrap(),
+            Point::try_new(30.0, 40.0).unwrap(),
+        ],
+        false,
+    );
+
+    assert!(app.fit_result.is_none());
+    assert!(app.last_fit_duration.is_none());
+    assert!(matches!(app.status, Some(StatusMessage::Ready)));
+}
+
+#[test]
 fn duplicate_layer_copies_points_and_selects_copy() {
     let mut app = CurveFitApp::default();
     app.selected_layer_mut().name = "Source".to_string();

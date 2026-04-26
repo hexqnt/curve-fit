@@ -602,6 +602,8 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.push_points_undo_snapshot(before_edit);
                 app.selected_points_editor_mut().redo_stack.clear();
                 app.invalidate_points_cache();
+                app.clear_fit_outputs();
+                app.status = Some(StatusMessage::Ready);
             }
         });
 

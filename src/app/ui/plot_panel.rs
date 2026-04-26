@@ -13,6 +13,7 @@ pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64, record_
 
     if let Err(error) = app.edit_valid_points_in_cache(record_undo, false, move |points| {
         points.push(point);
+        true
     }) {
         app.status = Some(StatusMessage::Error(error));
     }
@@ -46,6 +47,7 @@ pub(super) fn spray_points_from_plot(
 
     if let Err(error) = app.edit_valid_points_in_cache(false, false, |points| {
         points.extend(generated_points);
+        true
     }) {
         app.status = Some(StatusMessage::Error(error));
     }
@@ -63,11 +65,13 @@ pub(super) fn erase_points_from_plot(
     }
 
     if let Err(error) = app.edit_valid_points_in_cache(false, false, |points| {
+        let previous_len = points.len();
         points.retain(|point| {
             let dx = (point.x() - center_x) / radius_x;
             let dy = (point.y() - center_y) / radius_y;
             dx * dx + dy * dy > 1.0
         });
+        points.len() != previous_len
     }) {
         app.status = Some(StatusMessage::Error(error));
     }

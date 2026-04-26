@@ -199,6 +199,17 @@ impl CurveFitApp {
         }
     }
 
+    fn finish_valid_points_change(&mut self) {
+        self.clear_fit_outputs();
+        self.refresh_status_after_points_edit();
+        if !matches!(
+            self.status.as_ref(),
+            Some(StatusMessage::Error(message)) if message.starts_with(POINTS_PARSE_ERROR_PREFIX)
+        ) {
+            self.status = Some(self.idle_status_after_points_edit());
+        }
+    }
+
     fn first_visible_points_parse_error(&mut self) -> Option<String> {
         for layer in &mut self.point_layers.layers {
             if !layer.visible {
@@ -248,7 +259,7 @@ impl CurveFitApp {
         edit: F,
     ) -> Result<(), String>
     where
-        F: FnOnce(&mut Vec<Point>),
+        F: FnOnce(&mut Vec<Point>) -> bool,
     {
         let parse_error = match &self.points_cache_with_policy(true).parsed_points {
             Ok(_) => None,
@@ -273,7 +284,9 @@ impl CurveFitApp {
                 Ok(points) => points,
                 Err(error) => return Err(error.clone()),
             };
-            edit(points);
+            if !edit(points) {
+                return Ok(());
+            }
             cache.parse_error_line = None;
             cache.plot_points = points
                 .iter()
@@ -291,7 +304,7 @@ impl CurveFitApp {
             self.selected_points_editor_mut().text_sync_pending = true;
         }
 
-        self.refresh_status_after_points_edit();
+        self.finish_valid_points_change();
 
         Ok(())
     }
@@ -302,6 +315,7 @@ impl CurveFitApp {
         }
         self.selected_points_editor_mut().text = new_text;
         self.invalidate_points_cache();
+        self.clear_fit_outputs();
         if !keep_redo {
             self.selected_points_editor_mut().redo_stack.clear();
         }
@@ -355,16 +369,20 @@ impl CurveFitApp {
     }
 
     pub(super) fn create_point_layer_from_points(&mut self, points: &[Point]) -> PointLayerId {
-        self.point_layers.create_layer_from_points(points)
+        let id = self.point_layers.create_layer_from_points(points);
+        self.finish_valid_points_change();
+        id
     }
 
     pub(super) fn duplicate_selected_point_layer(&mut self) -> PointLayerId {
-        self.point_layers.duplicate_selected_layer()
+        let id = self.point_layers.duplicate_selected_layer();
+        self.finish_valid_points_change();
+        id
     }
 
     pub(super) fn delete_selected_point_layer(&mut self) {
         self.point_layers.delete_selected_layer();
-        self.refresh_status_after_points_edit();
+        self.finish_valid_points_change();
     }
 
     pub(super) fn visible_point_layer_plot_data(&mut self) -> Vec<VisiblePointLayerPlotData> {
@@ -403,7 +421,7 @@ impl CurveFitApp {
         }
         self.selected_points_editor_mut().redo_stack.clear();
         self.set_points_cache_from_valid_points(&[]);
-        self.refresh_status_after_points_edit();
+        self.finish_valid_points_change();
     }
 
     pub(super) fn write_points_text(&mut self, points: &[Point], record_undo: bool) {
@@ -419,7 +437,7 @@ impl CurveFitApp {
         points_state.text = new_text;
         points_state.redo_stack.clear();
         self.set_points_cache_from_valid_points(points);
-        self.refresh_status_after_points_edit();
+        self.finish_valid_points_change();
     }
 
     pub(super) fn can_move_points_to_positive_xy(&mut self) -> bool {
