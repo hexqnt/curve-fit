@@ -106,7 +106,15 @@ impl<const N: usize> TryFrom<[Point; N]> for Points {
     type Error = InputError;
 
     fn try_from(points: [Point; N]) -> Result<Self, Self::Error> {
-        Self::try_from(Vec::from(points))
+        if N < MIN_POINTS {
+            return Err(InputError::TooFewPoints {
+                len: N,
+                min_required: MIN_POINTS,
+            });
+        }
+        Ok(Self {
+            points: Arc::from(points),
+        })
     }
 }
 

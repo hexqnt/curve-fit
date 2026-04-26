@@ -44,6 +44,20 @@ fn points_require_at_least_two_values() {
 }
 
 #[test]
+fn points_array_construction_rejects_short_arrays() {
+    let points = [Point::try_new(0.0, 0.0).unwrap()];
+    let error = Points::try_from(points).expect_err("must reject short arrays");
+
+    assert_eq!(
+        error,
+        InputError::TooFewPoints {
+            len: 1,
+            min_required: 2,
+        }
+    );
+}
+
+#[test]
 fn family_validation_checks_min_points_and_domain() {
     let points = Points::try_from([
         Point::try_new(-1.0, 1.0).unwrap(),
