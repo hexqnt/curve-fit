@@ -643,28 +643,28 @@ fn tool_usage_hint(language: UiLanguage, tool: PlotTool) -> &'static str {
     match tool {
         PlotTool::None => tr(
             language,
-            "Navigation mode\n- Drag to pan the plot\n- Use wheel/trackpad to zoom\n- Double-click resets view bounds",
-            "Режим навигации\n- Перетаскивание двигает график\n- Колесо/трекпад меняют масштаб\n- Двойной клик сбрасывает вид в границы данных",
+            "Navigation mode\n- Drag to pan the plot\n- Wheel/trackpad scroll pans the plot\n- Hold Ctrl and use wheel/trackpad to zoom\n- Double-click resets view bounds",
+            "Режим навигации\n- Перетаскивание двигает график\n- Колесо/трекпад сдвигают график\n- Зажмите Ctrl и используйте колесо/трекпад для масштаба\n- Двойной клик сбрасывает вид в границы данных",
         ),
         PlotTool::SinglePoint => tr(
             language,
-            "Single point tool\n- Press left mouse button on plot to place one sample immediately\n- No extra points are added while button is held\n- Best for precise manual placement",
-            "Инструмент одной точки\n- Нажмите левую кнопку на графике, чтобы сразу поставить одну точку\n- Пока кнопка зажата, новые точки не добавляются\n- Подходит для точного ручного ввода",
+            "Single point tool\n- Press left mouse button on plot to place one sample immediately\n- Hold middle mouse button to pan the plot\n- Hold Ctrl and use wheel/trackpad to zoom\n- No extra points are added while button is held\n- Best for precise manual placement",
+            "Инструмент одной точки\n- Нажмите левую кнопку на графике, чтобы сразу поставить одну точку\n- Зажмите среднюю кнопку мыши, чтобы двигать график\n- Зажмите Ctrl и используйте колесо/трекпад для масштаба\n- Пока кнопка зажата, новые точки не добавляются\n- Подходит для точного ручного ввода",
         ),
         PlotTool::Dotted => tr(
             language,
-            "Dotted tool\n- Left click on plot to add one sample\n- Hold left mouse button and move cursor to place points along the path",
-            "Инструмент пунктира\n- Левый клик по графику добавляет одну точку\n- Зажмите левую кнопку и ведите курсор, чтобы ставить точки по траектории",
+            "Dotted tool\n- Left click on plot to add one sample\n- Hold left mouse button and move cursor to place points along the path\n- Hold middle mouse button to pan the plot\n- Hold Ctrl and use wheel/trackpad to zoom",
+            "Инструмент пунктира\n- Левый клик по графику добавляет одну точку\n- Зажмите левую кнопку и ведите курсор, чтобы ставить точки по траектории\n- Зажмите среднюю кнопку мыши, чтобы двигать график\n- Зажмите Ctrl и используйте колесо/трекпад для масштаба",
         ),
         PlotTool::Spray => tr(
             language,
-            "Spray tool\n- Hold left mouse button to add a stream of points\n- Rate controls points per second\n- Radius controls spread around cursor",
-            "Инструмент распыления\n- Зажмите левую кнопку, чтобы добавлять поток точек\n- Скорость задаёт число точек в секунду\n- Радиус задаёт разброс вокруг курсора",
+            "Spray tool\n- Hold left mouse button to add a stream of points\n- Hold middle mouse button to pan the plot\n- Hold Ctrl and use wheel/trackpad to zoom\n- Rate controls points per second\n- Radius controls spread around cursor",
+            "Инструмент распыления\n- Зажмите левую кнопку, чтобы добавлять поток точек\n- Зажмите среднюю кнопку мыши, чтобы двигать график\n- Зажмите Ctrl и используйте колесо/трекпад для масштаба\n- Скорость задаёт число точек в секунду\n- Радиус задаёт разброс вокруг курсора",
         ),
         PlotTool::Eraser => tr(
             language,
-            "Eraser tool\n- Hold left mouse button to remove points\n- Radius controls erase area around cursor",
-            "Ластик\n- Зажмите левую кнопку, чтобы удалять точки\n- Радиус задаёт область стирания вокруг курсора",
+            "Eraser tool\n- Hold left mouse button to remove points\n- Hold middle mouse button to pan the plot\n- Hold Ctrl and use wheel/trackpad to zoom\n- Radius controls erase area around cursor",
+            "Ластик\n- Зажмите левую кнопку, чтобы удалять точки\n- Зажмите среднюю кнопку мыши, чтобы двигать график\n- Зажмите Ctrl и используйте колесо/трекпад для масштаба\n- Радиус задаёт область стирания вокруг курсора",
         ),
     }
 }

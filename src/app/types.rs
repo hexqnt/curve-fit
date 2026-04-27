@@ -79,6 +79,16 @@ pub(super) enum PlotTool {
     Eraser,
 }
 
+impl PlotTool {
+    pub(super) fn is_navigation(self) -> bool {
+        matches!(self, Self::None)
+    }
+
+    pub(super) fn is_continuous_point_editing(self) -> bool {
+        matches!(self, Self::Dotted | Self::Spray | Self::Eraser)
+    }
+}
+
 /// Распределение точек для spray-кисти.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum SprayBrush {

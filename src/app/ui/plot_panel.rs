@@ -2,6 +2,10 @@
 
 use super::*;
 
+const POINT_EDIT_BUTTON: egui::PointerButton = egui::PointerButton::Primary;
+const NAVIGATION_PAN_BUTTON: egui::PointerButton = egui::PointerButton::Primary;
+const POINT_TOOL_PAN_BUTTON: egui::PointerButton = egui::PointerButton::Middle;
+
 pub(super) fn add_point_from_plot(app: &mut CurveFitApp, x: f64, y: f64, record_undo: bool) {
     let point = match Point::try_new(x, y) {
         Ok(point) => point,
@@ -89,6 +93,31 @@ fn plot_position_from_screen(
     Some(plot_response.transform.value_from_position(screen_pos))
 }
 
+fn pointer_button_down_on(response: &egui::Response, button: egui::PointerButton) -> bool {
+    response.is_pointer_button_down_on()
+        && response
+            .ctx
+            .input(|input| input.pointer.button_down(button))
+}
+
+fn pointer_button_pressed_this_frame_on(
+    response: &egui::Response,
+    button: egui::PointerButton,
+) -> bool {
+    pointer_button_down_on(response, button)
+        && response
+            .ctx
+            .input(|input| input.pointer.button_pressed(button))
+}
+
+fn pan_pointer_button_for(tool: PlotTool) -> egui::PointerButton {
+    if tool.is_navigation() {
+        NAVIGATION_PAN_BUTTON
+    } else {
+        POINT_TOOL_PAN_BUTTON
+    }
+}
+
 pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotResponse<()>) {
     if app.fit_in_progress {
         app.reset_spray_rate_state();
@@ -96,17 +125,12 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
     }
 
     let response = &plot_response.response;
-    let is_continuous_tool = matches!(
-        app.plot_tool,
-        PlotTool::Dotted | PlotTool::Spray | PlotTool::Eraser
-    );
-    let primary_down_on_plot = response.is_pointer_button_down_on();
+    let is_continuous_tool = app.plot_tool.is_continuous_point_editing();
+    let point_edit_down_on_plot = pointer_button_down_on(response, POINT_EDIT_BUTTON);
     // Для "Точки" нужен одноразовый триггер на момент нажатия ЛКМ.
-    let primary_pressed_this_frame_on_plot = primary_down_on_plot
-        && response
-            .ctx
-            .input(|input| input.pointer.button_pressed(egui::PointerButton::Primary));
-    if is_continuous_tool && primary_down_on_plot {
+    let point_edit_pressed_this_frame_on_plot =
+        pointer_button_pressed_this_frame_on(response, POINT_EDIT_BUTTON);
+    if is_continuous_tool && point_edit_down_on_plot {
         if app.active_tool_bounds.is_none() {
             app.push_current_points_undo_snapshot();
         }
@@ -114,7 +138,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
             .get_or_insert(*plot_response.transform.bounds());
     }
 
-    let spray_active = app.plot_tool == PlotTool::Spray && primary_down_on_plot;
+    let spray_active = app.plot_tool == PlotTool::Spray && point_edit_down_on_plot;
     if spray_active {
         // Просим следующий кадр, чтобы поддерживать стабильный points/sec даже без движения мыши.
         response.ctx.request_repaint();
@@ -129,7 +153,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
     match app.plot_tool {
         PlotTool::None => {}
         PlotTool::SinglePoint => {
-            if primary_pressed_this_frame_on_plot
+            if point_edit_pressed_this_frame_on_plot
                 && let Some(screen_pos) = response.interact_pointer_pos()
                 && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
             {
@@ -137,21 +161,21 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
             }
         }
         PlotTool::Dotted => {
-            let clicked_primary = response.clicked_by(egui::PointerButton::Primary);
-            let dragged_primary_with_motion = response.dragged_by(egui::PointerButton::Primary)
-                && response.drag_delta() != egui::Vec2::ZERO;
-            if (clicked_primary || dragged_primary_with_motion)
+            let clicked_point_edit = response.clicked_by(POINT_EDIT_BUTTON);
+            let dragged_point_edit_with_motion =
+                response.dragged_by(POINT_EDIT_BUTTON) && response.drag_delta() != egui::Vec2::ZERO;
+            if (clicked_point_edit || dragged_point_edit_with_motion)
                 && let Some(screen_pos) = response.interact_pointer_pos()
                 && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
             {
                 // Быстрый клик может завершиться в одном кадре без фазы `pointer_down`,
                 // тогда undo-снимок не успевает сохраниться в блоке непрерывного ввода.
-                let record_undo = clicked_primary && app.active_tool_bounds.is_none();
+                let record_undo = clicked_point_edit && app.active_tool_bounds.is_none();
                 add_point_from_plot(app, plot_pos.x, plot_pos.y, record_undo);
             }
         }
         PlotTool::Spray => {
-            if primary_down_on_plot
+            if point_edit_down_on_plot
                 && let Some(screen_pos) = response.interact_pointer_pos()
                 && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
             {
@@ -169,7 +193,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
             }
         }
         PlotTool::Eraser => {
-            if primary_down_on_plot
+            if point_edit_down_on_plot
                 && let Some(screen_pos) = response.interact_pointer_pos()
                 && let Some(plot_pos) = plot_position_from_screen(plot_response, screen_pos)
             {
@@ -180,7 +204,7 @@ pub(super) fn handle_plot_tools(app: &mut CurveFitApp, plot_response: &PlotRespo
         }
     }
 
-    if !(is_continuous_tool && primary_down_on_plot) {
+    if !(is_continuous_tool && point_edit_down_on_plot) {
         app.flush_points_text_from_cache_if_pending();
         app.active_tool_bounds = None;
     }
@@ -195,7 +219,9 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
     }
     let points_slice = visible_points.as_slice();
     let (x_min, x_max) = plot_domain(points_slice);
-    let navigation_mode = matches!(app.plot_tool, PlotTool::None);
+    let navigation_mode = app.plot_tool.is_navigation();
+    let ctrl_zoom_mode = ui.input(|input| input.modifiers.ctrl);
+    let pan_pointer_button = pan_pointer_button_for(app.plot_tool);
     let spline_curve = app.spline_plot_curve.clone();
     let spline_curve_slice = spline_curve.as_deref();
     let sampled_curve = if spline_curve_slice.is_none() {
@@ -280,8 +306,9 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
         .legend(Legend::default().background_alpha(0.55))
         .show_axes([true, true])
         .show_grid([true, true])
-        .allow_drag(navigation_mode)
-        .allow_zoom(navigation_mode)
+        .pan_pointer_button(pan_pointer_button)
+        .allow_drag(true)
+        .allow_zoom(navigation_mode || ctrl_zoom_mode)
         .allow_scroll(navigation_mode)
         .allow_double_click_reset(navigation_mode)
         .allow_boxed_zoom(navigation_mode)
