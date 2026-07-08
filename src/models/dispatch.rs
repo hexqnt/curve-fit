@@ -95,11 +95,9 @@ pub(crate) fn objective_value(
     }
 
     let mut sum = 0.0;
-    let mut index = 0;
-    while index < x_values.len() {
-        let prediction =
-            value_at_with_saturating_taus(family, param, x_values[index], saturating_trend_taus);
-        let contribution = loss.value(prediction, y_values[index]);
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
+        let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
+        let contribution = loss.value(prediction, y);
         if !contribution.is_finite() {
             return f64::INFINITY;
         }
@@ -107,7 +105,6 @@ pub(crate) fn objective_value(
         if !sum.is_finite() {
             return f64::INFINITY;
         }
-        index += 1;
     }
 
     sum / x_values.len() as f64
@@ -237,20 +234,17 @@ pub(crate) fn objective_value_grad_analytic(
         // Вычисляем отдельно от model-kernel'а:
         // это сохраняет разделение ответственности model vs loss.
         let mut value_first = vec![0.0; x_values.len()];
-        let mut index = 0;
-        while index < x_values.len() {
-            let prediction = value_at_with_saturating_taus(
-                family,
-                param,
-                x_values[index],
-                saturating_trend_taus,
-            );
-            let derivative = loss.d_prediction(prediction, y_values[index]);
+        for ((&x, &y), derivative_out) in x_values
+            .iter()
+            .zip(y_values.iter())
+            .zip(value_first.iter_mut())
+        {
+            let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
+            let derivative = loss.d_prediction(prediction, y);
             if !derivative.is_finite() {
                 return None;
             }
-            value_first[index] = derivative;
-            index += 1;
+            *derivative_out = derivative;
         }
 
         add_model_grad_unscaled(
@@ -411,18 +405,19 @@ pub(crate) fn objective_raw_hessian_analytic(
     let mut value_first = vec![0.0; x_values.len()];
     let mut value_second = vec![0.0; x_values.len()];
 
-    let mut index = 0;
-    while index < x_values.len() {
-        let prediction =
-            value_at_with_saturating_taus(family, param, x_values[index], saturating_trend_taus);
-        let first_derivative = loss.d_prediction(prediction, y_values[index]);
-        let second_derivative = loss.d2_prediction(prediction, y_values[index]);
+    for ((&x, &y), (first_out, second_out)) in x_values
+        .iter()
+        .zip(y_values.iter())
+        .zip(value_first.iter_mut().zip(value_second.iter_mut()))
+    {
+        let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
+        let first_derivative = loss.d_prediction(prediction, y);
+        let second_derivative = loss.d2_prediction(prediction, y);
         if !first_derivative.is_finite() || !second_derivative.is_finite() {
             return None;
         }
-        value_first[index] = first_derivative;
-        value_second[index] = second_derivative;
-        index += 1;
+        *first_out = first_derivative;
+        *second_out = second_derivative;
     }
 
     model_raw_hessian_from_value_derivatives(

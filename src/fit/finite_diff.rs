@@ -96,18 +96,22 @@ where
 
             let denom = 2.0 * step;
             let mut column_is_finite = true;
-            for row in 0..dimension {
-                let value = (grad_plus[row] - grad_minus[row]) / denom;
+            for ((&plus, &minus), column_value) in array1_as_slice(&grad_plus)
+                .iter()
+                .zip(array1_as_slice(&grad_minus).iter())
+                .zip(column_values.iter_mut())
+            {
+                let value = (plus - minus) / denom;
                 if !value.is_finite() {
                     column_is_finite = false;
                     break;
                 }
-                column_values[row] = value;
+                *column_value = value;
             }
 
             if column_is_finite {
-                for row in 0..dimension {
-                    hessian[[row, column]] = column_values[row];
+                for (row, &value) in column_values.iter().enumerate() {
+                    hessian[[row, column]] = value;
                 }
                 computed = true;
                 break;

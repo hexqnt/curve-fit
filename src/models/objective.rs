@@ -209,8 +209,7 @@ pub(crate) fn central_diff_gradient_from_value<F>(
 {
     debug_assert_eq!(param.len(), gradient.len());
     let mut probe = param.to_vec();
-    let mut index = 0;
-    while index < param.len() {
+    for (index, gradient_value) in gradient.iter_mut().enumerate() {
         let base_step = fd_step(param[index], rel_step, min_step);
         let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
             let step = base_step * factor;
@@ -221,8 +220,7 @@ pub(crate) fn central_diff_gradient_from_value<F>(
             probe[index] = param[index];
             finite_central_difference(value_plus, value_minus, step)
         });
-        gradient[index] = derivative.unwrap_or(0.0);
-        index += 1;
+        *gradient_value = derivative.unwrap_or(0.0);
     }
 }
 
@@ -259,23 +257,23 @@ where
             }
 
             let denom = 2.0 * step;
-            let mut row = 0;
             let mut column_is_finite = true;
-            while row < dimension {
-                let value = (grad_plus[row] - grad_minus[row]) / denom;
+            for ((&plus, &minus), column_value) in grad_plus
+                .iter()
+                .zip(grad_minus.iter())
+                .zip(column_values.iter_mut())
+            {
+                let value = (plus - minus) / denom;
                 if !value.is_finite() {
                     column_is_finite = false;
                     break;
                 }
-                column_values[row] = value;
-                row += 1;
+                *column_value = value;
             }
 
             if column_is_finite {
-                let mut row = 0;
-                while row < dimension {
-                    hessian[[row, column]] = column_values[row];
-                    row += 1;
+                for (row, &value) in column_values.iter().enumerate() {
+                    hessian[[row, column]] = value;
                 }
                 computed = true;
                 break;
@@ -283,10 +281,8 @@ where
         }
 
         if !computed {
-            let mut row = 0;
-            while row < dimension {
+            for row in 0..dimension {
                 hessian[[row, column]] = 0.0;
-                row += 1;
             }
         }
         column += 1;

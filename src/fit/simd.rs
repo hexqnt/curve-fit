@@ -62,10 +62,7 @@ pub(super) fn polynomial_cost_scalar(
     }
 
     let mut sum = 0.0;
-    let mut index = 0;
-    while index < x_values.len() {
-        let x = x_values[index];
-        let y = y_values[index];
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
         let model = param
             .iter()
             .copied()
@@ -82,7 +79,6 @@ pub(super) fn polynomial_cost_scalar(
         if !sum.is_finite() {
             return LARGE_COST;
         }
-        index += 1;
     }
 
     sum / x_values.len() as f64
@@ -100,11 +96,13 @@ pub(super) fn inverse_cost_scalar(
     }
 
     let mut sum = 0.0;
-    let mut index = 0;
-    while index < x_values.len() {
-        let x = positive_x(x_values[index]);
-        let y = y_values[index];
-        let residual = (param[0] + param[1] / x) - y;
+    let &[a, b, ..] = param else {
+        unreachable!("inverse model requires two parameters");
+    };
+
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
+        let x = positive_x(x);
+        let residual = (a + b / x) - y;
         if !residual.is_finite() {
             return LARGE_COST;
         }
@@ -116,7 +114,6 @@ pub(super) fn inverse_cost_scalar(
         if !sum.is_finite() {
             return LARGE_COST;
         }
-        index += 1;
     }
 
     sum / x_values.len() as f64
@@ -131,10 +128,7 @@ pub(super) fn accumulate_polynomial_gradient_scalar(
 ) {
     debug_assert_eq!(x_values.len(), y_values.len());
     debug_assert_eq!(gradient.len(), param.len());
-    let mut index = 0;
-    while index < x_values.len() {
-        let x = x_values[index];
-        let y = y_values[index];
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
         let model = param
             .iter()
             .copied()
@@ -146,7 +140,6 @@ pub(super) fn accumulate_polynomial_gradient_scalar(
             *gradient_value += residual * basis;
             basis *= x;
         }
-        index += 1;
     }
 }
 
@@ -159,14 +152,18 @@ pub(super) fn accumulate_inverse_gradient_scalar(
 ) {
     debug_assert_eq!(x_values.len(), y_values.len());
     debug_assert!(gradient.len() >= 2);
-    let mut index = 0;
-    while index < x_values.len() {
-        let x = positive_x(x_values[index]);
-        let y = y_values[index];
-        let residual = loss_metric.residual_derivative((param[0] + param[1] / x) - y);
-        gradient[0] += residual;
-        gradient[1] += residual / x;
-        index += 1;
+    let &[a, b, ..] = param else {
+        unreachable!("inverse model requires two parameters");
+    };
+    let [gradient_0, gradient_1, ..] = gradient else {
+        unreachable!("inverse gradient requires two parameters");
+    };
+
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
+        let x = positive_x(x);
+        let residual = loss_metric.residual_derivative((a + b / x) - y);
+        *gradient_0 += residual;
+        *gradient_1 += residual / x;
     }
 }
 
@@ -226,10 +223,14 @@ pub(super) fn polynomial_cost_simd(
 
     let mut sum = Vf64::splat(0.0);
     let mut tail_sum = 0.0;
-    let mut index = 0;
-    while index + Vf64::LEN <= x_values.len() {
-        let x = Vf64::from_slice(&x_values[index..index + Vf64::LEN]);
-        let y = Vf64::from_slice(&y_values[index..index + Vf64::LEN]);
+    let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+    let (y_chunks, y_tail) = y_values.as_chunks::<{ Vf64::LEN }>();
+    debug_assert_eq!(x_chunks.len(), y_chunks.len());
+    debug_assert_eq!(x_tail.len(), y_tail.len());
+
+    for (x_chunk, y_chunk) in x_chunks.iter().zip(y_chunks.iter()) {
+        let x = Vf64::from_array(*x_chunk);
+        let y = Vf64::from_array(*y_chunk);
 
         let mut model = Vf64::splat(0.0);
         for coefficient in param.iter().copied() {
@@ -237,12 +238,9 @@ pub(super) fn polynomial_cost_simd(
         }
 
         sum += value_from_residual_simd(loss_metric, model - y);
-        index += Vf64::LEN;
     }
 
-    while index < x_values.len() {
-        let x = x_values[index];
-        let y = y_values[index];
+    for (&x, &y) in x_tail.iter().zip(y_tail.iter()) {
         let model = param
             .iter()
             .copied()
@@ -259,7 +257,6 @@ pub(super) fn polynomial_cost_simd(
         if !tail_sum.is_finite() {
             return LARGE_COST;
         }
-        index += 1;
     }
 
     let total = sum.reduce_sum() + tail_sum;
@@ -280,24 +277,29 @@ pub(super) fn inverse_cost_simd(
     if x_values.is_empty() {
         return 0.0;
     }
+    let &[a_scalar, b_scalar, ..] = param else {
+        unreachable!("inverse model requires two parameters");
+    };
 
     let mut sum = Vf64::splat(0.0);
     let mut tail_sum = 0.0;
-    let mut index = 0;
-    let a = Vf64::splat(param[0]);
-    let b = Vf64::splat(param[1]);
+    let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+    let (y_chunks, y_tail) = y_values.as_chunks::<{ Vf64::LEN }>();
+    debug_assert_eq!(x_chunks.len(), y_chunks.len());
+    debug_assert_eq!(x_tail.len(), y_tail.len());
+
+    let a = Vf64::splat(a_scalar);
+    let b = Vf64::splat(b_scalar);
     let eps = Vf64::splat(super::PARAM_EPS);
-    while index + Vf64::LEN <= x_values.len() {
-        let x = Vf64::from_slice(&x_values[index..index + Vf64::LEN]).simd_max(eps);
-        let y = Vf64::from_slice(&y_values[index..index + Vf64::LEN]);
+    for (x_chunk, y_chunk) in x_chunks.iter().zip(y_chunks.iter()) {
+        let x = Vf64::from_array(*x_chunk).simd_max(eps);
+        let y = Vf64::from_array(*y_chunk);
         sum += value_from_residual_simd(loss_metric, (a + b / x) - y);
-        index += Vf64::LEN;
     }
 
-    while index < x_values.len() {
-        let x = positive_x(x_values[index]);
-        let y = y_values[index];
-        let residual = (param[0] + param[1] / x) - y;
+    for (&x, &y) in x_tail.iter().zip(y_tail.iter()) {
+        let x = positive_x(x);
+        let residual = (a_scalar + b_scalar / x) - y;
         if !residual.is_finite() {
             return LARGE_COST;
         }
@@ -309,7 +311,6 @@ pub(super) fn inverse_cost_simd(
         if !tail_sum.is_finite() {
             return LARGE_COST;
         }
-        index += 1;
     }
 
     let total = sum.reduce_sum() + tail_sum;
@@ -332,10 +333,15 @@ pub(super) fn accumulate_polynomial_gradient_simd(
     debug_assert!(gradient.len() <= MAX_POLYNOMIAL_PARAMS);
 
     let mut accum = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
-    let mut index = 0;
-    while index + Vf64::LEN <= x_values.len() {
-        let x = Vf64::from_slice(&x_values[index..index + Vf64::LEN]);
-        let y = Vf64::from_slice(&y_values[index..index + Vf64::LEN]);
+    let accum = &mut accum[..gradient.len()];
+    let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+    let (y_chunks, y_tail) = y_values.as_chunks::<{ Vf64::LEN }>();
+    debug_assert_eq!(x_chunks.len(), y_chunks.len());
+    debug_assert_eq!(x_tail.len(), y_tail.len());
+
+    for (x_chunk, y_chunk) in x_chunks.iter().zip(y_chunks.iter()) {
+        let x = Vf64::from_array(*x_chunk);
+        let y = Vf64::from_array(*y_chunk);
 
         let mut model = Vf64::splat(0.0);
         for coefficient in param.iter().copied() {
@@ -344,20 +350,17 @@ pub(super) fn accumulate_polynomial_gradient_simd(
         let residual_derivative = residual_derivative_simd(loss_metric, model - y);
 
         let mut basis = Vf64::splat(1.0);
-        for gradient_index in (0..gradient.len()).rev() {
-            accum[gradient_index] += residual_derivative * basis;
+        for accum_value in accum.iter_mut().rev() {
+            *accum_value += residual_derivative * basis;
             basis *= x;
         }
-        index += Vf64::LEN;
     }
 
-    for (gradient_index, value) in gradient.iter_mut().enumerate() {
-        *value += accum[gradient_index].reduce_sum();
+    for (value, accum_value) in gradient.iter_mut().zip(accum.iter().copied()) {
+        *value += accum_value.reduce_sum();
     }
 
-    while index < x_values.len() {
-        let x = x_values[index];
-        let y = y_values[index];
+    for (&x, &y) in x_tail.iter().zip(y_tail.iter()) {
         let model = param
             .iter()
             .copied()
@@ -369,7 +372,6 @@ pub(super) fn accumulate_polynomial_gradient_simd(
             *gradient_value += residual * basis;
             basis *= x;
         }
-        index += 1;
     }
 }
 
@@ -382,32 +384,39 @@ pub(super) fn accumulate_inverse_gradient_simd(
 ) {
     debug_assert_eq!(x_values.len(), y_values.len());
     debug_assert!(gradient.len() >= 2);
+    let &[a_scalar, b_scalar, ..] = param else {
+        unreachable!("inverse model requires two parameters");
+    };
+    let [gradient_scalar_0, gradient_scalar_1, ..] = gradient else {
+        unreachable!("inverse gradient requires two parameters");
+    };
 
     let mut gradient_0 = Vf64::splat(0.0);
     let mut gradient_1 = Vf64::splat(0.0);
-    let a = Vf64::splat(param[0]);
-    let b = Vf64::splat(param[1]);
+    let a = Vf64::splat(a_scalar);
+    let b = Vf64::splat(b_scalar);
     let eps = Vf64::splat(super::PARAM_EPS);
 
-    let mut index = 0;
-    while index + Vf64::LEN <= x_values.len() {
-        let x = Vf64::from_slice(&x_values[index..index + Vf64::LEN]).simd_max(eps);
-        let y = Vf64::from_slice(&y_values[index..index + Vf64::LEN]);
+    let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
+    let (y_chunks, y_tail) = y_values.as_chunks::<{ Vf64::LEN }>();
+    debug_assert_eq!(x_chunks.len(), y_chunks.len());
+    debug_assert_eq!(x_tail.len(), y_tail.len());
+
+    for (x_chunk, y_chunk) in x_chunks.iter().zip(y_chunks.iter()) {
+        let x = Vf64::from_array(*x_chunk).simd_max(eps);
+        let y = Vf64::from_array(*y_chunk);
         let residual_derivative = residual_derivative_simd(loss_metric, (a + b / x) - y);
         gradient_0 += residual_derivative;
         gradient_1 += residual_derivative / x;
-        index += Vf64::LEN;
     }
 
-    gradient[0] += gradient_0.reduce_sum();
-    gradient[1] += gradient_1.reduce_sum();
+    *gradient_scalar_0 += gradient_0.reduce_sum();
+    *gradient_scalar_1 += gradient_1.reduce_sum();
 
-    while index < x_values.len() {
-        let x = positive_x(x_values[index]);
-        let y = y_values[index];
-        let residual = loss_metric.residual_derivative((param[0] + param[1] / x) - y);
-        gradient[0] += residual;
-        gradient[1] += residual / x;
-        index += 1;
+    for (&x, &y) in x_tail.iter().zip(y_tail.iter()) {
+        let x = positive_x(x);
+        let residual = loss_metric.residual_derivative((a_scalar + b_scalar / x) - y);
+        *gradient_scalar_0 += residual;
+        *gradient_scalar_1 += residual / x;
     }
 }

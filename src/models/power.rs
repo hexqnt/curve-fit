@@ -90,9 +90,12 @@ pub(super) fn add_value_grad_raw_hessian(
     let mut hessian = Array2::zeros((PARAM_COUNT, PARAM_COUNT));
     let params = Params::parse(param);
 
-    let mut index = 0;
-    while index < sample_count {
-        let x = positive_x(x_values[index]);
+    for ((&x, &value_first), &value_second) in x_values
+        .iter()
+        .zip(value_first.iter())
+        .zip(value_second.iter())
+    {
+        let x = positive_x(x);
         let log_x = x.ln();
         let pow = x.powf(params.exponent);
         let model = params.value_at(x);
@@ -100,8 +103,6 @@ pub(super) fn add_value_grad_raw_hessian(
             return None;
         }
 
-        let value_first = value_first[index];
-        let value_second = value_second[index];
         if !value_first.is_finite() || !is_finite_non_negative(value_second) {
             return None;
         }
@@ -114,7 +115,6 @@ pub(super) fn add_value_grad_raw_hessian(
         hessian[[0, 0]] += value_second * jac_a * jac_a;
         hessian[[0, 1]] += value_second * jac_a * jac_b + value_first * d2_model_dadb;
         hessian[[1, 1]] += value_second * jac_b * jac_b + value_first * d2_model_dbdb;
-        index += 1;
     }
 
     scale_and_mirror_upper_hessian(&mut hessian, sample_scale);
