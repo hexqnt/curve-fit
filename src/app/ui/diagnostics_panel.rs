@@ -9,6 +9,11 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
         ui.selectable_value(&mut app.panel.diagnostics_tab, DiagnosticsTab::Loss, "Loss");
         ui.selectable_value(
             &mut app.panel.diagnostics_tab,
+            DiagnosticsTab::Gradient,
+            tr(language, "Gradient", "Градиент"),
+        );
+        ui.selectable_value(
+            &mut app.panel.diagnostics_tab,
             DiagnosticsTab::Residuals,
             tr(language, "Residuals", "Остатки"),
         );
@@ -34,10 +39,104 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
 
     match app.panel.diagnostics_tab {
         DiagnosticsTab::Loss => ui_loss_diagnostics(app, ui, language, loss_color),
+        DiagnosticsTab::Gradient => ui_gradient_diagnostics(app, ui, language),
         DiagnosticsTab::Residuals => {
             ui_residuals_diagnostics(app, ui, language, residual_color, zero_color)
         }
     }
+}
+
+fn ui_gradient_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui, language: UiLanguage) {
+    let gradient_log_l2_norm_points = &app.iteration_diagnostics.gradient_log_l2_norm_points;
+    let gradient_cosine_points = &app.iteration_diagnostics.gradient_cosine_points;
+    if gradient_log_l2_norm_points.is_empty() {
+        ui.label(tr(
+            language,
+            "Gradient diagnostics are available for gradient-based optimizers after Fit completes.",
+            "Диагностика градиента доступна после фитинга с градиентным оптимизатором.",
+        ));
+        app.panel.diagnostics_shared_axis_width = 0.0;
+        return;
+    }
+
+    let available_height = ui.available_height().max(2.0);
+    let spacing = ui.spacing().item_spacing.y;
+    let plot_height = ((available_height - spacing).max(2.0)) / 2.0;
+    let iteration_x_min = gradient_log_l2_norm_points[0][0];
+    let iteration_x_max = gradient_log_l2_norm_points
+        .last()
+        .map(|point| point[0])
+        .unwrap_or(iteration_x_min);
+    let (iteration_x_min, iteration_x_max) =
+        if (iteration_x_max - iteration_x_min).abs() <= f64::EPSILON {
+            let padding = iteration_x_min.abs().max(1.0) * 0.05;
+            (iteration_x_min - padding, iteration_x_max + padding)
+        } else {
+            (iteration_x_min, iteration_x_max)
+        };
+    let selected_iteration_x = app
+        .replay_selected_iteration()
+        .map(|iteration| iteration as f64);
+    let marker_color = ui.visuals().widgets.noninteractive.fg_stroke.color;
+    let mut axis_width = app.panel.diagnostics_shared_axis_width.max(1.0);
+
+    for (plot_id, name, points, include_y) in [
+        (
+            "gradient_l2_norm_plot",
+            "log10 ||g||2",
+            gradient_log_l2_norm_points,
+            None,
+        ),
+        (
+            "gradient_cosine_plot",
+            "cos(g[k - 1], g[k])",
+            gradient_cosine_points,
+            Some((-1.0, 1.0)),
+        ),
+    ] {
+        ui.allocate_ui_with_layout(
+            egui::vec2(ui.available_width(), plot_height),
+            egui::Layout::left_to_right(egui::Align::Min),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let plot_slot_left = ui.max_rect().left();
+                let mut plot = Plot::new(plot_id)
+                    .height(plot_height)
+                    .legend(Legend::default().background_alpha(0.55))
+                    .link_axis("diagnostics_iter_x_link", [true, false])
+                    .include_x(iteration_x_min)
+                    .include_x(iteration_x_max)
+                    .auto_bounds([true, true])
+                    .y_axis_min_width(axis_width)
+                    .show_grid([true, true])
+                    .allow_drag(false)
+                    .allow_zoom(false)
+                    .allow_scroll(false)
+                    .allow_double_click_reset(false)
+                    .allow_boxed_zoom(false);
+                if let Some((minimum, maximum)) = include_y {
+                    plot = plot.include_y(minimum).include_y(maximum);
+                }
+                let response = plot.show(ui, |plot_ui| {
+                    plot_ui.line(
+                        Line::new(name, PlotPoints::from_iter(points.iter().copied())).width(1.8),
+                    );
+                    if let Some(selected_iteration_x) = selected_iteration_x {
+                        plot_ui.vline(
+                            VLine::new("", selected_iteration_x)
+                                .width(1.0_f32)
+                                .color(marker_color)
+                                .style(LineStyle::dashed_dense())
+                                .allow_hover(false),
+                        );
+                    }
+                });
+                axis_width =
+                    axis_width.max(diagnostics_plot_y_axis_width(&response, plot_slot_left));
+            },
+        );
+    }
+    app.panel.diagnostics_shared_axis_width = axis_width;
 }
 
 fn ui_loss_diagnostics(

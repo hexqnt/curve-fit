@@ -40,7 +40,9 @@ pub use self::curve::{
 };
 pub use self::error::FitError;
 pub use self::metrics::{IterationMetricSnapshot, OptimizationLossMetric, calculate_metrics};
-pub use self::optimizer_engine::{IncrementalFitRunner, IncrementalFitStep};
+pub use self::optimizer_engine::{
+    GradientIterationDiagnostics, IncrementalFitRunner, IncrementalFitStep,
+};
 pub use self::parametric::sample_curve;
 pub use self::spline::{
     fit_akima_spline, fit_akima_spline_with_config, fit_akima_spline_with_optimizer_config,

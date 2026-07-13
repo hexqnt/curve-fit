@@ -190,6 +190,7 @@ pub(super) enum WasmFitJob {
 pub(super) struct ParametricIterationTraceEntry {
     pub(super) iteration: u64,
     pub(super) metrics: IterationMetricSnapshot,
+    pub(super) gradient_diagnostics: Option<GradientIterationDiagnostics>,
     pub(super) params: CurveParams,
 }
 
@@ -198,6 +199,7 @@ pub(super) struct ParametricIterationTraceEntry {
 pub(super) struct SplineIterationTraceEntry {
     pub(super) iteration: u64,
     pub(super) metrics: IterationMetricSnapshot,
+    pub(super) gradient_diagnostics: Option<GradientIterationDiagnostics>,
     pub(super) knot_y: Vec<f64>,
     pub(super) curve: Vec<[f64; 2]>,
 }

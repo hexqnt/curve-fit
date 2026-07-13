@@ -5,6 +5,7 @@
 pub(super) enum DiagnosticsTab {
     #[default]
     Loss,
+    Gradient,
     Residuals,
 }
 

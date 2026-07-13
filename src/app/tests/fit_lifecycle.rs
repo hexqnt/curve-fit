@@ -245,11 +245,13 @@ fn finished_message_applies_buffered_parametric_trace_in_single_poll() {
         super::ParametricIterationTraceEntry {
             iteration: 1,
             metrics: metrics_snapshot(2.0, 2.0, 1.4, 1.2, 1.1, 0.1, 2.0),
+            gradient_diagnostics: None,
             params: CurveParams::Linear { a: 0.4, b: 0.8 },
         },
         super::ParametricIterationTraceEntry {
             iteration: 2,
             metrics: metrics_snapshot(0.5, 0.5, 0.7, 0.6, 0.55, 0.7, 0.9),
+            gradient_diagnostics: None,
             params: CurveParams::Linear { a: 1.2, b: 0.5 },
         },
     ];

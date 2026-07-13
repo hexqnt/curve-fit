@@ -74,7 +74,12 @@ impl CurveFitApp {
         replay_frames: &mut Vec<ReplayFrame>,
     ) {
         for entry in trace {
-            diagnostics.append(entry.iteration, entry.metrics, &entry.params);
+            diagnostics.append(
+                entry.iteration,
+                entry.metrics,
+                entry.gradient_diagnostics,
+                &entry.params,
+            );
             Self::upsert_buffered_parametric_replay_frame(
                 replay_frames,
                 entry.iteration,
@@ -89,7 +94,12 @@ impl CurveFitApp {
         replay_frames: &mut Vec<ReplayFrame>,
     ) {
         for entry in trace {
-            diagnostics.append_spline(entry.iteration, entry.metrics, &entry.knot_y);
+            diagnostics.append_spline(
+                entry.iteration,
+                entry.metrics,
+                entry.gradient_diagnostics,
+                &entry.knot_y,
+            );
             Self::upsert_buffered_spline_replay_frame(
                 replay_frames,
                 entry.iteration,
@@ -218,7 +228,7 @@ impl CurveFitApp {
             // Финальные метрики пересчитываем по тем точкам и параметрам, которые видит пользователь.
             let (metrics, snapshot_metrics, snapshot_residuals) =
                 self.parametric_metrics_and_residuals(points, &result.params);
-            diagnostics.append(result.iterations, metrics, &result.params);
+            diagnostics.append(result.iterations, metrics, None, &result.params);
             result_metrics = Some(snapshot_metrics);
             residual_plot_points = snapshot_residuals;
         }
@@ -257,7 +267,7 @@ impl CurveFitApp {
         Self::apply_spline_trace_to_buffers(trace, &mut diagnostics, &mut replay_frames);
         let knot_y = result.knots.iter().map(|knot| knot[1]).collect::<Vec<_>>();
         let spline_plot_curve = Self::plot_points_from_pairs(result.curve.iter().copied());
-        diagnostics.append_spline(result.iterations, metrics, &knot_y);
+        diagnostics.append_spline(result.iterations, metrics, None, &knot_y);
         Self::upsert_buffered_spline_replay_frame(
             &mut replay_frames,
             result.iterations,
@@ -466,6 +476,7 @@ impl CurveFitApp {
                     iteration,
                     mse: _,
                     metrics,
+                    gradient_diagnostics,
                     params,
                 }) => {
                     let params = if let Some(normalization) = normalization {
@@ -498,6 +509,7 @@ impl CurveFitApp {
                     iteration_trace.push(ParametricIterationTraceEntry {
                         iteration,
                         metrics,
+                        gradient_diagnostics,
                         params,
                     });
                 }
@@ -546,12 +558,14 @@ impl CurveFitApp {
                     iteration,
                     mse: _,
                     metrics,
+                    gradient_diagnostics,
                     knot_y,
                     curve,
                 }) => {
                     iteration_trace.push(SplineIterationTraceEntry {
                         iteration,
                         metrics,
+                        gradient_diagnostics,
                         knot_y,
                         curve,
                     });
@@ -620,6 +634,7 @@ impl CurveFitApp {
                         iteration,
                         mse: _,
                         metrics,
+                        gradient_diagnostics,
                         params,
                     }) => {
                         let params = if let Some(normalization) = normalization {
@@ -643,6 +658,7 @@ impl CurveFitApp {
                         iteration_trace.push(ParametricIterationTraceEntry {
                             iteration,
                             metrics,
+                            gradient_diagnostics,
                             params,
                         });
                     }
@@ -735,12 +751,14 @@ impl CurveFitApp {
                         iteration,
                         mse: _,
                         metrics,
+                        gradient_diagnostics,
                         knot_y,
                         curve,
                     }) => {
                         iteration_trace.push(SplineIterationTraceEntry {
                             iteration,
                             metrics,
+                            gradient_diagnostics,
                             knot_y,
                             curve,
                         });

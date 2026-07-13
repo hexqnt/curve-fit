@@ -14,6 +14,8 @@ pub(super) struct IterationDiagnostics {
     pub(super) soft_l1_points: Vec<[f64; 2]>,
     pub(super) r2_abs_points: Vec<[f64; 2]>,
     pub(super) max_abs_error_points: Vec<[f64; 2]>,
+    pub(super) gradient_log_l2_norm_points: Vec<[f64; 2]>,
+    pub(super) gradient_cosine_points: Vec<[f64; 2]>,
     pub(super) parameter_names: Vec<String>,
     pub(super) parameter_series: Vec<Vec<[f64; 2]>>,
 }
@@ -42,13 +44,14 @@ impl IterationDiagnostics {
             loss_metric,
             metric_quantization,
         );
-        self.append(0, metrics, params);
+        self.append(0, metrics, None, params);
     }
 
     pub(super) fn append(
         &mut self,
         iteration: u64,
         metrics: IterationMetricSnapshot,
+        gradient_diagnostics: Option<GradientIterationDiagnostics>,
         params: &CurveParams,
     ) {
         let family = params.family();
@@ -61,7 +64,7 @@ impl IterationDiagnostics {
         }
 
         let iteration = iteration as f64;
-        self.upsert_metrics(iteration, metrics);
+        self.upsert_metrics(iteration, metrics, gradient_diagnostics);
         params.with_values(|values| {
             for (series, value) in self.parameter_series.iter_mut().zip(values.iter().copied()) {
                 upsert_iteration_point(series, iteration, value);
@@ -73,6 +76,7 @@ impl IterationDiagnostics {
         &mut self,
         iteration: u64,
         metrics: IterationMetricSnapshot,
+        gradient_diagnostics: Option<GradientIterationDiagnostics>,
         knot_y: &[f64],
     ) {
         let parameter_count = knot_y.len();
@@ -81,13 +85,18 @@ impl IterationDiagnostics {
         }
 
         let iteration = iteration as f64;
-        self.upsert_metrics(iteration, metrics);
+        self.upsert_metrics(iteration, metrics, gradient_diagnostics);
         for (series, value) in self.parameter_series.iter_mut().zip(knot_y.iter().copied()) {
             upsert_iteration_point(series, iteration, value);
         }
     }
 
-    fn upsert_metrics(&mut self, iteration: f64, metrics: IterationMetricSnapshot) {
+    fn upsert_metrics(
+        &mut self,
+        iteration: f64,
+        metrics: IterationMetricSnapshot,
+        gradient_diagnostics: Option<GradientIterationDiagnostics>,
+    ) {
         upsert_iteration_point(&mut self.loss_points, iteration, metrics.loss);
         upsert_iteration_point(&mut self.mse_points, iteration, metrics.mse);
         upsert_iteration_point(&mut self.rmse_points, iteration, metrics.rmse);
@@ -99,6 +108,25 @@ impl IterationDiagnostics {
             iteration,
             metrics.max_abs_error,
         );
+        if let Some(gradient_diagnostics) = gradient_diagnostics
+            && gradient_diagnostics.gradient_l2_norm.is_finite()
+            && gradient_diagnostics.gradient_l2_norm > 0.0
+        {
+            upsert_iteration_point(
+                &mut self.gradient_log_l2_norm_points,
+                iteration,
+                gradient_diagnostics.gradient_l2_norm.log10(),
+            );
+            if let Some(gradient_cosine) = gradient_diagnostics.gradient_cosine
+                && gradient_cosine.is_finite()
+            {
+                upsert_iteration_point(
+                    &mut self.gradient_cosine_points,
+                    iteration,
+                    gradient_cosine,
+                );
+            }
+        }
     }
 
     fn reset_for_family(&mut self, family: CurveFamily) {
@@ -136,6 +164,8 @@ impl IterationDiagnostics {
         self.soft_l1_points.clear();
         self.r2_abs_points.clear();
         self.max_abs_error_points.clear();
+        self.gradient_log_l2_norm_points.clear();
+        self.gradient_cosine_points.clear();
     }
 }
 

@@ -43,11 +43,13 @@ fn diagnostics_append_replaces_duplicate_iteration() {
     diagnostics.append(
         2,
         metrics_snapshot(5.0, 5.0, 5.0_f64.sqrt(), 2.0, 1.75, -1.5, 3.0),
+        None,
         &CurveParams::Linear { a: 1.0, b: 0.0 },
     );
     diagnostics.append(
         2,
         metrics_snapshot(3.0, 3.0, 3.0_f64.sqrt(), 1.5, 1.1, -2.0, 2.0),
+        None,
         &CurveParams::Linear { a: -1.5, b: 0.5 },
     );
 
@@ -66,6 +68,25 @@ fn diagnostics_append_replaces_duplicate_iteration() {
 }
 
 #[test]
+fn diagnostics_append_tracks_gradient_norm_and_direction() {
+    let mut diagnostics = IterationDiagnostics::default();
+    let params = CurveParams::Linear { a: 1.0, b: 0.0 };
+
+    diagnostics.append(
+        3,
+        metrics_snapshot(1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 1.0),
+        Some(GradientIterationDiagnostics {
+            gradient_l2_norm: 1e-3,
+            gradient_cosine: Some(-0.25),
+        }),
+        &params,
+    );
+
+    assert_eq!(diagnostics.gradient_log_l2_norm_points, vec![[3.0, -3.0]]);
+    assert_eq!(diagnostics.gradient_cosine_points, vec![[3.0, -0.25]]);
+}
+
+#[test]
 fn diagnostics_append_resets_when_family_changes() {
     let points = line_points();
     let mut diagnostics = IterationDiagnostics::default();
@@ -78,6 +99,7 @@ fn diagnostics_append_resets_when_family_changes() {
     diagnostics.append(
         4,
         metrics_snapshot(1.0, 1.0, 1.0, 1.0, 0.8, 0.2, 1.0),
+        None,
         &CurveParams::Quadratic {
             a: 1.0,
             b: -2.0,
@@ -103,11 +125,13 @@ fn diagnostics_append_spline_tracks_knot_parameters() {
     diagnostics.append_spline(
         1,
         metrics_snapshot(2.5, 2.5, 2.5_f64.sqrt(), 1.2, 1.6, -0.25, 2.0),
+        None,
         &[0.5, -1.0],
     );
     diagnostics.append_spline(
         2,
         metrics_snapshot(1.5, 1.5, 1.5_f64.sqrt(), 0.9, 1.0, 0.25, 1.4),
+        None,
         &[0.75, -0.25],
     );
 

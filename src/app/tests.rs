@@ -24,8 +24,8 @@ use super::{
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
 use crate::fit::{
-    DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, IterationMetricSnapshot, MetricQuantization,
-    OptimizationLossMetric, SplineResult,
+    DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, GradientIterationDiagnostics,
+    IterationMetricSnapshot, MetricQuantization, OptimizationLossMetric, SplineResult,
 };
 
 // Все import-ы специально поднимаются в этот модуль,

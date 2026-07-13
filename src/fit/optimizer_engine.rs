@@ -48,6 +48,7 @@ pub enum IncrementalFitStep {
         iteration: u64,
         mse: f64,
         metrics: IterationMetricSnapshot,
+        gradient_diagnostics: Option<GradientIterationDiagnostics>,
         params: CurveParams,
     },
     Finished(FitResult),
@@ -60,6 +61,7 @@ pub(crate) enum IncrementalSplineFitStep {
         iteration: u64,
         mse: f64,
         metrics: IterationMetricSnapshot,
+        gradient_diagnostics: Option<GradientIterationDiagnostics>,
         knot_y: Vec<f64>,
         curve: Vec<[f64; 2]>,
     },
@@ -68,6 +70,60 @@ pub(crate) enum IncrementalSplineFitStep {
         metrics: IterationMetricSnapshot,
     },
     Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+/// Диагностика градиента в точке текущей итерации.
+pub struct GradientIterationDiagnostics {
+    pub gradient_l2_norm: f64,
+    pub gradient_cosine: Option<f64>,
+}
+
+struct GradientDiagnosticsState {
+    parameter_buffer: Array1<f64>,
+    previous: Option<Array1<f64>>,
+}
+
+impl GradientDiagnosticsState {
+    fn new(parameter_count: usize) -> Self {
+        Self {
+            parameter_buffer: Array1::zeros(parameter_count),
+            previous: None,
+        }
+    }
+
+    fn collect<P>(
+        &mut self,
+        problem: &mut Problem<P>,
+        values: &[f64],
+    ) -> Result<GradientIterationDiagnostics, FitError>
+    where
+        P: Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
+    {
+        array1_as_mut_slice(&mut self.parameter_buffer).copy_from_slice(values);
+        let gradient = problem
+            .gradient(&self.parameter_buffer)
+            .map_err(optimizer_error)?;
+        let gradient_values = array1_as_slice(&gradient);
+        let current_l2_norm = gradient_l2_norm(gradient_values);
+        let gradient_cosine = self.previous.as_ref().and_then(|previous| {
+            let previous_values = array1_as_slice(previous);
+            let previous_l2_norm = gradient_l2_norm(previous_values);
+            let dot_product = previous_values
+                .iter()
+                .zip(gradient_values)
+                .map(|(previous, current)| previous * current)
+                .sum::<f64>();
+            let denominator = previous_l2_norm * current_l2_norm;
+            (denominator.is_finite() && denominator > 0.0 && dot_product.is_finite())
+                .then(|| (dot_product / denominator).clamp(-1.0, 1.0))
+        });
+        self.previous = Some(gradient);
+        Ok(GradientIterationDiagnostics {
+            gradient_l2_norm: current_l2_norm,
+            gradient_cosine,
+        })
+    }
 }
 
 enum OptimizerStepOutcome {
@@ -95,6 +151,7 @@ pub struct IncrementalFitRunner {
     metric_baseline: MetricBaseline,
     problem: Problem<CurveProblem>,
     optimizer: Option<Optimizer>,
+    gradient_diagnostics: GradientDiagnosticsState,
     cancelled: bool,
 }
 
@@ -161,6 +218,7 @@ impl IncrementalFitRunner {
         family.validate_points(points)?;
 
         let initial_values = initial_params.values();
+        let parameter_count = initial_values.len();
         let metric_baseline = MetricBaseline::new(points, metric_quantization);
         let problem = CurveProblem::new_with_metric_quantization(
             family,
@@ -181,6 +239,7 @@ impl IncrementalFitRunner {
             metric_baseline,
             problem,
             optimizer: Some(optimizer),
+            gradient_diagnostics: GradientDiagnosticsState::new(parameter_count),
             cancelled: false,
         })
     }
@@ -214,21 +273,30 @@ impl IncrementalFitRunner {
             };
 
             let iteration = optimizer_iter(&optimizer);
-            if let Some(params) = optimizer_current_param(&optimizer).and_then(|values| {
-                CurveParams::try_from_slice_like(&self.params_template, values).ok()
-            }) {
+            if let Some(values) = optimizer_current_param(&optimizer)
+                && let Ok(params) = CurveParams::try_from_slice_like(&self.params_template, values)
+            {
                 let metrics = calculate_iteration_metrics_from_evaluator_with_baseline(
                     &self.points,
                     self.loss_metric,
                     self.metric_baseline,
                     |x| params.evaluate(x),
                 );
+                let gradient_diagnostics = if optimizer_uses_gradient(&optimizer) {
+                    Some(
+                        self.gradient_diagnostics
+                            .collect(&mut self.problem, values)?,
+                    )
+                } else {
+                    None
+                };
                 optimizer_increment_iter(&mut optimizer);
                 self.optimizer = Some(optimizer);
                 return Ok(IncrementalFitStep::Iteration {
                     iteration,
                     mse: metrics.mse,
                     metrics,
+                    gradient_diagnostics,
                     params,
                 });
             }
@@ -270,6 +338,7 @@ pub(crate) struct IncrementalSplineFitRunner {
     metric_baseline: MetricBaseline,
     problem: Problem<SplineProblem>,
     optimizer: Option<Optimizer>,
+    gradient_diagnostics: GradientDiagnosticsState,
     cancelled: bool,
 }
 
@@ -371,6 +440,7 @@ impl IncrementalSplineFitRunner {
         );
         let mut problem = Problem::new(problem);
         let initial_knot_y_array = Array1::from_vec(initial_y);
+        let parameter_count = initial_knot_y_array.len();
         let optimizer = build_optimizer(&mut problem, &initial_knot_y_array, optimizer_config)?;
 
         Ok(Self {
@@ -384,6 +454,7 @@ impl IncrementalSplineFitRunner {
             metric_baseline,
             problem,
             optimizer: Some(optimizer),
+            gradient_diagnostics: GradientDiagnosticsState::new(parameter_count),
             cancelled: false,
         })
     }
@@ -430,6 +501,14 @@ impl IncrementalSplineFitRunner {
                     |x| built.evaluator.evaluate(&built.knots, x),
                 );
                 let curve = built.curve;
+                let gradient_diagnostics = if optimizer_uses_gradient(&optimizer) {
+                    Some(
+                        self.gradient_diagnostics
+                            .collect(&mut self.problem, &knot_y)?,
+                    )
+                } else {
+                    None
+                };
 
                 optimizer_increment_iter(&mut optimizer);
                 self.optimizer = Some(optimizer);
@@ -437,6 +516,7 @@ impl IncrementalSplineFitRunner {
                     iteration,
                     mse: metrics.mse,
                     metrics,
+                    gradient_diagnostics,
                     knot_y,
                     curve,
                 });
@@ -681,6 +761,10 @@ fn optimizer_current_param(optimizer: &Optimizer) -> Option<&[f64]> {
             Some(state.current_param.as_slice())
         }
     }
+}
+
+fn optimizer_uses_gradient(optimizer: &Optimizer) -> bool {
+    !matches!(optimizer, Optimizer::NelderMead { .. })
 }
 
 fn optimizer_iter(optimizer: &Optimizer) -> u64 {

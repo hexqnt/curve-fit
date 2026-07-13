@@ -43,7 +43,8 @@ use crate::fit::{
     default_spline_initial_knot_y, sample_curve,
 };
 use crate::fit::{
-    IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
+    GradientIterationDiagnostics, IncrementalFitRunner, IncrementalFitStep,
+    IncrementalSplineFitRunner, IncrementalSplineFitStep,
 };
 
 use self::diagnostics::{IterationDiagnostics, diagnostics_plot_y_axis_width};
