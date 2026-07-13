@@ -12,174 +12,6 @@ pub(super) struct CurveProblem {
     residual_quantizer: ResidualQuantizer,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct CurveProblemPredictionLoss<'a> {
-    pub(super) problem: &'a CurveProblem,
-}
-
-impl PredictionLoss for CurveProblemPredictionLoss<'_> {
-    fn value(&self, prediction: f64, target: f64) -> f64 {
-        self.problem.loss_value_from_prediction(prediction, target)
-    }
-
-    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
-        self.problem
-            .loss_derivative_from_prediction(prediction, target)
-    }
-
-    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
-        self.problem
-            .loss_second_derivative_from_prediction(prediction, target)
-    }
-}
-
-struct CurveProblemObjective<'a> {
-    problem: &'a CurveProblem,
-}
-
-#[derive(Clone, Copy)]
-struct CurveProblemTerm<'a> {
-    problem: &'a CurveProblem,
-}
-
-impl CurveProblemTerm<'_> {
-    fn simd_enabled(&self) -> bool {
-        matches!(
-            self.problem.metric_quantization,
-            MetricQuantization::Disabled
-        ) && self.problem.loss_metric.simd_fast_path_supported()
-    }
-
-    fn fallback_term(&self) -> models::DataTerm<'_, CurveProblemPredictionLoss<'_>> {
-        let loss = CurveProblemPredictionLoss {
-            problem: self.problem,
-        };
-        models::DataTerm::new(
-            self.problem.family,
-            self.problem.point_x.as_ref(),
-            self.problem.point_y.as_ref(),
-            self.problem.saturating_trend_tau_grid.as_ref(),
-            loss,
-        )
-    }
-}
-
-impl TermValue for CurveProblemTerm<'_> {
-    fn add_value(&self, param: &[f64], value: &mut f64) {
-        if self.simd_enabled() && self.problem.family.is_polynomial() {
-            *value += simd::polynomial_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            return;
-        }
-        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
-            *value += simd::inverse_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            return;
-        }
-        self.fallback_term().add_value(param, value);
-    }
-}
-
-impl TermGrad for CurveProblemTerm<'_> {
-    fn add_value_grad(&self, param: &[f64], value: &mut f64, gradient: &mut [f64]) {
-        if self.simd_enabled() && self.problem.family.is_polynomial() {
-            let parameter_count = self.problem.family.parameter_count();
-            debug_assert!(parameter_count <= MAX_POLYNOMIAL_PARAMS);
-            let mut local_gradient = [0.0; MAX_POLYNOMIAL_PARAMS];
-            let local_gradient = &mut local_gradient[..parameter_count];
-            simd::accumulate_polynomial_gradient(
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                param,
-                self.problem.loss_metric,
-                local_gradient,
-            );
-            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
-            *value += simd::polynomial_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            for (gradient_value, local_value) in
-                gradient.iter_mut().zip(local_gradient.iter().copied())
-            {
-                *gradient_value += local_value * sample_scale;
-            }
-            return;
-        }
-        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
-            let mut local_gradient = [0.0; 2];
-            simd::accumulate_inverse_gradient(
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                param,
-                self.problem.loss_metric,
-                &mut local_gradient,
-            );
-            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
-            for local_value in &mut local_gradient {
-                *local_value *= sample_scale;
-            }
-            *value += simd::inverse_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            for (gradient_value, local_value) in gradient.iter_mut().zip(local_gradient) {
-                *gradient_value += local_value;
-            }
-            return;
-        }
-        self.fallback_term().add_value_grad(param, value, gradient);
-    }
-}
-
-impl TermHessian for CurveProblemTerm<'_> {
-    fn add_value_grad_hessian(
-        &self,
-        param: &[f64],
-        value: &mut f64,
-        gradient: &mut [f64],
-        hessian: &mut Array2<f64>,
-    ) {
-        self.fallback_term()
-            .add_value_grad_hessian(param, value, gradient, hessian);
-    }
-}
-
-impl CurveProblemObjective<'_> {
-    fn objective(&self) -> models::CurveObjective<CurveProblemTerm<'_>> {
-        models::CurveObjective::new(
-            self.problem.family.parameter_count(),
-            CurveProblemTerm {
-                problem: self.problem,
-            },
-        )
-    }
-
-    fn value(&self, param: &[f64]) -> f64 {
-        self.objective().value(param)
-    }
-
-    fn value_grad(&self, param: &[f64]) -> (f64, Vec<f64>) {
-        self.objective().value_grad(param)
-    }
-
-    fn value_grad_hessian(&self, param: &[f64]) -> (f64, Vec<f64>, Array2<f64>) {
-        self.objective().value_grad_hessian(param)
-    }
-}
-
 impl CurveProblem {
     pub(super) fn new_with_metric_quantization(
         family: CurveFamily,
@@ -333,6 +165,174 @@ impl Hessian for CurveProblem {
             return Ok(hessian);
         }
         numerical_hessian_from_gradient(self, param)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct CurveProblemPredictionLoss<'a> {
+    pub(super) problem: &'a CurveProblem,
+}
+
+impl PredictionLoss for CurveProblemPredictionLoss<'_> {
+    fn value(&self, prediction: f64, target: f64) -> f64 {
+        self.problem.loss_value_from_prediction(prediction, target)
+    }
+
+    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
+        self.problem
+            .loss_derivative_from_prediction(prediction, target)
+    }
+
+    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
+        self.problem
+            .loss_second_derivative_from_prediction(prediction, target)
+    }
+}
+
+struct CurveProblemObjective<'a> {
+    problem: &'a CurveProblem,
+}
+
+impl CurveProblemObjective<'_> {
+    fn objective(&self) -> models::CurveObjective<CurveProblemTerm<'_>> {
+        models::CurveObjective::new(
+            self.problem.family.parameter_count(),
+            CurveProblemTerm {
+                problem: self.problem,
+            },
+        )
+    }
+
+    fn value(&self, param: &[f64]) -> f64 {
+        self.objective().value(param)
+    }
+
+    fn value_grad(&self, param: &[f64]) -> (f64, Vec<f64>) {
+        self.objective().value_grad(param)
+    }
+
+    fn value_grad_hessian(&self, param: &[f64]) -> (f64, Vec<f64>, Array2<f64>) {
+        self.objective().value_grad_hessian(param)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CurveProblemTerm<'a> {
+    problem: &'a CurveProblem,
+}
+
+impl CurveProblemTerm<'_> {
+    fn simd_enabled(&self) -> bool {
+        matches!(
+            self.problem.metric_quantization,
+            MetricQuantization::Disabled
+        ) && self.problem.loss_metric.simd_fast_path_supported()
+    }
+
+    fn fallback_term(&self) -> models::DataTerm<'_, CurveProblemPredictionLoss<'_>> {
+        let loss = CurveProblemPredictionLoss {
+            problem: self.problem,
+        };
+        models::DataTerm::new(
+            self.problem.family,
+            self.problem.point_x.as_ref(),
+            self.problem.point_y.as_ref(),
+            self.problem.saturating_trend_tau_grid.as_ref(),
+            loss,
+        )
+    }
+}
+
+impl TermValue for CurveProblemTerm<'_> {
+    fn add_value(&self, param: &[f64], value: &mut f64) {
+        if self.simd_enabled() && self.problem.family.is_polynomial() {
+            *value += simd::polynomial_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            return;
+        }
+        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
+            *value += simd::inverse_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            return;
+        }
+        self.fallback_term().add_value(param, value);
+    }
+}
+
+impl TermGrad for CurveProblemTerm<'_> {
+    fn add_value_grad(&self, param: &[f64], value: &mut f64, gradient: &mut [f64]) {
+        if self.simd_enabled() && self.problem.family.is_polynomial() {
+            let parameter_count = self.problem.family.parameter_count();
+            debug_assert!(parameter_count <= MAX_POLYNOMIAL_PARAMS);
+            let mut local_gradient = [0.0; MAX_POLYNOMIAL_PARAMS];
+            let local_gradient = &mut local_gradient[..parameter_count];
+            simd::accumulate_polynomial_gradient(
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                param,
+                self.problem.loss_metric,
+                local_gradient,
+            );
+            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
+            *value += simd::polynomial_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            for (gradient_value, local_value) in
+                gradient.iter_mut().zip(local_gradient.iter().copied())
+            {
+                *gradient_value += local_value * sample_scale;
+            }
+            return;
+        }
+        if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
+            let mut local_gradient = [0.0; 2];
+            simd::accumulate_inverse_gradient(
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                param,
+                self.problem.loss_metric,
+                &mut local_gradient,
+            );
+            let sample_scale = 1.0 / self.problem.point_x.len() as f64;
+            for local_value in &mut local_gradient {
+                *local_value *= sample_scale;
+            }
+            *value += simd::inverse_cost(
+                param,
+                self.problem.point_x.as_ref(),
+                self.problem.point_y.as_ref(),
+                self.problem.loss_metric,
+            );
+            for (gradient_value, local_value) in gradient.iter_mut().zip(local_gradient) {
+                *gradient_value += local_value;
+            }
+            return;
+        }
+        self.fallback_term().add_value_grad(param, value, gradient);
+    }
+}
+
+impl TermHessian for CurveProblemTerm<'_> {
+    fn add_value_grad_hessian(
+        &self,
+        param: &[f64],
+        value: &mut f64,
+        gradient: &mut [f64],
+        hessian: &mut Array2<f64>,
+    ) {
+        self.fallback_term()
+            .add_value_grad_hessian(param, value, gradient, hessian);
     }
 }
 

@@ -6,67 +6,12 @@ use super::{
     CurveParams, DEFAULT_SATURATING_TREND_TAUS_YEARS, InputError, MAX_SATURATING_TREND_TAU_COUNT,
     MIN_SATURATING_TREND_TAU_COUNT, Points, SaturatingTrendTauGrid,
 };
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-/// Поддерживаемые семейства аналитических кривых.
-pub enum CurveFamily {
-    Linear,
-    Quadratic,
-    Cubic,
-    Quartic,
-    Quintic,
-    Sextic,
-    Septic,
-    Octic,
-    Nonic,
-    Arrhenius,
-    Inverse,
-    Logistic,
-    Gompertz,
-    BiExponential,
-    DampedSinusoid,
-    Lorentzian,
-    NaturalLog,
-    FourPl,
-    FivePl,
-    MichaelisMenten,
-    ExponentialBasic,
-    ExponentialLinear,
-    ExponentialHalfLife,
-    FallingExponential,
-    HyperbolicTangent,
-    ArctangentStep,
-    Softplus,
-    Power,
-    Gaussian,
-    Rational11,
-    Rational22,
-    Rational33,
-    Rational44,
-    Rational55,
-    Emg,
-    PseudoVoigt,
-    SaturatingTrendBasis1,
-    SaturatingTrendBasis2,
-    SaturatingTrendBasis3,
-    SaturatingTrendBasis4,
-    SaturatingTrendBasis5,
-    SaturatingTrendBasis6,
-}
 
 pub(crate) const CURVE_FAMILY_COUNT: usize = CurveFamily::SaturatingTrendBasis6 as usize + 1;
 /// Минимально поддерживаемая степень рациональной модели `n/n`.
 pub const MIN_RATIONAL_DEGREE: usize = 1;
 /// Максимально поддерживаемая степень рациональной модели `n/n`.
 pub const MAX_RATIONAL_DEGREE: usize = 5;
-
-#[derive(Debug, Clone, Copy)]
-struct CurveFamilyMetadata {
-    label: &'static str,
-    parameter_names: &'static [&'static str],
-    min_points: usize,
-    requires_positive_x: bool,
-}
 
 const CURVE_FAMILY_METADATA: [CurveFamilyMetadata; CURVE_FAMILY_COUNT] = [
     CurveFamilyMetadata {
@@ -322,6 +267,54 @@ const CURVE_FAMILY_METADATA: [CurveFamilyMetadata; CURVE_FAMILY_COUNT] = [
         requires_positive_x: false,
     },
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+/// Поддерживаемые семейства аналитических кривых.
+pub enum CurveFamily {
+    Linear,
+    Quadratic,
+    Cubic,
+    Quartic,
+    Quintic,
+    Sextic,
+    Septic,
+    Octic,
+    Nonic,
+    Arrhenius,
+    Inverse,
+    Logistic,
+    Gompertz,
+    BiExponential,
+    DampedSinusoid,
+    Lorentzian,
+    NaturalLog,
+    FourPl,
+    FivePl,
+    MichaelisMenten,
+    ExponentialBasic,
+    ExponentialLinear,
+    ExponentialHalfLife,
+    FallingExponential,
+    HyperbolicTangent,
+    ArctangentStep,
+    Softplus,
+    Power,
+    Gaussian,
+    Rational11,
+    Rational22,
+    Rational33,
+    Rational44,
+    Rational55,
+    Emg,
+    PseudoVoigt,
+    SaturatingTrendBasis1,
+    SaturatingTrendBasis2,
+    SaturatingTrendBasis3,
+    SaturatingTrendBasis4,
+    SaturatingTrendBasis5,
+    SaturatingTrendBasis6,
+}
 
 impl CurveFamily {
     /// Полный список семейств в стабильном порядке для UI и переборов.
@@ -825,4 +818,11 @@ impl fmt::Display for CurveFamily {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.label())
     }
+}
+#[derive(Debug, Clone, Copy)]
+struct CurveFamilyMetadata {
+    label: &'static str,
+    parameter_names: &'static [&'static str],
+    min_points: usize,
+    requires_positive_x: bool,
 }

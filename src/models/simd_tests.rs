@@ -1,6 +1,7 @@
+use crate::domain::CurveFamily;
+
 use super::common::Vf64;
 use super::test_support::assert_family_gradient_and_hessian_match_numerical_reference;
-use crate::domain::CurveFamily;
 
 fn long_positive_x_values() -> Vec<f64> {
     (0..(Vf64::LEN + 3))

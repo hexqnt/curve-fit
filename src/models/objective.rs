@@ -1,26 +1,8 @@
 use super::common;
 use super::{Grad, Hessian, Param, TermGrad, TermHessian, TermValue};
 
-/// Уровень вычисления только значения objective.
-pub(crate) trait ObjectiveValue {
-    fn value(&self, param: &Param) -> f64;
-}
-
-/// Уровень вычисления значения и градиента objective.
-pub(crate) trait ObjectiveGrad: ObjectiveValue {
-    fn value_grad(&self, param: &Param) -> (f64, Grad);
-}
-
-/// Уровень вычисления значения, градиента и гессиана objective.
-pub(crate) trait ObjectiveHessian: ObjectiveGrad {
-    fn value_grad_raw_hessian(&self, param: &Param) -> (f64, Grad, Hessian);
-
-    fn value_grad_hessian(&self, param: &Param) -> (f64, Grad, Hessian) {
-        let (value, gradient, mut hessian) = self.value_grad_raw_hessian(param);
-        common::stabilize_hessian(&mut hessian);
-        (value, gradient, hessian)
-    }
-}
+// Пробуем базовый шаг, затем уменьшаем/увеличиваем его, чтобы переживать локальные NaN/Inf.
+const FD_STEP_RETRY_FACTORS: [f64; 5] = [1.0, 0.5, 2.0, 0.25, 4.0];
 
 /// Objective, собранный из терма (или композиции термов через обертку).
 pub(crate) struct CurveObjective<T> {
@@ -172,8 +154,26 @@ where
     }
 }
 
-// Пробуем базовый шаг, затем уменьшаем/увеличиваем его, чтобы переживать локальные NaN/Inf.
-const FD_STEP_RETRY_FACTORS: [f64; 5] = [1.0, 0.5, 2.0, 0.25, 4.0];
+/// Уровень вычисления только значения objective.
+pub(crate) trait ObjectiveValue {
+    fn value(&self, param: &Param) -> f64;
+}
+
+/// Уровень вычисления значения и градиента objective.
+pub(crate) trait ObjectiveGrad: ObjectiveValue {
+    fn value_grad(&self, param: &Param) -> (f64, Grad);
+}
+
+/// Уровень вычисления значения, градиента и гессиана objective.
+pub(crate) trait ObjectiveHessian: ObjectiveGrad {
+    fn value_grad_raw_hessian(&self, param: &Param) -> (f64, Grad, Hessian);
+
+    fn value_grad_hessian(&self, param: &Param) -> (f64, Grad, Hessian) {
+        let (value, gradient, mut hessian) = self.value_grad_raw_hessian(param);
+        common::stabilize_hessian(&mut hessian);
+        (value, gradient, hessian)
+    }
+}
 
 #[inline]
 fn fd_step(value: f64, rel_step: f64, min_step: f64) -> f64 {

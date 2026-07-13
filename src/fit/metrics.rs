@@ -1,5 +1,10 @@
 //! Расчет loss и итоговых метрик качества с опциональной квантизацией наблюдений.
 
+use super::*;
+
+/// Значение по умолчанию для числа знаков после запятой в режиме квантизации метрик.
+pub(crate) const DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES: u8 = 2;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Целевая метрика, по которой оптимизатор минимизирует ошибку.
 pub enum OptimizationLossMetric {
@@ -106,33 +111,6 @@ impl OptimizationLossMetric {
     }
 }
 
-/// Значение по умолчанию для числа знаков после запятой в режиме квантизации метрик.
-pub(crate) const DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES: u8 = 2;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Число знаков после запятой для квантизации метрик.
-pub(crate) struct MetricQuantizationDecimalPlaces(u8);
-
-impl MetricQuantizationDecimalPlaces {
-    pub(crate) const MIN: u8 = 0;
-    pub(crate) const MAX: u8 = 15;
-
-    pub(crate) fn try_new(value: u8) -> Result<Self, String> {
-        if !(Self::MIN..=Self::MAX).contains(&value) {
-            return Err(format!(
-                "Metric quantization decimal places must be in range {}..={}, got {value}",
-                Self::MIN,
-                Self::MAX
-            ));
-        }
-        Ok(Self(value))
-    }
-
-    pub(crate) fn get(self) -> u8 {
-        self.0
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Конфигурация квантизации для расчета objective и метрик.
 pub(crate) enum MetricQuantization {
@@ -178,6 +156,30 @@ impl ResidualQuantizer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Число знаков после запятой для квантизации метрик.
+pub(crate) struct MetricQuantizationDecimalPlaces(u8);
+
+impl MetricQuantizationDecimalPlaces {
+    pub(crate) const MIN: u8 = 0;
+    pub(crate) const MAX: u8 = 15;
+
+    pub(crate) fn try_new(value: u8) -> Result<Self, String> {
+        if !(Self::MIN..=Self::MAX).contains(&value) {
+            return Err(format!(
+                "Metric quantization decimal places must be in range {}..={}, got {value}",
+                Self::MIN,
+                Self::MAX
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    pub(crate) fn get(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Снимок метрик на одной итерации оптимизации.
 pub struct IterationMetricSnapshot {
@@ -190,6 +192,60 @@ pub struct IterationMetricSnapshot {
     pub max_abs_error: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+/// Неизменяемая часть метрик, зависящая только от наблюдений.
+pub(super) struct MetricBaseline {
+    quantizer: ResidualQuantizer,
+    sample_count: f64,
+    sst: f64,
+}
+
+impl MetricBaseline {
+    pub(super) fn new(points: &Points, metric_quantization: MetricQuantization) -> Self {
+        let quantizer = ResidualQuantizer::new(metric_quantization);
+        let sample_count = points.len() as f64;
+        let y_mean = points
+            .iter()
+            .map(|point| quantizer.quantize_value(point.y()))
+            .sum::<f64>()
+            / sample_count;
+        let sst = points
+            .iter()
+            .map(|point| {
+                let centered = quantizer.quantize_value(point.y()) - y_mean;
+                centered * centered
+            })
+            .sum();
+
+        Self {
+            quantizer,
+            sample_count,
+            sst,
+        }
+    }
+}
+
+pub(super) struct ScalarMetrics {
+    pub(super) mse: f64,
+    pub(super) rmse: f64,
+    pub(super) mae: f64,
+    pub(super) soft_l1: f64,
+    pub(super) msle: f64,
+    pub(super) r2: f64,
+    pub(super) max_abs_error: f64,
+}
+
+pub(super) struct EvaluatorMetrics {
+    pub(super) mse: f64,
+    pub(super) rmse: f64,
+    pub(super) mae: f64,
+    pub(super) soft_l1: f64,
+    pub(super) msle: f64,
+    pub(super) r2: f64,
+    pub(super) max_abs_error: f64,
+    pub(super) residuals: Vec<[f64; 2]>,
+}
+
 /// Вычисляет базовые метрики качества подгонки: `(MSE, RMSE)`.
 pub fn calculate_metrics(points: &Points, params: &CurveParams) -> (f64, f64) {
     calculate_metrics_with_quantization(points, params, MetricQuantization::Disabled)
@@ -200,9 +256,17 @@ pub(crate) fn calculate_metrics_with_quantization(
     params: &CurveParams,
     metric_quantization: MetricQuantization,
 ) -> (f64, f64) {
-    let scalar = calculate_scalar_metrics_from_evaluator(points, metric_quantization, |x| {
-        params.evaluate(x)
-    });
+    let baseline = MetricBaseline::new(points, metric_quantization);
+    let scalar = calculate_scalar_metrics_with_baseline(points, baseline, |x| params.evaluate(x));
+    (scalar.mse, scalar.rmse)
+}
+
+pub(super) fn calculate_metrics_with_baseline(
+    points: &Points,
+    params: &CurveParams,
+    baseline: MetricBaseline,
+) -> (f64, f64) {
+    let scalar = calculate_scalar_metrics_with_baseline(points, baseline, |x| params.evaluate(x));
     (scalar.mse, scalar.rmse)
 }
 
@@ -240,7 +304,25 @@ pub(super) fn calculate_iteration_metrics_from_evaluator<F>(
 where
     F: FnMut(f64) -> f64,
 {
-    let scalar = calculate_scalar_metrics_from_evaluator(points, metric_quantization, evaluate);
+    let baseline = MetricBaseline::new(points, metric_quantization);
+    calculate_iteration_metrics_from_evaluator_with_baseline(
+        points,
+        loss_metric,
+        baseline,
+        evaluate,
+    )
+}
+
+pub(super) fn calculate_iteration_metrics_from_evaluator_with_baseline<F>(
+    points: &Points,
+    loss_metric: OptimizationLossMetric,
+    baseline: MetricBaseline,
+    evaluate: F,
+) -> IterationMetricSnapshot
+where
+    F: FnMut(f64) -> f64,
+{
+    let scalar = calculate_scalar_metrics_with_baseline(points, baseline, evaluate);
     IterationMetricSnapshot {
         loss: scalar_loss_value(loss_metric, &scalar),
         mse: scalar.mse,
@@ -250,16 +332,6 @@ where
         r2: scalar.r2,
         max_abs_error: scalar.max_abs_error,
     }
-}
-
-pub(super) struct ScalarMetrics {
-    pub(super) mse: f64,
-    pub(super) rmse: f64,
-    pub(super) mae: f64,
-    pub(super) soft_l1: f64,
-    pub(super) msle: f64,
-    pub(super) r2: f64,
-    pub(super) max_abs_error: f64,
 }
 
 pub(super) fn scalar_loss_value(
@@ -278,18 +350,28 @@ pub(super) fn scalar_loss_value(
 pub(super) fn calculate_scalar_metrics_from_evaluator<F>(
     points: &Points,
     metric_quantization: MetricQuantization,
+    evaluate: F,
+) -> ScalarMetrics
+where
+    F: FnMut(f64) -> f64,
+{
+    let baseline = MetricBaseline::new(points, metric_quantization);
+    calculate_scalar_metrics_with_baseline(points, baseline, evaluate)
+}
+
+fn calculate_scalar_metrics_with_baseline<F>(
+    points: &Points,
+    baseline: MetricBaseline,
     mut evaluate: F,
 ) -> ScalarMetrics
 where
     F: FnMut(f64) -> f64,
 {
-    let quantizer = ResidualQuantizer::new(metric_quantization);
-    let sample_count = points.len() as f64;
-    let y_mean = points
-        .iter()
-        .map(|point| quantizer.quantize_value(point.y()))
-        .sum::<f64>()
-        / sample_count;
+    let MetricBaseline {
+        quantizer,
+        sample_count,
+        sst,
+    } = baseline;
 
     let mut sse = 0.0;
     let mut sae = 0.0;
@@ -308,13 +390,6 @@ where
         max_abs_error = max_abs_error.max(abs_residual);
     }
 
-    let sst = points
-        .iter()
-        .map(|point| {
-            let centered = quantizer.quantize_value(point.y()) - y_mean;
-            centered * centered
-        })
-        .sum::<f64>();
     let mse = sse / sample_count;
     let rmse = mse.sqrt();
     let mae = sae / sample_count;
@@ -335,17 +410,6 @@ where
         r2,
         max_abs_error,
     }
-}
-
-pub(super) struct EvaluatorMetrics {
-    pub(super) mse: f64,
-    pub(super) rmse: f64,
-    pub(super) mae: f64,
-    pub(super) soft_l1: f64,
-    pub(super) msle: f64,
-    pub(super) r2: f64,
-    pub(super) max_abs_error: f64,
-    pub(super) residuals: Vec<[f64; 2]>,
 }
 
 pub(super) fn calculate_metrics_from_evaluator<F>(
@@ -375,4 +439,3 @@ where
         residuals,
     }
 }
-use super::*;

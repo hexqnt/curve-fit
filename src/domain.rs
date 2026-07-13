@@ -1,14 +1,6 @@
 //! Доменная модель для точек, семейств кривых и параметров оптимизации.
 //! Здесь сосредоточены типы с инвариантами, которые проверяются на границах системы.
 
-mod error;
-mod family;
-mod fit_result;
-mod optimizer;
-mod params;
-mod point;
-mod saturating_trend;
-
 pub use error::InputError;
 pub use family::{CurveFamily, MAX_RATIONAL_DEGREE, MIN_RATIONAL_DEGREE};
 pub use fit_result::FitResult;
@@ -25,6 +17,14 @@ pub use saturating_trend::{
 
 #[cfg(test)]
 pub(crate) use family::CURVE_FAMILY_COUNT;
+
+mod error;
+mod family;
+mod fit_result;
+mod optimizer;
+mod params;
+mod point;
+mod saturating_trend;
 
 #[cfg(test)]
 mod tests;

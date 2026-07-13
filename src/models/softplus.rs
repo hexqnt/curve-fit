@@ -1,22 +1,16 @@
-use super::common::{Vf64, ln_1p_simd, sigmoid_simd};
-use super::common::{
-    is_finite_non_negative, scale_and_mirror_upper_hessian, sigmoid, softplus as math_softplus,
-};
-use ndarray::Array2;
 use std::simd::Select;
 use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
-const PARAM_COUNT: usize = 4;
+use ndarray::Array2;
 
-#[inline]
-fn softplus_simd(value: Vf64) -> Vf64 {
-    let zero = Vf64::splat(0.0);
-    let positive_branch = value + ln_1p_simd((-value).exp());
-    let negative_branch = ln_1p_simd(value.exp());
-    value.simd_gt(zero).select(positive_branch, negative_branch)
-}
+use super::common::{Vf64, ln_1p_simd, sigmoid_simd};
+use super::common::{
+    is_finite_non_negative, scale_and_mirror_upper_hessian, sigmoid, softplus as math_softplus,
+};
+
+const PARAM_COUNT: usize = 4;
 
 #[derive(Clone, Copy)]
 struct Params<T> {
@@ -94,6 +88,14 @@ impl Params<Vf64> {
     }
 }
 
+#[inline]
+fn softplus_simd(value: Vf64) -> Vf64 {
+    let zero = Vf64::splat(0.0);
+    let positive_branch = value + ln_1p_simd((-value).exp());
+    let negative_branch = ln_1p_simd(value.exp());
+    value.simd_gt(zero).select(positive_branch, negative_branch)
+}
+
 /// Вычисляет softplus-переход:
 /// `f(x) = amplitude * softplus(slope * (x - x0)) + offset`,
 /// где:
@@ -122,54 +124,6 @@ pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
 #[inline]
 pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64; PARAM_COUNT]) -> Vf64 {
     Params::parse(param).simd().value_grad_at(x, grad)
-}
-
-pub(super) fn add_value_grad(
-    x_values: &[f64],
-    param: &[f64],
-    value_first: &[f64],
-    gradient: &mut [f64],
-) {
-    debug_assert_eq!(x_values.len(), value_first.len());
-    debug_assert_eq!(gradient.len(), param.len());
-    let params = Params::parse(param);
-    let params_simd = params.simd();
-
-    {
-        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
-        let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
-        debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
-        debug_assert_eq!(x_tail.len(), value_first_tail.len());
-
-        let mut point_grad = [Vf64::splat(0.0); PARAM_COUNT];
-        let mut gradient_accum = [Vf64::splat(0.0); PARAM_COUNT];
-
-        for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
-            let x = Vf64::from_array(*x_chunk);
-            let upstream = Vf64::from_array(*value_first_chunk);
-            params_simd.value_grad_at(x, &mut point_grad);
-
-            for (gradient_value, point_grad_value) in
-                gradient_accum.iter_mut().zip(point_grad.iter().copied())
-            {
-                *gradient_value += upstream * point_grad_value;
-            }
-        }
-
-        for (gradient_value, accum_value) in gradient.iter_mut().zip(gradient_accum.iter().copied())
-        {
-            *gradient_value += accum_value.reduce_sum();
-        }
-
-        let mut point_grad = [0.0; PARAM_COUNT];
-        for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            params.value_grad_at(x, &mut point_grad);
-
-            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
-                *gradient_value += upstream * point_grad_value;
-            }
-        }
-    }
 }
 
 pub(super) fn add_value_grad_raw_hessian(

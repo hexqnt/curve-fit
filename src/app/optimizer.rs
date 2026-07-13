@@ -1,13 +1,338 @@
 //! UI-представление конфигураций оптимизаторов, preset-ов и их валидации после ввода.
 
+use std::hash::{Hash, Hasher};
+
+use super::{C1_MIN, C2_MAX, STEP_MAX_MAX, STEP_MIN_MIN, UiLanguage};
 use crate::domain::{
     AdamConfig, LbfgsConfig, NelderMeadConfig, NewtonCgConfig, OptimizerMethod, SgdConfig,
     SteepestDescentConfig,
 };
-use std::hash::{Hash, Hasher};
 
-use super::{C1_MIN, C2_MAX, STEP_MAX_MAX, STEP_MIN_MIN, UiLanguage};
+/// Режим отображения настроек оптимизатора в UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum OptimizerUiMode {
+    #[default]
+    Basic,
+    Advanced,
+}
 
+/// Готовые наборы настроек оптимизаторов для быстрого выбора.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum OptimizerPreset {
+    Fast,
+    #[default]
+    Balanced,
+    Precise,
+    Custom,
+}
+
+impl OptimizerPreset {
+    pub(super) const ALL: [Self; 3] = [Self::Fast, Self::Balanced, Self::Precise];
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct LbfgsInputState {
+    pub(super) history_size: usize,
+    pub(super) max_iters: u64,
+    pub(super) tol_grad: f64,
+    pub(super) tol_cost: f64,
+    pub(super) c1: f64,
+    pub(super) c2: f64,
+    pub(super) step_min: f64,
+    pub(super) step_max: f64,
+    pub(super) width_tolerance: f64,
+}
+
+impl LbfgsInputState {
+    pub(super) fn from_config(config: &LbfgsConfig) -> Self {
+        Self {
+            history_size: config.history_size(),
+            max_iters: config.max_iters(),
+            tol_grad: config.tol_grad(),
+            tol_cost: config.tol_cost(),
+            c1: config.c1(),
+            c2: config.c2(),
+            step_min: config.step_min(),
+            step_max: config.step_max(),
+            width_tolerance: config.width_tolerance(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
+    }
+
+    pub(super) fn to_config(&self) -> Result<LbfgsConfig, String> {
+        LbfgsConfig::try_new(
+            self.history_size,
+            self.max_iters,
+            self.tol_grad,
+            self.tol_cost,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.history_size.hash(hasher);
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.tol_grad);
+        hash_f64_normalized(hasher, self.tol_cost);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct NelderMeadInputState {
+    pub(super) max_iters: u64,
+    pub(super) simplex_scale: f64,
+    pub(super) sd_tolerance: f64,
+    pub(super) alpha: f64,
+    pub(super) gamma: f64,
+    pub(super) rho: f64,
+    pub(super) sigma: f64,
+}
+
+impl NelderMeadInputState {
+    pub(super) fn from_config(config: &NelderMeadConfig) -> Self {
+        Self {
+            max_iters: config.max_iters(),
+            simplex_scale: config.simplex_scale(),
+            sd_tolerance: config.sd_tolerance(),
+            alpha: config.alpha(),
+            gamma: config.gamma(),
+            rho: config.rho(),
+            sigma: config.sigma(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.simplex_scale = self.simplex_scale.clamp(1e-4, 2.0);
+        self.sd_tolerance = self.sd_tolerance.clamp(1e-14, 1e-2);
+        self.alpha = self.alpha.clamp(1e-3, 5.0);
+        self.gamma = self.gamma.clamp(1.0001, 5.0);
+        self.rho = self.rho.clamp(1e-4, 0.5);
+        self.sigma = self.sigma.clamp(1e-4, 1.0);
+    }
+
+    pub(super) fn to_config(&self) -> Result<NelderMeadConfig, String> {
+        NelderMeadConfig::try_new(
+            self.max_iters,
+            self.simplex_scale,
+            self.sd_tolerance,
+            self.alpha,
+            self.gamma,
+            self.rho,
+            self.sigma,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.simplex_scale);
+        hash_f64_normalized(hasher, self.sd_tolerance);
+        hash_f64_normalized(hasher, self.alpha);
+        hash_f64_normalized(hasher, self.gamma);
+        hash_f64_normalized(hasher, self.rho);
+        hash_f64_normalized(hasher, self.sigma);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SteepestDescentInputState {
+    pub(super) max_iters: u64,
+    pub(super) c1: f64,
+    pub(super) c2: f64,
+    pub(super) step_min: f64,
+    pub(super) step_max: f64,
+    pub(super) width_tolerance: f64,
+}
+
+impl SteepestDescentInputState {
+    pub(super) fn from_config(config: &SteepestDescentConfig) -> Self {
+        Self {
+            max_iters: config.max_iters(),
+            c1: config.c1(),
+            c2: config.c2(),
+            step_min: config.step_min(),
+            step_max: config.step_max(),
+            width_tolerance: config.width_tolerance(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
+    }
+
+    pub(super) fn to_config(&self) -> Result<SteepestDescentConfig, String> {
+        SteepestDescentConfig::try_new(
+            self.max_iters,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct NewtonCgInputState {
+    pub(super) max_iters: u64,
+    pub(super) tol: f64,
+    pub(super) curvature_threshold: f64,
+    pub(super) c1: f64,
+    pub(super) c2: f64,
+    pub(super) step_min: f64,
+    pub(super) step_max: f64,
+    pub(super) width_tolerance: f64,
+}
+
+impl NewtonCgInputState {
+    pub(super) fn from_config(config: &NewtonCgConfig) -> Self {
+        Self {
+            max_iters: config.max_iters(),
+            tol: config.tol(),
+            curvature_threshold: config.curvature_threshold(),
+            c1: config.c1(),
+            c2: config.c2(),
+            step_min: config.step_min(),
+            step_max: config.step_max(),
+            width_tolerance: config.width_tolerance(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.tol = self.tol.clamp(1e-14, 1e-2);
+        self.curvature_threshold = self.curvature_threshold.clamp(0.0, 1e-2);
+        normalize_wolfe_line_search_inputs(
+            &mut self.c1,
+            &mut self.c2,
+            &mut self.step_min,
+            &mut self.step_max,
+        );
+        self.width_tolerance = self.width_tolerance.clamp(0.0, 1e-3);
+    }
+
+    pub(super) fn to_config(&self) -> Result<NewtonCgConfig, String> {
+        NewtonCgConfig::try_new(
+            self.max_iters,
+            self.tol,
+            self.curvature_threshold,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.tol);
+        hash_f64_normalized(hasher, self.curvature_threshold);
+        hash_wolfe_line_search_inputs(
+            hasher,
+            self.c1,
+            self.c2,
+            self.step_min,
+            self.step_max,
+            self.width_tolerance,
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct SgdInputState {
+    pub(super) max_iters: u64,
+    pub(super) learning_rate: f64,
+}
+
+impl SgdInputState {
+    pub(super) fn from_config(config: &SgdConfig) -> Self {
+        Self {
+            max_iters: config.max_iters(),
+            learning_rate: config.learning_rate(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
+    }
+
+    pub(super) fn to_config(&self) -> Result<SgdConfig, String> {
+        SgdConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.learning_rate);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AdamInputState {
+    pub(super) max_iters: u64,
+    pub(super) learning_rate: f64,
+}
+
+impl AdamInputState {
+    pub(super) fn from_config(config: &AdamConfig) -> Self {
+        Self {
+            max_iters: config.max_iters(),
+            learning_rate: config.learning_rate(),
+        }
+    }
+
+    pub(super) fn normalize_after_ui(&mut self) {
+        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
+    }
+
+    pub(super) fn to_config(&self) -> Result<AdamConfig, String> {
+        AdamConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
+    }
+
+    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
+        self.max_iters.hash(hasher);
+        hash_f64_normalized(hasher, self.learning_rate);
+    }
+}
 pub(super) fn optimizer_method_label(
     language: UiLanguage,
     method: OptimizerMethod,
@@ -42,28 +367,6 @@ pub(super) fn optimizer_preset_label(
         (UiLanguage::Russian, OptimizerPreset::Precise) => "Точный",
         (UiLanguage::Russian, OptimizerPreset::Custom) => "Произвольный",
     }
-}
-
-/// Режим отображения настроек оптимизатора в UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum OptimizerUiMode {
-    #[default]
-    Basic,
-    Advanced,
-}
-
-/// Готовые наборы настроек оптимизаторов для быстрого выбора.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum OptimizerPreset {
-    Fast,
-    #[default]
-    Balanced,
-    Precise,
-    Custom,
-}
-
-impl OptimizerPreset {
-    pub(super) const ALL: [Self; 3] = [Self::Fast, Self::Balanced, Self::Precise];
 }
 
 fn infer_preset_by<T, F>(config: &T, config_from_preset: F) -> OptimizerPreset
@@ -219,308 +522,4 @@ pub(super) fn adam_config_from_preset(preset: OptimizerPreset) -> AdamConfig {
 
 pub(super) fn infer_adam_preset(config: &AdamConfig) -> OptimizerPreset {
     infer_preset_by(config, adam_config_from_preset)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct LbfgsInputState {
-    pub(super) history_size: usize,
-    pub(super) max_iters: u64,
-    pub(super) tol_grad: f64,
-    pub(super) tol_cost: f64,
-    pub(super) c1: f64,
-    pub(super) c2: f64,
-    pub(super) step_min: f64,
-    pub(super) step_max: f64,
-    pub(super) width_tolerance: f64,
-}
-
-impl LbfgsInputState {
-    pub(super) fn from_config(config: &LbfgsConfig) -> Self {
-        Self {
-            history_size: config.history_size,
-            max_iters: config.max_iters,
-            tol_grad: config.tol_grad,
-            tol_cost: config.tol_cost,
-            c1: config.c1,
-            c2: config.c2,
-            step_min: config.step_min,
-            step_max: config.step_max,
-            width_tolerance: config.width_tolerance,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        normalize_wolfe_line_search_inputs(
-            &mut self.c1,
-            &mut self.c2,
-            &mut self.step_min,
-            &mut self.step_max,
-        );
-    }
-
-    pub(super) fn to_config(&self) -> Result<LbfgsConfig, String> {
-        LbfgsConfig::try_new(
-            self.history_size,
-            self.max_iters,
-            self.tol_grad,
-            self.tol_cost,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.history_size.hash(hasher);
-        self.max_iters.hash(hasher);
-        hash_f64_normalized(hasher, self.tol_grad);
-        hash_f64_normalized(hasher, self.tol_cost);
-        hash_wolfe_line_search_inputs(
-            hasher,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        );
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct NelderMeadInputState {
-    pub(super) max_iters: u64,
-    pub(super) simplex_scale: f64,
-    pub(super) sd_tolerance: f64,
-    pub(super) alpha: f64,
-    pub(super) gamma: f64,
-    pub(super) rho: f64,
-    pub(super) sigma: f64,
-}
-
-impl NelderMeadInputState {
-    pub(super) fn from_config(config: &NelderMeadConfig) -> Self {
-        Self {
-            max_iters: config.max_iters,
-            simplex_scale: config.simplex_scale,
-            sd_tolerance: config.sd_tolerance,
-            alpha: config.alpha,
-            gamma: config.gamma,
-            rho: config.rho,
-            sigma: config.sigma,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        self.simplex_scale = self.simplex_scale.clamp(1e-4, 2.0);
-        self.sd_tolerance = self.sd_tolerance.clamp(1e-14, 1e-2);
-        self.alpha = self.alpha.clamp(1e-3, 5.0);
-        self.gamma = self.gamma.clamp(1.0001, 5.0);
-        self.rho = self.rho.clamp(1e-4, 0.5);
-        self.sigma = self.sigma.clamp(1e-4, 1.0);
-    }
-
-    pub(super) fn to_config(&self) -> Result<NelderMeadConfig, String> {
-        NelderMeadConfig::try_new(
-            self.max_iters,
-            self.simplex_scale,
-            self.sd_tolerance,
-            self.alpha,
-            self.gamma,
-            self.rho,
-            self.sigma,
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.max_iters.hash(hasher);
-        hash_f64_normalized(hasher, self.simplex_scale);
-        hash_f64_normalized(hasher, self.sd_tolerance);
-        hash_f64_normalized(hasher, self.alpha);
-        hash_f64_normalized(hasher, self.gamma);
-        hash_f64_normalized(hasher, self.rho);
-        hash_f64_normalized(hasher, self.sigma);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct SteepestDescentInputState {
-    pub(super) max_iters: u64,
-    pub(super) c1: f64,
-    pub(super) c2: f64,
-    pub(super) step_min: f64,
-    pub(super) step_max: f64,
-    pub(super) width_tolerance: f64,
-}
-
-impl SteepestDescentInputState {
-    pub(super) fn from_config(config: &SteepestDescentConfig) -> Self {
-        Self {
-            max_iters: config.max_iters,
-            c1: config.c1,
-            c2: config.c2,
-            step_min: config.step_min,
-            step_max: config.step_max,
-            width_tolerance: config.width_tolerance,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        normalize_wolfe_line_search_inputs(
-            &mut self.c1,
-            &mut self.c2,
-            &mut self.step_min,
-            &mut self.step_max,
-        );
-    }
-
-    pub(super) fn to_config(&self) -> Result<SteepestDescentConfig, String> {
-        SteepestDescentConfig::try_new(
-            self.max_iters,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.max_iters.hash(hasher);
-        hash_wolfe_line_search_inputs(
-            hasher,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        );
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct NewtonCgInputState {
-    pub(super) max_iters: u64,
-    pub(super) tol: f64,
-    pub(super) curvature_threshold: f64,
-    pub(super) c1: f64,
-    pub(super) c2: f64,
-    pub(super) step_min: f64,
-    pub(super) step_max: f64,
-    pub(super) width_tolerance: f64,
-}
-
-impl NewtonCgInputState {
-    pub(super) fn from_config(config: &NewtonCgConfig) -> Self {
-        Self {
-            max_iters: config.max_iters,
-            tol: config.tol,
-            curvature_threshold: config.curvature_threshold,
-            c1: config.c1,
-            c2: config.c2,
-            step_min: config.step_min,
-            step_max: config.step_max,
-            width_tolerance: config.width_tolerance,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        self.tol = self.tol.clamp(1e-14, 1e-2);
-        self.curvature_threshold = self.curvature_threshold.clamp(0.0, 1e-2);
-        normalize_wolfe_line_search_inputs(
-            &mut self.c1,
-            &mut self.c2,
-            &mut self.step_min,
-            &mut self.step_max,
-        );
-        self.width_tolerance = self.width_tolerance.clamp(0.0, 1e-3);
-    }
-
-    pub(super) fn to_config(&self) -> Result<NewtonCgConfig, String> {
-        NewtonCgConfig::try_new(
-            self.max_iters,
-            self.tol,
-            self.curvature_threshold,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        )
-        .map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.max_iters.hash(hasher);
-        hash_f64_normalized(hasher, self.tol);
-        hash_f64_normalized(hasher, self.curvature_threshold);
-        hash_wolfe_line_search_inputs(
-            hasher,
-            self.c1,
-            self.c2,
-            self.step_min,
-            self.step_max,
-            self.width_tolerance,
-        );
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct SgdInputState {
-    pub(super) max_iters: u64,
-    pub(super) learning_rate: f64,
-}
-
-impl SgdInputState {
-    pub(super) fn from_config(config: &SgdConfig) -> Self {
-        Self {
-            max_iters: config.max_iters,
-            learning_rate: config.learning_rate,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
-    }
-
-    pub(super) fn to_config(&self) -> Result<SgdConfig, String> {
-        SgdConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.max_iters.hash(hasher);
-        hash_f64_normalized(hasher, self.learning_rate);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct AdamInputState {
-    pub(super) max_iters: u64,
-    pub(super) learning_rate: f64,
-}
-
-impl AdamInputState {
-    pub(super) fn from_config(config: &AdamConfig) -> Self {
-        Self {
-            max_iters: config.max_iters,
-            learning_rate: config.learning_rate,
-        }
-    }
-
-    pub(super) fn normalize_after_ui(&mut self) {
-        self.learning_rate = self.learning_rate.clamp(1e-6, 1.0);
-    }
-
-    pub(super) fn to_config(&self) -> Result<AdamConfig, String> {
-        AdamConfig::try_new(self.max_iters, self.learning_rate).map_err(|error| error.to_string())
-    }
-
-    pub(super) fn hash_into<H: Hasher>(&self, hasher: &mut H) {
-        self.max_iters.hash(hasher);
-        hash_f64_normalized(hasher, self.learning_rate);
-    }
 }

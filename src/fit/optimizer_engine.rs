@@ -13,33 +13,32 @@ type NewtonCgSolver = NewtonCG<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f
 type SgdSolver = SGD<Vec<f64>>;
 type AdamSolver = Adam<Vec<f64>>;
 
-#[derive(Debug, Clone)]
-struct StochasticState {
-    current_param: Vec<f64>,
-    best_param: Vec<f64>,
-    gradient_buffer: Vec<f64>,
-    param_buffer: Array1<f64>,
-    best_cost: f64,
-    iter: u64,
-    max_iters: u64,
-}
-
-enum OptimizerSolver {
-    Lbfgs(LbfgsSolver),
-    NelderMead(NelderMeadSolver),
-    SteepestDescent(SteepestDescentSolver),
-    NewtonCg(NewtonCgSolver),
-    Sgd(SgdSolver),
-    Adam(AdamSolver),
-}
-
-enum OptimizerState {
-    Lbfgs(GradientState),
-    NelderMead(NelderMeadState),
-    SteepestDescent(GradientState),
-    NewtonCg(Box<NewtonCgState>),
-    Sgd(StochasticState),
-    Adam(StochasticState),
+/// Solver и его состояние хранятся вместе, поэтому несовместимую пару нельзя создать.
+enum Optimizer {
+    Lbfgs {
+        solver: LbfgsSolver,
+        state: GradientState,
+    },
+    NelderMead {
+        solver: NelderMeadSolver,
+        state: NelderMeadState,
+    },
+    SteepestDescent {
+        solver: SteepestDescentSolver,
+        state: GradientState,
+    },
+    NewtonCg {
+        solver: NewtonCgSolver,
+        state: Box<NewtonCgState>,
+    },
+    Sgd {
+        solver: SgdSolver,
+        state: StochasticState,
+    },
+    Adam {
+        solver: AdamSolver,
+        state: StochasticState,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,19 +52,6 @@ pub enum IncrementalFitStep {
     },
     Finished(FitResult),
     Cancelled,
-}
-
-/// Пошаговый раннер оптимизации параметрических семейств.
-pub struct IncrementalFitRunner {
-    family: CurveFamily,
-    params_template: CurveParams,
-    points: Points,
-    loss_metric: OptimizationLossMetric,
-    metric_quantization: MetricQuantization,
-    problem: Problem<CurveProblem>,
-    solver: OptimizerSolver,
-    state: Option<OptimizerState>,
-    cancelled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,475 +70,32 @@ pub(crate) enum IncrementalSplineFitStep {
     Cancelled,
 }
 
-pub(crate) struct IncrementalSplineFitRunner {
-    family: SplineFamilyKind,
-    points: Points,
-    config: SplineConfig,
-    knot_x: Box<[f64]>,
-    curve_x_bounds: [f64; 2],
-    loss_metric: OptimizationLossMetric,
-    metric_quantization: MetricQuantization,
-    problem: Problem<SplineProblem>,
-    solver: OptimizerSolver,
-    state: Option<OptimizerState>,
-    cancelled: bool,
-}
-
-fn build_line_search(
-    c1: f64,
-    c2: f64,
-    step_min: f64,
-    step_max: f64,
-    width_tolerance: f64,
-) -> Result<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>, FitError> {
-    // На границе fit-модуля приводим ошибки `argmin` к единому типу `FitError`.
-    MoreThuenteLineSearch::new()
-        .with_c(c1, c2)
-        .map_err(optimizer_error)?
-        .with_bounds(step_min, step_max)
-        .map_err(optimizer_error)?
-        .with_width_tolerance(width_tolerance)
-        .map_err(optimizer_error)
-}
-
-fn build_lbfgs_solver(config: &LbfgsConfig) -> Result<LbfgsSolver, FitError> {
-    let line_search = build_line_search(
-        config.c1,
-        config.c2,
-        config.step_min,
-        config.step_max,
-        config.width_tolerance,
-    )?;
-    LBFGS::new(line_search, config.history_size)
-        .with_tolerance_grad(config.tol_grad)
-        .map_err(optimizer_error)?
-        .with_tolerance_cost(config.tol_cost)
-        .map_err(optimizer_error)
-}
-
-fn build_steepest_descent_solver(
-    config: &SteepestDescentConfig,
-) -> Result<SteepestDescentSolver, FitError> {
-    let line_search = build_line_search(
-        config.c1,
-        config.c2,
-        config.step_min,
-        config.step_max,
-        config.width_tolerance,
-    )?;
-    Ok(SteepestDescent::new(line_search))
-}
-
-fn build_newton_cg_solver(config: &NewtonCgConfig) -> Result<NewtonCgSolver, FitError> {
-    let line_search = build_line_search(
-        config.c1,
-        config.c2,
-        config.step_min,
-        config.step_max,
-        config.width_tolerance,
-    )?;
-    NewtonCG::new(line_search)
-        .with_curvature_threshold(config.curvature_threshold)
-        .with_tolerance(config.tol)
-        .map_err(optimizer_error)
-}
-
-fn nelder_mead_simplex(
-    initial_param: &[f64],
-    simplex_scale: f64,
-) -> Result<Vec<Array1<f64>>, FitError> {
-    if initial_param.is_empty() {
-        return Err(optimizer_error(
-            "Nelder-Mead requires at least one optimization parameter",
-        ));
-    }
-
-    let mut simplex = Vec::with_capacity(initial_param.len() + 1);
-    simplex.push(vec_to_array1(initial_param));
-
-    for (index, value) in initial_param.iter().copied().enumerate() {
-        let mut vertex = initial_param.to_vec();
-        // Масштабируем сдвиг от текущего значения, чтобы симплекс не вырождался возле нуля.
-        vertex[index] += simplex_scale * (value.abs() + 1.0);
-        simplex.push(Array1::from_vec(vertex));
-    }
-
-    Ok(simplex)
-}
-
-fn build_nelder_mead_solver(
-    initial_param: &[f64],
-    config: &NelderMeadConfig,
-) -> Result<NelderMeadSolver, FitError> {
-    let simplex = nelder_mead_simplex(initial_param, config.simplex_scale)?;
-    NelderMead::new(simplex)
-        .with_sd_tolerance(config.sd_tolerance)
-        .map_err(optimizer_error)?
-        .with_alpha(config.alpha)
-        .map_err(optimizer_error)?
-        .with_gamma(config.gamma)
-        .map_err(optimizer_error)?
-        .with_rho(config.rho)
-        .map_err(optimizer_error)?
-        .with_sigma(config.sigma)
-        .map_err(optimizer_error)
-}
-
-fn build_sgd_solver(initial_param: &[f64], config: &SgdConfig) -> SgdSolver {
-    SGD::new(initial_param.to_vec(), config.learning_rate)
-}
-
-fn build_adam_solver(initial_param: &[f64], config: &AdamConfig) -> AdamSolver {
-    Adam::new(initial_param.to_vec(), config.learning_rate)
-}
-
-fn build_optimizer_solver(
-    initial_param: &[f64],
-    config: &OptimizerConfig,
-) -> Result<OptimizerSolver, FitError> {
-    match config {
-        OptimizerConfig::Lbfgs(lbfgs) => Ok(OptimizerSolver::Lbfgs(build_lbfgs_solver(lbfgs)?)),
-        OptimizerConfig::NelderMead(nelder_mead) => Ok(OptimizerSolver::NelderMead(
-            build_nelder_mead_solver(initial_param, nelder_mead)?,
-        )),
-        OptimizerConfig::SteepestDescent(steepest_descent) => Ok(OptimizerSolver::SteepestDescent(
-            build_steepest_descent_solver(steepest_descent)?,
-        )),
-        OptimizerConfig::NewtonCg(newton_cg) => Ok(OptimizerSolver::NewtonCg(
-            build_newton_cg_solver(newton_cg)?,
-        )),
-        OptimizerConfig::Sgd(sgd) => Ok(OptimizerSolver::Sgd(build_sgd_solver(initial_param, sgd))),
-        OptimizerConfig::Adam(adam) => Ok(OptimizerSolver::Adam(build_adam_solver(
-            initial_param,
-            adam,
-        ))),
-    }
-}
-
-fn finite_cost_or_large(cost: f64) -> f64 {
-    if cost.is_finite() { cost } else { LARGE_COST }
-}
-
-fn build_stochastic_state<O>(
-    problem: &mut Problem<O>,
-    initial_param: Vec<f64>,
-    max_iters: u64,
-) -> Result<StochasticState, FitError>
-where
-    O: CostFunction<Param = Array1<f64>, Output = f64>,
-{
-    let parameter_count = initial_param.len();
-    let mut param_buffer = Array1::zeros(parameter_count);
-    array1_as_mut_slice(&mut param_buffer).copy_from_slice(&initial_param);
-    let cost = problem.cost(&param_buffer).map_err(optimizer_error)?;
-    Ok(StochasticState {
-        current_param: initial_param.clone(),
-        best_param: initial_param,
-        gradient_buffer: vec![0.0; parameter_count],
-        param_buffer,
-        best_cost: finite_cost_or_large(cost),
-        iter: 0,
-        max_iters,
-    })
-}
-
-fn stochastic_state_is_terminated(state: &StochasticState) -> bool {
-    state.iter >= state.max_iters
-}
-
-fn overwrite_fixed_len_vec(target: &mut [f64], source: &[f64]) {
-    debug_assert_eq!(target.len(), source.len());
-    target.copy_from_slice(source);
-}
-
-fn stochastic_step<O>(
-    problem: &mut Problem<O>,
-    solver: &mut impl StochasticOptimizer<P = Vec<f64>>,
-    state: &mut StochasticState,
-) -> Result<(), FitError>
-where
-    O: CostFunction<Param = Array1<f64>, Output = f64>
-        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
-{
-    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(&state.current_param);
-    let gradient = problem
-        .gradient(&state.param_buffer)
-        .map_err(optimizer_error)?;
-    state
-        .gradient_buffer
-        .copy_from_slice(array1_as_slice(&gradient));
-    solver.step(&state.gradient_buffer);
-
-    let current_param = solver.parameters();
-    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(current_param.as_slice());
-    let current_cost =
-        finite_cost_or_large(problem.cost(&state.param_buffer).map_err(optimizer_error)?);
-
-    if current_cost < state.best_cost {
-        state.best_cost = current_cost;
-        overwrite_fixed_len_vec(state.best_param.as_mut_slice(), current_param.as_slice());
-    }
-    overwrite_fixed_len_vec(state.current_param.as_mut_slice(), current_param.as_slice());
-
-    Ok(())
-}
-
-fn optimizer_state_best_param(state: &OptimizerState) -> Option<&[f64]> {
-    match state {
-        OptimizerState::Lbfgs(state) => state
-            .get_best_param()
-            .or_else(|| state.get_param())
-            .map(array1_as_slice),
-        OptimizerState::NelderMead(state) => state
-            .get_best_param()
-            .or_else(|| state.get_param())
-            .map(array1_as_slice),
-        OptimizerState::SteepestDescent(state) => state
-            .get_best_param()
-            .or_else(|| state.get_param())
-            .map(array1_as_slice),
-        OptimizerState::NewtonCg(state) => state
-            .get_best_param()
-            .or_else(|| state.get_param())
-            .map(array1_as_slice),
-        OptimizerState::Sgd(state) => Some(state.best_param.as_slice()),
-        OptimizerState::Adam(state) => Some(state.best_param.as_slice()),
-    }
-}
-
-fn optimizer_state_current_param(state: &OptimizerState) -> Option<&[f64]> {
-    match state {
-        OptimizerState::Lbfgs(state) => state.get_param().map(array1_as_slice),
-        OptimizerState::NelderMead(state) => state.get_param().map(array1_as_slice),
-        OptimizerState::SteepestDescent(state) => state.get_param().map(array1_as_slice),
-        OptimizerState::NewtonCg(state) => state.get_param().map(array1_as_slice),
-        OptimizerState::Sgd(state) => Some(state.current_param.as_slice()),
-        OptimizerState::Adam(state) => Some(state.current_param.as_slice()),
-    }
-}
-
-fn optimizer_state_iter(state: &OptimizerState) -> u64 {
-    match state {
-        OptimizerState::Lbfgs(state) => state.get_iter(),
-        OptimizerState::NelderMead(state) => state.get_iter(),
-        OptimizerState::SteepestDescent(state) => state.get_iter(),
-        OptimizerState::NewtonCg(state) => state.get_iter(),
-        OptimizerState::Sgd(state) => state.iter,
-        OptimizerState::Adam(state) => state.iter,
-    }
-}
-
-fn optimizer_state_increment_iter(state: &mut OptimizerState) {
-    match state {
-        OptimizerState::Lbfgs(state) => state.increment_iter(),
-        OptimizerState::NelderMead(state) => state.increment_iter(),
-        OptimizerState::SteepestDescent(state) => state.increment_iter(),
-        OptimizerState::NewtonCg(state) => state.increment_iter(),
-        OptimizerState::Sgd(state) => state.iter = state.iter.saturating_add(1),
-        OptimizerState::Adam(state) => state.iter = state.iter.saturating_add(1),
-    }
-}
-
-fn terminate_steepest_descent_on_small_gradient<O>(
-    problem: &mut Problem<O>,
-    mut state: GradientState,
-) -> Result<GradientState, FitError>
-where
-    O: Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
-{
-    if state.terminated() {
-        return Ok(state);
-    }
-    let Some(param) = state.get_param().cloned() else {
-        return Ok(state);
-    };
-    let gradient = problem.gradient(&param).map_err(optimizer_error)?;
-    let gradient_norm = gradient_l2_norm(array1_as_slice(&gradient));
-    state = state.gradient(gradient);
-    if gradient_norm <= STEEPEST_DESCENT_GRAD_TOL {
-        state = state.terminate_with(TerminationReason::SolverConverged);
-    }
-    Ok(state)
-}
-
 enum OptimizerStepOutcome {
-    Iterated(OptimizerState),
-    Terminated(OptimizerState),
+    Iterated(Optimizer),
+    Terminated(Optimizer),
 }
 
-fn optimizer_step_once<P>(
-    solver: &mut OptimizerSolver,
-    problem: &mut Problem<P>,
-    state: OptimizerState,
-) -> Result<OptimizerStepOutcome, FitError>
-where
-    P: CostFunction<Param = Array1<f64>, Output = f64>
-        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>
-        + Hessian<Param = Array1<f64>, Hessian = Array2<f64>>,
-{
-    let next_state = match (solver, state) {
-        (OptimizerSolver::Lbfgs(solver), OptimizerState::Lbfgs(mut state)) => {
-            if !state.terminated() {
-                let termination =
-                    <LbfgsSolver as Solver<P, GradientState>>::terminate_internal(solver, &state);
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
-                }
-            }
-            if state.terminated() {
-                return Ok(OptimizerStepOutcome::Terminated(OptimizerState::Lbfgs(
-                    state,
-                )));
-            }
-            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
-            state.func_counts(problem);
-            state.update();
-            OptimizerState::Lbfgs(state)
-        }
-        (OptimizerSolver::NelderMead(solver), OptimizerState::NelderMead(mut state)) => {
-            if !state.terminated() {
-                let termination =
-                    <NelderMeadSolver as Solver<P, NelderMeadState>>::terminate_internal(
-                        solver, &state,
-                    );
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
-                }
-            }
-            if state.terminated() {
-                return Ok(OptimizerStepOutcome::Terminated(
-                    OptimizerState::NelderMead(state),
-                ));
-            }
-            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
-            state.func_counts(problem);
-            state.update();
-            OptimizerState::NelderMead(state)
-        }
-        (OptimizerSolver::SteepestDescent(solver), OptimizerState::SteepestDescent(mut state)) => {
-            state = terminate_steepest_descent_on_small_gradient(problem, state)?;
-            if !state.terminated() {
-                let termination =
-                    <SteepestDescentSolver as Solver<P, GradientState>>::terminate_internal(
-                        solver, &state,
-                    );
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
-                }
-            }
-            if state.terminated() {
-                return Ok(OptimizerStepOutcome::Terminated(
-                    OptimizerState::SteepestDescent(state),
-                ));
-            }
-            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
-            state.func_counts(problem);
-            state.update();
-            OptimizerState::SteepestDescent(state)
-        }
-        (OptimizerSolver::NewtonCg(solver), OptimizerState::NewtonCg(state)) => {
-            let mut state = *state;
-            if !state.terminated() {
-                let termination = <NewtonCgSolver as Solver<P, NewtonCgState>>::terminate_internal(
-                    solver, &state,
-                );
-                if let TerminationStatus::Terminated(reason) = termination {
-                    state = state.terminate_with(reason);
-                }
-            }
-            if state.terminated() {
-                return Ok(OptimizerStepOutcome::Terminated(OptimizerState::NewtonCg(
-                    Box::new(state),
-                )));
-            }
-            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
-            state.func_counts(problem);
-            state.update();
-            OptimizerState::NewtonCg(Box::new(state))
-        }
-        (OptimizerSolver::Sgd(solver), OptimizerState::Sgd(mut state)) => {
-            if stochastic_state_is_terminated(&state) {
-                return Ok(OptimizerStepOutcome::Terminated(OptimizerState::Sgd(state)));
-            }
-            stochastic_step(problem, solver, &mut state)?;
-            OptimizerState::Sgd(state)
-        }
-        (OptimizerSolver::Adam(solver), OptimizerState::Adam(mut state)) => {
-            if stochastic_state_is_terminated(&state) {
-                return Ok(OptimizerStepOutcome::Terminated(OptimizerState::Adam(
-                    state,
-                )));
-            }
-            stochastic_step(problem, solver, &mut state)?;
-            OptimizerState::Adam(state)
-        }
-        _ => {
-            return Err(optimizer_error(
-                "Optimizer solver/state mismatch in incremental runner",
-            ));
-        }
-    };
-
-    Ok(OptimizerStepOutcome::Iterated(next_state))
-}
-
-fn initialize_optimizer_state<P>(
-    solver: &mut OptimizerSolver,
-    problem: &mut Problem<P>,
-    initial_param: &Array1<f64>,
+#[derive(Debug, Clone)]
+struct StochasticState {
+    current_param: Vec<f64>,
+    best_param: Vec<f64>,
+    gradient_buffer: Vec<f64>,
+    param_buffer: Array1<f64>,
+    best_cost: f64,
+    iter: u64,
     max_iters: u64,
-) -> Result<OptimizerState, FitError>
-where
-    P: CostFunction<Param = Array1<f64>, Output = f64>
-        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>
-        + Hessian<Param = Array1<f64>, Hessian = Array2<f64>>,
-{
-    match solver {
-        OptimizerSolver::Lbfgs(solver) => {
-            let state = IterState::new()
-                .param(initial_param.clone())
-                .max_iters(max_iters);
-            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
-            state.update();
-            state.func_counts(problem);
-            Ok(OptimizerState::Lbfgs(state))
-        }
-        OptimizerSolver::NelderMead(solver) => {
-            let state = IterState::new()
-                .param(initial_param.clone())
-                .max_iters(max_iters);
-            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
-            state.update();
-            state.func_counts(problem);
-            Ok(OptimizerState::NelderMead(state))
-        }
-        OptimizerSolver::SteepestDescent(solver) => {
-            let state = IterState::new()
-                .param(initial_param.clone())
-                .max_iters(max_iters);
-            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
-            state.update();
-            state.func_counts(problem);
-            Ok(OptimizerState::SteepestDescent(state))
-        }
-        OptimizerSolver::NewtonCg(solver) => {
-            let state = IterState::new()
-                .param(initial_param.clone())
-                .max_iters(max_iters);
-            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
-            state.update();
-            state.func_counts(problem);
-            Ok(OptimizerState::NewtonCg(Box::new(state)))
-        }
-        OptimizerSolver::Sgd(solver) => {
-            let state = build_stochastic_state(problem, solver.parameters().clone(), max_iters)?;
-            Ok(OptimizerState::Sgd(state))
-        }
-        OptimizerSolver::Adam(solver) => {
-            let state = build_stochastic_state(problem, solver.parameters().clone(), max_iters)?;
-            Ok(OptimizerState::Adam(state))
-        }
-    }
+}
+
+/// Пошаговый раннер оптимизации параметрических семейств.
+pub struct IncrementalFitRunner {
+    family: CurveFamily,
+    params_template: CurveParams,
+    points: Points,
+    loss_metric: OptimizationLossMetric,
+    metric_baseline: MetricBaseline,
+    problem: Problem<CurveProblem>,
+    optimizer: Option<Optimizer>,
+    cancelled: bool,
 }
 
 impl IncrementalFitRunner {
@@ -618,7 +161,7 @@ impl IncrementalFitRunner {
         family.validate_points(points)?;
 
         let initial_values = initial_params.values();
-        let max_iters = optimizer_config.max_iters();
+        let metric_baseline = MetricBaseline::new(points, metric_quantization);
         let problem = CurveProblem::new_with_metric_quantization(
             family,
             points,
@@ -627,20 +170,17 @@ impl IncrementalFitRunner {
             metric_quantization,
         );
         let mut problem = Problem::new(problem);
-        let mut solver = build_optimizer_solver(&initial_values, optimizer_config)?;
         let initial_array = Array1::from_vec(initial_values);
-        let state =
-            initialize_optimizer_state(&mut solver, &mut problem, &initial_array, max_iters)?;
+        let optimizer = build_optimizer(&mut problem, &initial_array, optimizer_config)?;
 
         Ok(Self {
             family,
             params_template: initial_params,
             points: points.clone(),
             loss_metric,
-            metric_quantization,
+            metric_baseline,
             problem,
-            solver,
-            state: Some(state),
+            optimizer: Some(optimizer),
             cancelled: false,
         })
     }
@@ -659,32 +199,32 @@ impl IncrementalFitRunner {
         }
 
         loop {
-            let Some(state) = self.state.take() else {
+            let Some(optimizer) = self.optimizer.take() else {
                 return Err(optimizer_error(
                     "Incremental fit runner state is not initialized",
                 ));
             };
 
-            let mut state = match optimizer_step_once(&mut self.solver, &mut self.problem, state)? {
-                OptimizerStepOutcome::Iterated(state) => state,
-                OptimizerStepOutcome::Terminated(state) => {
-                    let final_step = self.finalize(state)?;
+            let mut optimizer = match optimizer_step_once(&mut self.problem, optimizer)? {
+                OptimizerStepOutcome::Iterated(optimizer) => optimizer,
+                OptimizerStepOutcome::Terminated(optimizer) => {
+                    let final_step = self.finalize(optimizer)?;
                     return Ok(final_step);
                 }
             };
 
-            let iteration = optimizer_state_iter(&state);
-            if let Some(params) = optimizer_state_current_param(&state).and_then(|values| {
+            let iteration = optimizer_iter(&optimizer);
+            if let Some(params) = optimizer_current_param(&optimizer).and_then(|values| {
                 CurveParams::try_from_slice_like(&self.params_template, values).ok()
             }) {
-                let metrics = calculate_iteration_metrics_with_quantization(
+                let metrics = calculate_iteration_metrics_from_evaluator_with_baseline(
                     &self.points,
-                    &params,
                     self.loss_metric,
-                    self.metric_quantization,
+                    self.metric_baseline,
+                    |x| params.evaluate(x),
                 );
-                optimizer_state_increment_iter(&mut state);
-                self.state = Some(state);
+                optimizer_increment_iter(&mut optimizer);
+                self.optimizer = Some(optimizer);
                 return Ok(IncrementalFitStep::Iteration {
                     iteration,
                     mse: metrics.mse,
@@ -694,23 +234,20 @@ impl IncrementalFitRunner {
             }
 
             // Если параметры недоступны на текущем шаге, продолжаем итерации без рекурсии.
-            optimizer_state_increment_iter(&mut state);
-            self.state = Some(state);
+            optimizer_increment_iter(&mut optimizer);
+            self.optimizer = Some(optimizer);
         }
     }
 
-    fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalFitStep, FitError> {
+    fn finalize(&mut self, optimizer: Optimizer) -> Result<IncrementalFitStep, FitError> {
         let best_param_values =
-            optimizer_state_best_param(&state).ok_or(FitError::MissingBestParameters)?;
+            optimizer_best_param(&optimizer).ok_or(FitError::MissingBestParameters)?;
         let best_params =
             CurveParams::try_from_slice_like(&self.params_template, best_param_values)?;
-        let (mse, rmse) = calculate_metrics_with_quantization(
-            &self.points,
-            &best_params,
-            self.metric_quantization,
-        );
-        let iterations = optimizer_state_iter(&state);
-        self.state = Some(state);
+        let (mse, rmse) =
+            calculate_metrics_with_baseline(&self.points, &best_params, self.metric_baseline);
+        let iterations = optimizer_iter(&optimizer);
+        self.optimizer = Some(optimizer);
 
         Ok(IncrementalFitStep::Finished(FitResult {
             family: self.family,
@@ -720,6 +257,20 @@ impl IncrementalFitRunner {
             iterations,
         }))
     }
+}
+
+pub(crate) struct IncrementalSplineFitRunner {
+    family: SplineFamilyKind,
+    points: Points,
+    config: SplineConfig,
+    knot_x: Box<[f64]>,
+    curve_x_bounds: [f64; 2],
+    loss_metric: OptimizationLossMetric,
+    metric_quantization: MetricQuantization,
+    metric_baseline: MetricBaseline,
+    problem: Problem<SplineProblem>,
+    optimizer: Option<Optimizer>,
+    cancelled: bool,
 }
 
 impl IncrementalSplineFitRunner {
@@ -802,32 +353,25 @@ impl IncrementalSplineFitRunner {
         metric_quantization: MetricQuantization,
     ) -> Result<Self, FitError> {
         let prepared = prepare_spline_inputs(points, config, family, initial_knot_y)?;
+        let metric_baseline = MetricBaseline::new(points, metric_quantization);
         let PreparedSplineInputs {
             config,
             knot_x,
             initial_y,
             curve_x_bounds,
         } = prepared;
-        let max_iters = optimizer_config.max_iters();
-
         let initial_knots = materialize_spline_knots(knot_x.as_ref(), &initial_y);
         let problem = SplineProblem::new(
             family,
             &initial_knots,
             points,
-            config.extrapolation,
+            config.extrapolation(),
             loss_metric,
             metric_quantization,
         );
         let mut problem = Problem::new(problem);
-        let mut solver = build_optimizer_solver(&initial_y, optimizer_config)?;
         let initial_knot_y_array = Array1::from_vec(initial_y);
-        let state = initialize_optimizer_state(
-            &mut solver,
-            &mut problem,
-            &initial_knot_y_array,
-            max_iters,
-        )?;
+        let optimizer = build_optimizer(&mut problem, &initial_knot_y_array, optimizer_config)?;
 
         Ok(Self {
             family,
@@ -837,9 +381,9 @@ impl IncrementalSplineFitRunner {
             curve_x_bounds,
             loss_metric,
             metric_quantization,
+            metric_baseline,
             problem,
-            solver,
-            state: Some(state),
+            optimizer: Some(optimizer),
             cancelled: false,
         })
     }
@@ -854,42 +398,41 @@ impl IncrementalSplineFitRunner {
         }
 
         loop {
-            let Some(state) = self.state.take() else {
+            let Some(optimizer) = self.optimizer.take() else {
                 return Err(optimizer_error(
                     "Incremental spline fit runner state is not initialized",
                 ));
             };
 
-            let mut state = match optimizer_step_once(&mut self.solver, &mut self.problem, state)? {
-                OptimizerStepOutcome::Iterated(state) => state,
-                OptimizerStepOutcome::Terminated(state) => {
-                    let final_step = self.finalize(state)?;
+            let mut optimizer = match optimizer_step_once(&mut self.problem, optimizer)? {
+                OptimizerStepOutcome::Iterated(optimizer) => optimizer,
+                OptimizerStepOutcome::Terminated(optimizer) => {
+                    let final_step = self.finalize(optimizer)?;
                     return Ok(final_step);
                 }
             };
 
-            let iteration = optimizer_state_iter(&state);
-            if let Some(knot_y) =
-                optimizer_state_current_param(&state).map(|knot_y| knot_y.to_vec())
+            let iteration = optimizer_iter(&optimizer);
+            if let Some(knot_y) = optimizer_current_param(&optimizer).map(|knot_y| knot_y.to_vec())
             {
                 let built = build_spline_curve_from_knot_y(
                     self.family,
-                    self.config.extrapolation,
-                    self.config.samples,
+                    self.config.extrapolation(),
+                    self.config.samples(),
                     self.knot_x.as_ref(),
                     &knot_y,
                     self.curve_x_bounds,
                 )?;
-                let metrics = calculate_iteration_metrics_from_evaluator(
+                let metrics = calculate_iteration_metrics_from_evaluator_with_baseline(
                     &self.points,
                     self.loss_metric,
-                    self.metric_quantization,
+                    self.metric_baseline,
                     |x| built.evaluator.evaluate(&built.knots, x),
                 );
                 let curve = built.curve;
 
-                optimizer_state_increment_iter(&mut state);
-                self.state = Some(state);
+                optimizer_increment_iter(&mut optimizer);
+                self.optimizer = Some(optimizer);
                 return Ok(IncrementalSplineFitStep::Iteration {
                     iteration,
                     mse: metrics.mse,
@@ -900,17 +443,17 @@ impl IncrementalSplineFitRunner {
             }
 
             // Если параметры недоступны на текущем шаге, продолжаем итерации без рекурсии.
-            optimizer_state_increment_iter(&mut state);
-            self.state = Some(state);
+            optimizer_increment_iter(&mut optimizer);
+            self.optimizer = Some(optimizer);
         }
     }
 
-    fn finalize(&mut self, state: OptimizerState) -> Result<IncrementalSplineFitStep, FitError> {
-        let best_knot_y = optimizer_state_best_param(&state)
+    fn finalize(&mut self, optimizer: Optimizer) -> Result<IncrementalSplineFitStep, FitError> {
+        let best_knot_y = optimizer_best_param(&optimizer)
             .ok_or(FitError::MissingBestParameters)?
             .to_vec();
-        let iterations = optimizer_state_iter(&state);
-        self.state = Some(state);
+        let iterations = optimizer_iter(&optimizer);
+        self.optimizer = Some(optimizer);
 
         let finalize_context = SplineFinalizeContext {
             points: &self.points,
@@ -925,5 +468,481 @@ impl IncrementalSplineFitRunner {
             build_spline_result_from_knot_y(&finalize_context, &best_knot_y, iterations)?;
 
         Ok(IncrementalSplineFitStep::Finished { result, metrics })
+    }
+}
+fn build_line_search(
+    c1: f64,
+    c2: f64,
+    step_min: f64,
+    step_max: f64,
+    width_tolerance: f64,
+) -> Result<MoreThuenteLineSearch<Array1<f64>, Array1<f64>, f64>, FitError> {
+    // На границе fit-модуля приводим ошибки `argmin` к единому типу `FitError`.
+    MoreThuenteLineSearch::new()
+        .with_c(c1, c2)
+        .map_err(optimizer_error)?
+        .with_bounds(step_min, step_max)
+        .map_err(optimizer_error)?
+        .with_width_tolerance(width_tolerance)
+        .map_err(optimizer_error)
+}
+
+fn build_lbfgs_solver(config: &LbfgsConfig) -> Result<LbfgsSolver, FitError> {
+    let line_search = build_line_search(
+        config.c1(),
+        config.c2(),
+        config.step_min(),
+        config.step_max(),
+        config.width_tolerance(),
+    )?;
+    LBFGS::new(line_search, config.history_size())
+        .with_tolerance_grad(config.tol_grad())
+        .map_err(optimizer_error)?
+        .with_tolerance_cost(config.tol_cost())
+        .map_err(optimizer_error)
+}
+
+fn build_steepest_descent_solver(
+    config: &SteepestDescentConfig,
+) -> Result<SteepestDescentSolver, FitError> {
+    let line_search = build_line_search(
+        config.c1(),
+        config.c2(),
+        config.step_min(),
+        config.step_max(),
+        config.width_tolerance(),
+    )?;
+    Ok(SteepestDescent::new(line_search))
+}
+
+fn build_newton_cg_solver(config: &NewtonCgConfig) -> Result<NewtonCgSolver, FitError> {
+    let line_search = build_line_search(
+        config.c1(),
+        config.c2(),
+        config.step_min(),
+        config.step_max(),
+        config.width_tolerance(),
+    )?;
+    NewtonCG::new(line_search)
+        .with_curvature_threshold(config.curvature_threshold())
+        .with_tolerance(config.tol())
+        .map_err(optimizer_error)
+}
+
+fn nelder_mead_simplex(
+    initial_param: &[f64],
+    simplex_scale: f64,
+) -> Result<Vec<Array1<f64>>, FitError> {
+    if initial_param.is_empty() {
+        return Err(optimizer_error(
+            "Nelder-Mead requires at least one optimization parameter",
+        ));
+    }
+
+    let mut simplex = Vec::with_capacity(initial_param.len() + 1);
+    simplex.push(vec_to_array1(initial_param));
+
+    for (index, value) in initial_param.iter().copied().enumerate() {
+        let mut vertex = initial_param.to_vec();
+        // Масштабируем сдвиг от текущего значения, чтобы симплекс не вырождался возле нуля.
+        vertex[index] += simplex_scale * (value.abs() + 1.0);
+        simplex.push(Array1::from_vec(vertex));
+    }
+
+    Ok(simplex)
+}
+
+fn build_nelder_mead_solver(
+    initial_param: &[f64],
+    config: &NelderMeadConfig,
+) -> Result<NelderMeadSolver, FitError> {
+    let simplex = nelder_mead_simplex(initial_param, config.simplex_scale())?;
+    NelderMead::new(simplex)
+        .with_sd_tolerance(config.sd_tolerance())
+        .map_err(optimizer_error)?
+        .with_alpha(config.alpha())
+        .map_err(optimizer_error)?
+        .with_gamma(config.gamma())
+        .map_err(optimizer_error)?
+        .with_rho(config.rho())
+        .map_err(optimizer_error)?
+        .with_sigma(config.sigma())
+        .map_err(optimizer_error)
+}
+
+fn build_sgd_solver(initial_param: &[f64], config: &SgdConfig) -> SgdSolver {
+    SGD::new(initial_param.to_vec(), config.learning_rate())
+}
+
+fn build_adam_solver(initial_param: &[f64], config: &AdamConfig) -> AdamSolver {
+    Adam::new(initial_param.to_vec(), config.learning_rate())
+}
+
+fn finite_cost_or_large(cost: f64) -> f64 {
+    if cost.is_finite() { cost } else { LARGE_COST }
+}
+
+fn build_stochastic_state<O>(
+    problem: &mut Problem<O>,
+    initial_param: Vec<f64>,
+    max_iters: u64,
+) -> Result<StochasticState, FitError>
+where
+    O: CostFunction<Param = Array1<f64>, Output = f64>,
+{
+    let parameter_count = initial_param.len();
+    let mut param_buffer = Array1::zeros(parameter_count);
+    array1_as_mut_slice(&mut param_buffer).copy_from_slice(&initial_param);
+    let cost = problem.cost(&param_buffer).map_err(optimizer_error)?;
+    Ok(StochasticState {
+        current_param: initial_param.clone(),
+        best_param: initial_param,
+        gradient_buffer: vec![0.0; parameter_count],
+        param_buffer,
+        best_cost: finite_cost_or_large(cost),
+        iter: 0,
+        max_iters,
+    })
+}
+
+fn stochastic_state_is_terminated(state: &StochasticState) -> bool {
+    state.iter >= state.max_iters
+}
+
+fn overwrite_fixed_len_vec(target: &mut [f64], source: &[f64]) {
+    debug_assert_eq!(target.len(), source.len());
+    target.copy_from_slice(source);
+}
+
+fn stochastic_step<O>(
+    problem: &mut Problem<O>,
+    solver: &mut impl StochasticOptimizer<P = Vec<f64>>,
+    state: &mut StochasticState,
+) -> Result<(), FitError>
+where
+    O: CostFunction<Param = Array1<f64>, Output = f64>
+        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
+{
+    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(&state.current_param);
+    let gradient = problem
+        .gradient(&state.param_buffer)
+        .map_err(optimizer_error)?;
+    state
+        .gradient_buffer
+        .copy_from_slice(array1_as_slice(&gradient));
+    solver.step(&state.gradient_buffer);
+
+    let current_param = solver.parameters();
+    array1_as_mut_slice(&mut state.param_buffer).copy_from_slice(current_param.as_slice());
+    let current_cost =
+        finite_cost_or_large(problem.cost(&state.param_buffer).map_err(optimizer_error)?);
+
+    if current_cost < state.best_cost {
+        state.best_cost = current_cost;
+        overwrite_fixed_len_vec(state.best_param.as_mut_slice(), current_param.as_slice());
+    }
+    overwrite_fixed_len_vec(state.current_param.as_mut_slice(), current_param.as_slice());
+
+    Ok(())
+}
+
+fn optimizer_best_param(optimizer: &Optimizer) -> Option<&[f64]> {
+    match optimizer {
+        Optimizer::Lbfgs { state, .. } => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .map(array1_as_slice),
+        Optimizer::NelderMead { state, .. } => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .map(array1_as_slice),
+        Optimizer::SteepestDescent { state, .. } => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .map(array1_as_slice),
+        Optimizer::NewtonCg { state, .. } => state
+            .get_best_param()
+            .or_else(|| state.get_param())
+            .map(array1_as_slice),
+        Optimizer::Sgd { state, .. } | Optimizer::Adam { state, .. } => {
+            Some(state.best_param.as_slice())
+        }
+    }
+}
+
+fn optimizer_current_param(optimizer: &Optimizer) -> Option<&[f64]> {
+    match optimizer {
+        Optimizer::Lbfgs { state, .. } | Optimizer::SteepestDescent { state, .. } => {
+            state.get_param().map(array1_as_slice)
+        }
+        Optimizer::NelderMead { state, .. } => state.get_param().map(array1_as_slice),
+        Optimizer::NewtonCg { state, .. } => state.get_param().map(array1_as_slice),
+        Optimizer::Sgd { state, .. } | Optimizer::Adam { state, .. } => {
+            Some(state.current_param.as_slice())
+        }
+    }
+}
+
+fn optimizer_iter(optimizer: &Optimizer) -> u64 {
+    match optimizer {
+        Optimizer::Lbfgs { state, .. } | Optimizer::SteepestDescent { state, .. } => {
+            state.get_iter()
+        }
+        Optimizer::NelderMead { state, .. } => state.get_iter(),
+        Optimizer::NewtonCg { state, .. } => state.get_iter(),
+        Optimizer::Sgd { state, .. } | Optimizer::Adam { state, .. } => state.iter,
+    }
+}
+
+fn optimizer_increment_iter(optimizer: &mut Optimizer) {
+    match optimizer {
+        Optimizer::Lbfgs { state, .. } | Optimizer::SteepestDescent { state, .. } => {
+            state.increment_iter()
+        }
+        Optimizer::NelderMead { state, .. } => state.increment_iter(),
+        Optimizer::NewtonCg { state, .. } => state.increment_iter(),
+        Optimizer::Sgd { state, .. } | Optimizer::Adam { state, .. } => {
+            state.iter = state.iter.saturating_add(1);
+        }
+    }
+}
+
+fn terminate_steepest_descent_on_small_gradient<O>(
+    problem: &mut Problem<O>,
+    mut state: GradientState,
+) -> Result<GradientState, FitError>
+where
+    O: Gradient<Param = Array1<f64>, Gradient = Array1<f64>>,
+{
+    if state.terminated() {
+        return Ok(state);
+    }
+    let Some(param) = state.get_param().cloned() else {
+        return Ok(state);
+    };
+    let gradient = problem.gradient(&param).map_err(optimizer_error)?;
+    let gradient_norm = gradient_l2_norm(array1_as_slice(&gradient));
+    state = state.gradient(gradient);
+    if gradient_norm <= STEEPEST_DESCENT_GRAD_TOL {
+        state = state.terminate_with(TerminationReason::SolverConverged);
+    }
+    Ok(state)
+}
+
+fn optimizer_step_once<P>(
+    problem: &mut Problem<P>,
+    optimizer: Optimizer,
+) -> Result<OptimizerStepOutcome, FitError>
+where
+    P: CostFunction<Param = Array1<f64>, Output = f64>
+        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>
+        + Hessian<Param = Array1<f64>, Hessian = Array2<f64>>,
+{
+    let next_optimizer = match optimizer {
+        Optimizer::Lbfgs {
+            mut solver,
+            mut state,
+        } => {
+            if !state.terminated() {
+                let termination = <LbfgsSolver as Solver<P, GradientState>>::terminate_internal(
+                    &mut solver,
+                    &state,
+                );
+                if let TerminationStatus::Terminated(reason) = termination {
+                    state = state.terminate_with(reason);
+                }
+            }
+            if state.terminated() {
+                return Ok(OptimizerStepOutcome::Terminated(Optimizer::Lbfgs {
+                    solver,
+                    state,
+                }));
+            }
+            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
+            state.func_counts(problem);
+            state.update();
+            Optimizer::Lbfgs { solver, state }
+        }
+        Optimizer::NelderMead {
+            mut solver,
+            mut state,
+        } => {
+            if !state.terminated() {
+                let termination =
+                    <NelderMeadSolver as Solver<P, NelderMeadState>>::terminate_internal(
+                        &mut solver,
+                        &state,
+                    );
+                if let TerminationStatus::Terminated(reason) = termination {
+                    state = state.terminate_with(reason);
+                }
+            }
+            if state.terminated() {
+                return Ok(OptimizerStepOutcome::Terminated(Optimizer::NelderMead {
+                    solver,
+                    state,
+                }));
+            }
+            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
+            state.func_counts(problem);
+            state.update();
+            Optimizer::NelderMead { solver, state }
+        }
+        Optimizer::SteepestDescent {
+            mut solver,
+            mut state,
+        } => {
+            state = terminate_steepest_descent_on_small_gradient(problem, state)?;
+            if !state.terminated() {
+                let termination =
+                    <SteepestDescentSolver as Solver<P, GradientState>>::terminate_internal(
+                        &mut solver,
+                        &state,
+                    );
+                if let TerminationStatus::Terminated(reason) = termination {
+                    state = state.terminate_with(reason);
+                }
+            }
+            if state.terminated() {
+                return Ok(OptimizerStepOutcome::Terminated(
+                    Optimizer::SteepestDescent { solver, state },
+                ));
+            }
+            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
+            state.func_counts(problem);
+            state.update();
+            Optimizer::SteepestDescent { solver, state }
+        }
+        Optimizer::NewtonCg { mut solver, state } => {
+            let mut state = *state;
+            if !state.terminated()
+                && let Some(param) = state.get_param().cloned()
+            {
+                let gradient = problem.gradient(&param).map_err(optimizer_error)?;
+                let gradient_norm = gradient_l2_norm(array1_as_slice(&gradient));
+                state = state.gradient(gradient);
+                if gradient_norm <= STEEPEST_DESCENT_GRAD_TOL {
+                    state = state.terminate_with(TerminationReason::SolverConverged);
+                }
+            }
+            if !state.terminated() {
+                let termination = <NewtonCgSolver as Solver<P, NewtonCgState>>::terminate_internal(
+                    &mut solver,
+                    &state,
+                );
+                if let TerminationStatus::Terminated(reason) = termination {
+                    state = state.terminate_with(reason);
+                }
+            }
+            if state.terminated() {
+                return Ok(OptimizerStepOutcome::Terminated(Optimizer::NewtonCg {
+                    solver,
+                    state: Box::new(state),
+                }));
+            }
+            let (mut state, _) = solver.next_iter(problem, state).map_err(optimizer_error)?;
+            state.func_counts(problem);
+            state.update();
+            Optimizer::NewtonCg {
+                solver,
+                state: Box::new(state),
+            }
+        }
+        Optimizer::Sgd {
+            mut solver,
+            mut state,
+        } => {
+            if stochastic_state_is_terminated(&state) {
+                return Ok(OptimizerStepOutcome::Terminated(Optimizer::Sgd {
+                    solver,
+                    state,
+                }));
+            }
+            stochastic_step(problem, &mut solver, &mut state)?;
+            Optimizer::Sgd { solver, state }
+        }
+        Optimizer::Adam {
+            mut solver,
+            mut state,
+        } => {
+            if stochastic_state_is_terminated(&state) {
+                return Ok(OptimizerStepOutcome::Terminated(Optimizer::Adam {
+                    solver,
+                    state,
+                }));
+            }
+            stochastic_step(problem, &mut solver, &mut state)?;
+            Optimizer::Adam { solver, state }
+        }
+    };
+
+    Ok(OptimizerStepOutcome::Iterated(next_optimizer))
+}
+
+fn build_optimizer<P>(
+    problem: &mut Problem<P>,
+    initial_param: &Array1<f64>,
+    config: &OptimizerConfig,
+) -> Result<Optimizer, FitError>
+where
+    P: CostFunction<Param = Array1<f64>, Output = f64>
+        + Gradient<Param = Array1<f64>, Gradient = Array1<f64>>
+        + Hessian<Param = Array1<f64>, Hessian = Array2<f64>>,
+{
+    let max_iters = config.max_iters();
+    match config {
+        OptimizerConfig::Lbfgs(config) => {
+            let mut solver = build_lbfgs_solver(config)?;
+            let state = IterState::new()
+                .param(initial_param.clone())
+                .max_iters(max_iters);
+            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
+            state.update();
+            state.func_counts(problem);
+            Ok(Optimizer::Lbfgs { solver, state })
+        }
+        OptimizerConfig::NelderMead(config) => {
+            let mut solver = build_nelder_mead_solver(array1_as_slice(initial_param), config)?;
+            let state = IterState::new()
+                .param(initial_param.clone())
+                .max_iters(max_iters);
+            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
+            state.update();
+            state.func_counts(problem);
+            Ok(Optimizer::NelderMead { solver, state })
+        }
+        OptimizerConfig::SteepestDescent(config) => {
+            let mut solver = build_steepest_descent_solver(config)?;
+            let state = IterState::new()
+                .param(initial_param.clone())
+                .max_iters(max_iters);
+            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
+            state.update();
+            state.func_counts(problem);
+            Ok(Optimizer::SteepestDescent { solver, state })
+        }
+        OptimizerConfig::NewtonCg(config) => {
+            let mut solver = build_newton_cg_solver(config)?;
+            let state = IterState::new()
+                .param(initial_param.clone())
+                .max_iters(max_iters);
+            let (mut state, _) = solver.init(problem, state).map_err(optimizer_error)?;
+            state.update();
+            state.func_counts(problem);
+            Ok(Optimizer::NewtonCg {
+                solver,
+                state: Box::new(state),
+            })
+        }
+        OptimizerConfig::Sgd(config) => {
+            let solver = build_sgd_solver(array1_as_slice(initial_param), config);
+            let state = build_stochastic_state(problem, solver.parameters().clone(), max_iters)?;
+            Ok(Optimizer::Sgd { solver, state })
+        }
+        OptimizerConfig::Adam(config) => {
+            let solver = build_adam_solver(array1_as_slice(initial_param), config);
+            let state = build_stochastic_state(problem, solver.parameters().clone(), max_iters)?;
+            Ok(Optimizer::Adam { solver, state })
+        }
     }
 }

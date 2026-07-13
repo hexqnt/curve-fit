@@ -1,15 +1,32 @@
+use ndarray::Array2;
+
 use super::{
     CurveObjective, DataTerm, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss,
     central_diff_gradient_from_value, central_diff_hessian_from_gradient, value_at,
 };
 use crate::domain::CurveFamily;
-use ndarray::Array2;
 
 const GRADIENT_REL_STEP: f64 = 1e-6;
 const GRADIENT_MIN_STEP: f64 = 1e-7;
 const HESSIAN_REL_STEP: f64 = 2e-4;
 const HESSIAN_MIN_STEP: f64 = 1e-6;
 const OBJECTIVE_VALUE_EPS: f64 = 1e-12;
+
+struct SoftL1Loss;
+
+impl PredictionLoss for SoftL1Loss {
+    fn value(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_value(prediction, target)
+    }
+
+    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_derivative(prediction, target)
+    }
+
+    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
+        soft_l1_second_derivative(prediction, target)
+    }
+}
 
 pub(super) fn assert_near(actual: f64, expected: f64, epsilon: f64) {
     let delta = (actual - expected).abs();
@@ -32,22 +49,6 @@ fn soft_l1_derivative(prediction: f64, target: f64) -> f64 {
 fn soft_l1_second_derivative(prediction: f64, target: f64) -> f64 {
     let residual = prediction - target;
     2.0 / (1.0 + residual * residual).powf(1.5)
-}
-
-struct SoftL1Loss;
-
-impl PredictionLoss for SoftL1Loss {
-    fn value(&self, prediction: f64, target: f64) -> f64 {
-        soft_l1_value(prediction, target)
-    }
-
-    fn d_prediction(&self, prediction: f64, target: f64) -> f64 {
-        soft_l1_derivative(prediction, target)
-    }
-
-    fn d2_prediction(&self, prediction: f64, target: f64) -> f64 {
-        soft_l1_second_derivative(prediction, target)
-    }
 }
 
 fn mean_soft_l1_cost(

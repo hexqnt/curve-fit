@@ -1,7 +1,8 @@
 //! Отображение метрик, параметров и действий экспорта для готового результата.
 
-use super::*;
 use std::fmt::Write as _;
+
+use super::*;
 
 fn section_title(ui: &mut egui::Ui, title: &str) {
     ui.label(egui::RichText::new(title).strong());

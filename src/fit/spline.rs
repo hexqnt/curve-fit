@@ -64,13 +64,16 @@ pub fn fit_linear_spline(
     samples: usize,
     knots: usize,
 ) -> Result<SplineResult, FitError> {
+    let defaults = SplineConfig::default();
     fit_linear_spline_with_config(
         points,
-        SplineConfig {
+        SplineConfig::try_new(
             knots,
             samples,
-            ..SplineConfig::default()
-        },
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )?,
     )
 }
 
@@ -103,13 +106,16 @@ pub fn fit_monotone_cubic_spline(
     samples: usize,
     knots: usize,
 ) -> Result<SplineResult, FitError> {
+    let defaults = SplineConfig::default();
     fit_monotone_cubic_spline_with_config(
         points,
-        SplineConfig {
+        SplineConfig::try_new(
             knots,
             samples,
-            ..SplineConfig::default()
-        },
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )?,
     )
 }
 
@@ -142,13 +148,16 @@ pub fn fit_natural_cubic_spline(
     samples: usize,
     knots: usize,
 ) -> Result<SplineResult, FitError> {
+    let defaults = SplineConfig::default();
     fit_natural_cubic_spline_with_config(
         points,
-        SplineConfig {
+        SplineConfig::try_new(
             knots,
             samples,
-            ..SplineConfig::default()
-        },
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )?,
     )
 }
 
@@ -181,13 +190,16 @@ pub fn fit_akima_spline(
     samples: usize,
     knots: usize,
 ) -> Result<SplineResult, FitError> {
+    let defaults = SplineConfig::default();
     fit_akima_spline_with_config(
         points,
-        SplineConfig {
+        SplineConfig::try_new(
             knots,
             samples,
-            ..SplineConfig::default()
-        },
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )?,
     )
 }
 

@@ -165,10 +165,6 @@ impl ResolvedModel {
     }
 }
 
-pub(super) fn saturating_trend_basis_family(tau_count: usize) -> CurveFamily {
-    CurveFamily::from_saturating_trend_tau_count(tau_count)
-}
-
 /// Группы моделей для компактного меню выбора в UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ModelGroup {
@@ -187,6 +183,10 @@ impl ModelGroup {
         Self::ParametricPeak,
         Self::Spline,
     ];
+}
+
+pub(super) fn saturating_trend_basis_family(tau_count: usize) -> CurveFamily {
+    CurveFamily::from_saturating_trend_tau_count(tau_count)
 }
 
 pub(super) fn model_group(model: ModelChoice) -> ModelGroup {

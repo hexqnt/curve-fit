@@ -1,4 +1,27 @@
+use std::cell::Cell;
+
 use super::*;
+
+#[test]
+fn cached_metric_baseline_evaluates_model_once_per_point() {
+    let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
+    let baseline = MetricBaseline::new(&points, MetricQuantization::Disabled);
+    let calls = Cell::new(0);
+
+    let metrics = calculate_iteration_metrics_from_evaluator_with_baseline(
+        &points,
+        OptimizationLossMetric::Mse,
+        baseline,
+        |x| {
+            calls.set(calls.get() + 1);
+            2.0 * x + 1.0
+        },
+    );
+
+    assert_eq!(calls.get(), points.len());
+    assert_eq!(metrics.mse, 0.0);
+    assert_eq!(metrics.r2, 1.0);
+}
 
 #[test]
 fn prediction_loss_adapter_respects_metric_and_quantization() {

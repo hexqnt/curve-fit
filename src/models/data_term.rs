@@ -37,96 +37,6 @@ impl<'a, L> DataTerm<'a, L> {
     }
 }
 
-struct DataValueObjective<'a, L> {
-    family: CurveFamily,
-    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
-    x_values: &'a [f64],
-    y_values: &'a [f64],
-    loss: &'a L,
-}
-
-impl<L> ObjectiveValue for DataValueObjective<'_, L>
-where
-    L: PredictionLoss,
-{
-    fn value(&self, param: &Param) -> f64 {
-        dispatch::objective_value(
-            self.family,
-            self.x_values,
-            self.y_values,
-            param,
-            self.saturating_trend_tau_grid
-                .map(SaturatingTrendTauGrid::as_slice),
-            self.loss,
-        )
-    }
-}
-
-struct DataValueGradObjective<'a, L> {
-    family: CurveFamily,
-    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
-    x_values: &'a [f64],
-    y_values: &'a [f64],
-    loss: &'a L,
-}
-
-impl<L> ObjectiveValue for DataValueGradObjective<'_, L>
-where
-    L: PredictionLoss,
-{
-    fn value(&self, param: &Param) -> f64 {
-        dispatch::objective_value(
-            self.family,
-            self.x_values,
-            self.y_values,
-            param,
-            self.saturating_trend_tau_grid
-                .map(SaturatingTrendTauGrid::as_slice),
-            self.loss,
-        )
-    }
-}
-
-impl<L> ObjectiveGrad for DataValueGradObjective<'_, L>
-where
-    L: PredictionLoss,
-{
-    fn value_grad(&self, param: &Param) -> (f64, Vec<f64>) {
-        if let Some((value, gradient)) = dispatch::objective_value_grad_analytic(
-            self.family,
-            self.x_values,
-            self.y_values,
-            param,
-            self.saturating_trend_tau_grid
-                .map(SaturatingTrendTauGrid::as_slice),
-            self.loss,
-        ) {
-            return (value, gradient);
-        }
-
-        let objective = DataValueObjective {
-            family: self.family,
-            saturating_trend_tau_grid: self.saturating_trend_tau_grid,
-            x_values: self.x_values,
-            y_values: self.y_values,
-            loss: self.loss,
-        };
-        let numerical = CentralDiffGradient::new(
-            objective,
-            OBJECTIVE_GRADIENT_FD_REL_STEP,
-            OBJECTIVE_GRADIENT_FD_MIN_STEP,
-        );
-        numerical.value_grad(param)
-    }
-}
-
-fn add_gradient(dst: &mut [f64], src: &[f64]) {
-    debug_assert_eq!(dst.len(), src.len());
-    for (dst_value, src_value) in dst.iter_mut().zip(src.iter().copied()) {
-        *dst_value += src_value;
-    }
-}
-
 impl<L> TermValue for DataTerm<'_, L>
 where
     L: PredictionLoss,
@@ -229,5 +139,94 @@ where
         *value += local_value;
         add_gradient(gradient, &local_gradient);
         *hessian += &local_hessian;
+    }
+}
+struct DataValueObjective<'a, L> {
+    family: CurveFamily,
+    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
+    x_values: &'a [f64],
+    y_values: &'a [f64],
+    loss: &'a L,
+}
+
+impl<L> ObjectiveValue for DataValueObjective<'_, L>
+where
+    L: PredictionLoss,
+{
+    fn value(&self, param: &Param) -> f64 {
+        dispatch::objective_value(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
+            self.loss,
+        )
+    }
+}
+
+struct DataValueGradObjective<'a, L> {
+    family: CurveFamily,
+    saturating_trend_tau_grid: Option<&'a SaturatingTrendTauGrid>,
+    x_values: &'a [f64],
+    y_values: &'a [f64],
+    loss: &'a L,
+}
+
+impl<L> ObjectiveValue for DataValueGradObjective<'_, L>
+where
+    L: PredictionLoss,
+{
+    fn value(&self, param: &Param) -> f64 {
+        dispatch::objective_value(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
+            self.loss,
+        )
+    }
+}
+
+impl<L> ObjectiveGrad for DataValueGradObjective<'_, L>
+where
+    L: PredictionLoss,
+{
+    fn value_grad(&self, param: &Param) -> (f64, Vec<f64>) {
+        if let Some((value, gradient)) = dispatch::objective_value_grad_analytic(
+            self.family,
+            self.x_values,
+            self.y_values,
+            param,
+            self.saturating_trend_tau_grid
+                .map(SaturatingTrendTauGrid::as_slice),
+            self.loss,
+        ) {
+            return (value, gradient);
+        }
+
+        let objective = DataValueObjective {
+            family: self.family,
+            saturating_trend_tau_grid: self.saturating_trend_tau_grid,
+            x_values: self.x_values,
+            y_values: self.y_values,
+            loss: self.loss,
+        };
+        let numerical = CentralDiffGradient::new(
+            objective,
+            OBJECTIVE_GRADIENT_FD_REL_STEP,
+            OBJECTIVE_GRADIENT_FD_MIN_STEP,
+        );
+        numerical.value_grad(param)
+    }
+}
+
+fn add_gradient(dst: &mut [f64], src: &[f64]) {
+    debug_assert_eq!(dst.len(), src.len());
+    for (dst_value, src_value) in dst.iter_mut().zip(src.iter().copied()) {
+        *dst_value += src_value;
     }
 }

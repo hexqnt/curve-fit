@@ -1,15 +1,20 @@
+use argmin::core::Gradient;
+use ndarray::Array1;
+
 use super::simd;
 use super::{
     CurveProblem, CurveProblemPredictionLoss, DEFAULT_SPLINE_KNOTS, FitError,
     HESSIAN_DIAGONAL_JITTER, HESSIAN_FD_MIN_STEP, HESSIAN_FD_REL_STEP, IncrementalSplineFitRunner,
-    IncrementalSplineFitStep, LARGE_COST, MetricQuantization, MetricQuantizationDecimalPlaces,
-    OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
-    SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy, approximate_spline_knots,
-    build_spline_initial_curve_from_knot_y, build_spline_result_from_knot_y,
-    calculate_iteration_metrics, calculate_iteration_metrics_with_quantization, calculate_metrics,
-    evaluate_linear_spline, expanded_spline_curve_x_bounds, fit_akima_spline,
-    fit_akima_spline_with_config, fit_curve, fit_curve_with_optimizer_config,
-    fit_curve_with_progress, fit_curve_with_progress_and_optimizer_config,
+    IncrementalSplineFitStep, LARGE_COST, MetricBaseline, MetricQuantization,
+    MetricQuantizationDecimalPlaces, OptimizationLossMetric, SplineConfig, SplineDuplicateXPolicy,
+    SplineExtrapolation, SplineFamilyKind, SplineFinalizeContext, SplineKnotStrategy,
+    approximate_spline_knots, build_spline_initial_curve_from_knot_y,
+    build_spline_result_from_knot_y, calculate_iteration_metrics,
+    calculate_iteration_metrics_from_evaluator_with_baseline,
+    calculate_iteration_metrics_with_quantization, calculate_metrics, evaluate_linear_spline,
+    expanded_spline_curve_x_bounds, fit_akima_spline, fit_akima_spline_with_config, fit_curve,
+    fit_curve_with_optimizer_config, fit_curve_with_progress,
+    fit_curve_with_progress_and_optimizer_config,
     fit_curve_with_progress_and_optimizer_config_and_loss_metric, fit_linear_spline,
     fit_linear_spline_with_config, fit_monotone_cubic_spline, fit_natural_cubic_spline,
     numerical_hessian_from_gradient, softplus, sorted_points_with_duplicate_policy,
@@ -19,8 +24,6 @@ use crate::domain::{
     NewtonCgConfig, OptimizerConfig, Point, Points, SgdConfig, SteepestDescentConfig,
 };
 use crate::models::{self, ObjectiveGrad, ObjectiveHessian, ObjectiveValue, PredictionLoss};
-use argmin::core::Gradient;
-use ndarray::Array1;
 
 // Общий prelude для тематических подмодулей `fit/tests/*`.
 mod finite_diff_simd;
@@ -46,6 +49,34 @@ impl PredictionLoss for MsePredictionLoss {
     }
 }
 
+struct RetryGradientProblem {
+    center: f64,
+    invalid_step: f64,
+}
+
+impl Gradient for RetryGradientProblem {
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        let delta = (param[0] - self.center).abs();
+        if (delta - self.invalid_step).abs() <= 1e-14 {
+            return Ok(Array1::from_vec(vec![f64::NAN]));
+        }
+        Ok(Array1::from_vec(vec![2.0 * param[0]]))
+    }
+}
+
+struct AlwaysInvalidGradientProblem;
+
+impl Gradient for AlwaysInvalidGradientProblem {
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        Ok(Array1::from_vec(vec![f64::NAN; param.len()]))
+    }
+}
 fn build_points<F>(xs: &[f64], f: F) -> Points
 where
     F: Fn(f64) -> f64,
@@ -71,33 +102,4 @@ fn quantization(decimal_places: u8) -> MetricQuantization {
         MetricQuantizationDecimalPlaces::try_new(decimal_places)
             .expect("test decimal places must be valid"),
     )
-}
-
-struct RetryGradientProblem {
-    center: f64,
-    invalid_step: f64,
-}
-
-struct AlwaysInvalidGradientProblem;
-
-impl Gradient for RetryGradientProblem {
-    type Param = Array1<f64>;
-    type Gradient = Array1<f64>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
-        let delta = (param[0] - self.center).abs();
-        if (delta - self.invalid_step).abs() <= 1e-14 {
-            return Ok(Array1::from_vec(vec![f64::NAN]));
-        }
-        Ok(Array1::from_vec(vec![2.0 * param[0]]))
-    }
-}
-
-impl Gradient for AlwaysInvalidGradientProblem {
-    type Param = Array1<f64>;
-    type Gradient = Array1<f64>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
-        Ok(Array1::from_vec(vec![f64::NAN; param.len()]))
-    }
 }

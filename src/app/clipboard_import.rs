@@ -228,26 +228,6 @@ fn take_requested_paste_event(ctx: &egui::Context) -> Option<String> {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn read_text_from_web_clipboard() -> Result<String, String> {
-    use wasm_bindgen_futures::JsFuture;
-
-    let window = web_clipboard_window()?;
-    let clipboard = window.navigator().clipboard();
-    let text = JsFuture::from(clipboard.read_text())
-        .await
-        .map_err(|error| {
-            format!(
-                "Failed to read clipboard text: {}",
-                describe_web_clipboard_js_error(&error)
-            )
-        })?
-        .as_string()
-        .ok_or_else(|| "Clipboard did not return text content".to_string())?;
-
-    Ok(text)
-}
-
-#[cfg(target_arch = "wasm32")]
 fn start_write_text_to_web_clipboard(text: &str) -> Result<web_sys::js_sys::Promise, String> {
     // Для web Clipboard API запись должна стартовать прямо в обработчике user gesture.
     let window = web_clipboard_window()?;
@@ -286,4 +266,23 @@ fn describe_web_clipboard_js_error(error: &wasm_bindgen::JsValue) -> String {
         (Some(name), None) => name,
         (None, None) => format!("{error:?}"),
     }
+}
+#[cfg(target_arch = "wasm32")]
+async fn read_text_from_web_clipboard() -> Result<String, String> {
+    use wasm_bindgen_futures::JsFuture;
+
+    let window = web_clipboard_window()?;
+    let clipboard = window.navigator().clipboard();
+    let text = JsFuture::from(clipboard.read_text())
+        .await
+        .map_err(|error| {
+            format!(
+                "Failed to read clipboard text: {}",
+                describe_web_clipboard_js_error(&error)
+            )
+        })?
+        .as_string()
+        .ok_or_else(|| "Clipboard did not return text content".to_string())?;
+
+    Ok(text)
 }

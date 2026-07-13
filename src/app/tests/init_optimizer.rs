@@ -462,7 +462,7 @@ fn optimizer_preset_changes_active_config_values() {
 
     let (fast_max_iters, precise_max_iters) = match (fast_config, precise_config) {
         (OptimizerConfig::NelderMead(fast), OptimizerConfig::NelderMead(precise)) => {
-            (fast.max_iters, precise.max_iters)
+            (fast.max_iters(), precise.max_iters())
         }
         _ => panic!("Nelder-Mead must remain active"),
     };
@@ -488,10 +488,10 @@ fn sgd_preset_changes_active_config_values() {
     let (fast_max_iters, precise_max_iters, fast_lr, precise_lr) =
         match (fast_config, precise_config) {
             (OptimizerConfig::Sgd(fast), OptimizerConfig::Sgd(precise)) => (
-                fast.max_iters,
-                precise.max_iters,
-                fast.learning_rate,
-                precise.learning_rate,
+                fast.max_iters(),
+                precise.max_iters(),
+                fast.learning_rate(),
+                precise.learning_rate(),
             ),
             _ => panic!("SGD must remain active"),
         };
@@ -517,9 +517,12 @@ fn newton_cg_preset_changes_active_config_values() {
 
     let (fast_max_iters, precise_max_iters, fast_tol, precise_tol) =
         match (fast_config, precise_config) {
-            (OptimizerConfig::NewtonCg(fast), OptimizerConfig::NewtonCg(precise)) => {
-                (fast.max_iters, precise.max_iters, fast.tol, precise.tol)
-            }
+            (OptimizerConfig::NewtonCg(fast), OptimizerConfig::NewtonCg(precise)) => (
+                fast.max_iters(),
+                precise.max_iters(),
+                fast.tol(),
+                precise.tol(),
+            ),
             _ => panic!("Newton-CG must remain active"),
         };
     assert!(precise_max_iters > fast_max_iters);
@@ -545,10 +548,10 @@ fn adam_preset_changes_active_config_values() {
     let (fast_max_iters, precise_max_iters, fast_lr, precise_lr) =
         match (fast_config, precise_config) {
             (OptimizerConfig::Adam(fast), OptimizerConfig::Adam(precise)) => (
-                fast.max_iters,
-                precise.max_iters,
-                fast.learning_rate,
-                precise.learning_rate,
+                fast.max_iters(),
+                precise.max_iters(),
+                fast.learning_rate(),
+                precise.learning_rate(),
             ),
             _ => panic!("Adam must remain active"),
         };

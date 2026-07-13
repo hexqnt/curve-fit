@@ -4,9 +4,16 @@ use std::f64::consts::TAU;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
+
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
@@ -18,32 +25,26 @@ use egui_plot::{
     Points as PlotPointsItem, VLine,
 };
 
-mod bootstrap;
-mod layout;
-mod model_catalog;
-mod panel_state;
-mod point_layers;
-mod state;
-mod status;
-mod style;
-mod types;
-
-mod clipboard_import;
-mod diagnostics;
-mod file_import;
-mod fit_worker;
-mod formula;
-mod i18n;
-mod input_parse;
-mod normalization;
-mod optimizer;
-mod param_init;
-mod plot_utils;
-mod points_state;
-mod points_text;
-mod replay;
-mod result_export;
-mod ui;
+use crate::domain::{
+    AdamConfig, CurveFamily, CurveParams, DEFAULT_SATURATING_TREND_TAUS_YEARS, FitResult,
+    LbfgsConfig, MAX_RATIONAL_DEGREE, MAX_SATURATING_TREND_TAU_COUNT, MIN_RATIONAL_DEGREE,
+    MIN_SATURATING_TREND_TAU_COUNT, NelderMeadConfig, NewtonCgConfig, OptimizerConfig,
+    OptimizerMethod, Point, Points, SaturatingTrendTauGrid, SgdConfig, SteepestDescentConfig,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::fit::FitError;
+use crate::fit::IterationMetricSnapshot;
+use crate::fit::OptimizationLossMetric;
+use crate::fit::{
+    DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, MetricQuantization,
+    MetricQuantizationDecimalPlaces, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
+    SplineFamilyKind, SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
+    calculate_iteration_metrics_with_quantization, calculate_metrics_with_quantization,
+    default_spline_initial_knot_y, sample_curve,
+};
+use crate::fit::{
+    IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
+};
 
 use self::diagnostics::{IterationDiagnostics, diagnostics_plot_y_axis_width};
 use self::formula::model_formula_info;
@@ -92,7 +93,6 @@ use self::replay::ReplayState;
 #[cfg(test)]
 use self::replay::{ReplayFrame, ReplayFramePayload};
 use self::result_export::FitExportRecord;
-pub use self::state::CurveFitApp;
 #[cfg(not(target_arch = "wasm32"))]
 use self::state::FitWorkerMessage;
 use self::state::{FitRunUiSeed, ParametricIterationTraceEntry, SplineIterationTraceEntry};
@@ -106,33 +106,35 @@ use self::types::{
     PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
     tau_grid_to_input_strings,
 };
-use crate::domain::{
-    AdamConfig, CurveFamily, CurveParams, DEFAULT_SATURATING_TREND_TAUS_YEARS, FitResult,
-    LbfgsConfig, MAX_RATIONAL_DEGREE, MAX_SATURATING_TREND_TAU_COUNT, MIN_RATIONAL_DEGREE,
-    MIN_SATURATING_TREND_TAU_COUNT, NelderMeadConfig, NewtonCgConfig, OptimizerConfig,
-    OptimizerMethod, Point, Points, SaturatingTrendTauGrid, SgdConfig, SteepestDescentConfig,
-};
-#[cfg(not(target_arch = "wasm32"))]
-use crate::fit::FitError;
-use crate::fit::IterationMetricSnapshot;
-use crate::fit::OptimizationLossMetric;
-use crate::fit::{
-    DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, MetricQuantization,
-    MetricQuantizationDecimalPlaces, SplineConfig, SplineDuplicateXPolicy, SplineExtrapolation,
-    SplineFamilyKind, SplineKnotStrategy, SplineResult, build_spline_initial_curve_from_knot_y,
-    calculate_iteration_metrics_with_quantization, calculate_metrics_with_quantization,
-    default_spline_initial_knot_y, sample_curve,
-};
-use crate::fit::{
-    IncrementalFitRunner, IncrementalFitStep, IncrementalSplineFitRunner, IncrementalSplineFitStep,
-};
 
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc::{self, Receiver, TryRecvError};
-#[cfg(target_arch = "wasm32")]
-use std::{cell::RefCell, rc::Rc};
+pub use self::state::CurveFitApp;
+
+mod bootstrap;
+mod layout;
+mod model_catalog;
+mod panel_state;
+mod point_layers;
+mod state;
+mod status;
+mod style;
+mod types;
+
+mod clipboard_import;
+mod diagnostics;
+mod file_import;
+mod fit_worker;
+mod formula;
+mod i18n;
+mod input_parse;
+mod normalization;
+mod optimizer;
+mod param_init;
+mod plot_utils;
+mod points_state;
+mod points_text;
+mod replay;
+mod result_export;
+mod ui;
 
 const PARAMETRIC_PLOT_SAMPLES: usize = 200;
 const C1_MIN: f64 = 1e-8;

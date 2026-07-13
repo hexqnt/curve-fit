@@ -1,11 +1,6 @@
 //! Импорт точек из CSV/XLSX и интеграция с файловым диалогом пользовательского интерфейса.
 
 #[cfg(not(target_arch = "wasm32"))]
-use super::points_text::parse_point_from_clipboard_like_fragments;
-#[cfg(not(target_arch = "wasm32"))]
-use super::*;
-
-#[cfg(not(target_arch = "wasm32"))]
 use std::borrow::Cow;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -15,6 +10,215 @@ use calamine::{Data, Reader, open_workbook_auto};
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::DialogState;
 
+#[cfg(not(target_arch = "wasm32"))]
+use super::points_text::parse_point_from_clipboard_like_fragments;
+#[cfg(not(target_arch = "wasm32"))]
+use super::*;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+    use calamine::{Cell, Data, Range};
+    use std::path::{Path, PathBuf};
+
+    fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "expected {expected}, got {actual}, tolerance {tolerance}"
+        );
+    }
+
+    fn write_temp_file(extension: &str, contents: &[u8]) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time must be after UNIX_EPOCH")
+            .as_nanos();
+        let mut path = std::env::temp_dir();
+        path.push(format!(
+            "curve-fit-file-import-{}-{suffix}.{extension}",
+            std::process::id()
+        ));
+        std::fs::write(&path, contents).expect("temporary import file must be writable");
+        path
+    }
+
+    fn cleanup_temp_file(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn csv_parser_detects_supported_delimiters() {
+        let samples = [
+            ("1,2\n3,4\n", (3.0, 4.0)),
+            ("1;2\n3;4\n", (3.0, 4.0)),
+            ("1\t2\n3\t4\n", (3.0, 4.0)),
+            ("1|2\n3|4\n", (3.0, 4.0)),
+        ];
+
+        for (text, expected_last) in samples {
+            let points = parse_points_from_csv_bytes(text.as_bytes())
+                .expect("csv payload with valid delimiter must parse");
+            assert_eq!(points.len(), 2);
+            assert_approx_eq(points[1].x(), expected_last.0, 1e-12);
+            assert_approx_eq(points[1].y(), expected_last.1, 1e-12);
+        }
+    }
+
+    #[test]
+    fn csv_parser_supports_decimal_comma_scientific_and_mixed_rows() {
+        let text = "sample;meta\nx;y\n1,23e-3;4.5E+1\nalpha;x=-2,5 y=6,0e2\n";
+        let points = parse_points_from_csv_bytes(text.as_bytes()).expect("csv payload must parse");
+
+        assert_eq!(points.len(), 2);
+        assert_approx_eq(points[0].x(), 1.23e-3, 1e-15);
+        assert_approx_eq(points[0].y(), 45.0, 1e-12);
+        assert_approx_eq(points[1].x(), -2.5, 1e-12);
+        assert_approx_eq(points[1].y(), 600.0, 1e-12);
+    }
+
+    #[test]
+    fn csv_parser_fails_on_line_with_three_values() {
+        let error =
+            parse_points_from_csv_bytes(b"1,2,3\n").expect_err("row with three values must fail");
+        assert!(
+            error.contains("Line 1: expected exactly two numeric values, got 3"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn csv_parser_fails_when_no_points_found() {
+        let error = parse_points_from_csv_bytes(b"header;value\nname;unit\n")
+            .expect_err("csv payload without points must fail");
+        assert!(
+            error.contains("No valid points found in CSV file"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn xlsx_range_parser_supports_numeric_and_text_cells() {
+        let range = Range::from_sparse(vec![
+            Cell::new((0, 0), Data::String("name".to_string())),
+            Cell::new((0, 1), Data::String("value".to_string())),
+            Cell::new((1, 0), Data::Float(1.5)),
+            Cell::new((1, 1), Data::String("2,75".to_string())),
+            Cell::new((2, 0), Data::String("sample".to_string())),
+            Cell::new((2, 1), Data::String("x=-3 y=4".to_string())),
+        ]);
+
+        let points =
+            parse_points_from_xlsx_range(&range).expect("xlsx range with valid rows must parse");
+
+        assert_eq!(points.len(), 2);
+        assert_approx_eq(points[0].x(), 1.5, 1e-12);
+        assert_approx_eq(points[0].y(), 2.75, 1e-12);
+        assert_approx_eq(points[1].x(), -3.0, 1e-12);
+        assert_approx_eq(points[1].y(), 4.0, 1e-12);
+    }
+
+    #[test]
+    fn xlsx_range_parser_fails_on_line_with_three_values() {
+        let range = Range::from_sparse(vec![
+            Cell::new((0, 0), Data::Int(1)),
+            Cell::new((0, 1), Data::Int(2)),
+            Cell::new((0, 2), Data::Int(3)),
+        ]);
+
+        let error =
+            parse_points_from_xlsx_range(&range).expect_err("xlsx row with three values must fail");
+        assert!(
+            error.contains("Line 1: expected exactly two numeric values, got 3"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn xlsx_range_parser_uses_sheet_row_number_in_error() {
+        let range = Range::from_sparse(vec![
+            Cell::new((9, 0), Data::Int(1)),
+            Cell::new((9, 1), Data::Int(2)),
+            Cell::new((9, 2), Data::Int(3)),
+        ]);
+
+        let error =
+            parse_points_from_xlsx_range(&range).expect_err("xlsx row with three values must fail");
+        assert!(
+            error.contains("Line 10: expected exactly two numeric values, got 3"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn xlsx_range_parser_fails_when_no_points_found() {
+        let range = Range::from_sparse(vec![
+            Cell::new((0, 0), Data::String("name".to_string())),
+            Cell::new((0, 1), Data::String("value".to_string())),
+        ]);
+
+        let error =
+            parse_points_from_xlsx_range(&range).expect_err("empty xlsx worksheet must fail");
+        assert!(
+            error.contains("No valid points found in Excel worksheet"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn file_import_replaces_points_text_pushes_undo_and_clears_redo() {
+        let previous_text = "0 1\n1 2\n";
+        let mut app = CurveFitApp {
+            status: Some(StatusMessage::Error(format!(
+                "{}previous error",
+                super::FILE_IMPORT_ERROR_PREFIX
+            ))),
+            ..Default::default()
+        };
+        app.selected_layer_mut().points = super::PointsEditorState {
+            text: previous_text.to_string(),
+            redo_stack: vec!["stale redo entry".to_string()],
+            ..Default::default()
+        };
+        let path = write_temp_file("csv", b"10;20\n30;40\n");
+
+        app.handle_points_file_import_path(&path);
+        cleanup_temp_file(&path);
+
+        assert_eq!(
+            app.selected_points_editor().text,
+            "10.00000000 20.00000000\n30.00000000 40.00000000\n"
+        );
+        assert_eq!(
+            app.selected_points_editor().undo_stack,
+            vec![previous_text.to_string()]
+        );
+        assert!(app.selected_points_editor().redo_stack.is_empty());
+        assert!(matches!(app.status, Some(StatusMessage::Ready)));
+    }
+
+    #[test]
+    fn file_import_error_keeps_existing_points_text() {
+        let previous_text = "0 1\n1 2\n";
+        let mut app = CurveFitApp::default();
+        app.selected_layer_mut().points = super::PointsEditorState {
+            text: previous_text.to_string(),
+            ..Default::default()
+        };
+        let path = write_temp_file("csv", b"1,2,3\n");
+
+        app.handle_points_file_import_path(&path);
+        cleanup_temp_file(&path);
+
+        assert_eq!(app.selected_points_editor().text, previous_text);
+        assert!(app.selected_points_editor().undo_stack.is_empty());
+        assert!(matches!(
+            app.status.as_ref(),
+            Some(StatusMessage::Error(message)) if message.starts_with(super::FILE_IMPORT_ERROR_PREFIX)
+        ));
+    }
+}
 #[cfg(not(target_arch = "wasm32"))]
 const CSV_DELIMITER_CANDIDATES: [u8; 4] = *b",;\t|";
 #[cfg(not(target_arch = "wasm32"))]
@@ -310,209 +514,4 @@ fn count_unquoted_delimiter(line: &[u8], delimiter: u8) -> usize {
     }
 
     count
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::*;
-    use calamine::{Cell, Data, Range};
-    use std::path::{Path, PathBuf};
-
-    fn assert_approx_eq(actual: f64, expected: f64, tolerance: f64) {
-        assert!(
-            (actual - expected).abs() <= tolerance,
-            "expected {expected}, got {actual}, tolerance {tolerance}"
-        );
-    }
-
-    fn write_temp_file(extension: &str, contents: &[u8]) -> PathBuf {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must be after UNIX_EPOCH")
-            .as_nanos();
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "curve-fit-file-import-{}-{suffix}.{extension}",
-            std::process::id()
-        ));
-        std::fs::write(&path, contents).expect("temporary import file must be writable");
-        path
-    }
-
-    fn cleanup_temp_file(path: &Path) {
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn csv_parser_detects_supported_delimiters() {
-        let samples = [
-            ("1,2\n3,4\n", (3.0, 4.0)),
-            ("1;2\n3;4\n", (3.0, 4.0)),
-            ("1\t2\n3\t4\n", (3.0, 4.0)),
-            ("1|2\n3|4\n", (3.0, 4.0)),
-        ];
-
-        for (text, expected_last) in samples {
-            let points = parse_points_from_csv_bytes(text.as_bytes())
-                .expect("csv payload with valid delimiter must parse");
-            assert_eq!(points.len(), 2);
-            assert_approx_eq(points[1].x(), expected_last.0, 1e-12);
-            assert_approx_eq(points[1].y(), expected_last.1, 1e-12);
-        }
-    }
-
-    #[test]
-    fn csv_parser_supports_decimal_comma_scientific_and_mixed_rows() {
-        let text = "sample;meta\nx;y\n1,23e-3;4.5E+1\nalpha;x=-2,5 y=6,0e2\n";
-        let points = parse_points_from_csv_bytes(text.as_bytes()).expect("csv payload must parse");
-
-        assert_eq!(points.len(), 2);
-        assert_approx_eq(points[0].x(), 1.23e-3, 1e-15);
-        assert_approx_eq(points[0].y(), 45.0, 1e-12);
-        assert_approx_eq(points[1].x(), -2.5, 1e-12);
-        assert_approx_eq(points[1].y(), 600.0, 1e-12);
-    }
-
-    #[test]
-    fn csv_parser_fails_on_line_with_three_values() {
-        let error =
-            parse_points_from_csv_bytes(b"1,2,3\n").expect_err("row with three values must fail");
-        assert!(
-            error.contains("Line 1: expected exactly two numeric values, got 3"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn csv_parser_fails_when_no_points_found() {
-        let error = parse_points_from_csv_bytes(b"header;value\nname;unit\n")
-            .expect_err("csv payload without points must fail");
-        assert!(
-            error.contains("No valid points found in CSV file"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn xlsx_range_parser_supports_numeric_and_text_cells() {
-        let range = Range::from_sparse(vec![
-            Cell::new((0, 0), Data::String("name".to_string())),
-            Cell::new((0, 1), Data::String("value".to_string())),
-            Cell::new((1, 0), Data::Float(1.5)),
-            Cell::new((1, 1), Data::String("2,75".to_string())),
-            Cell::new((2, 0), Data::String("sample".to_string())),
-            Cell::new((2, 1), Data::String("x=-3 y=4".to_string())),
-        ]);
-
-        let points =
-            parse_points_from_xlsx_range(&range).expect("xlsx range with valid rows must parse");
-
-        assert_eq!(points.len(), 2);
-        assert_approx_eq(points[0].x(), 1.5, 1e-12);
-        assert_approx_eq(points[0].y(), 2.75, 1e-12);
-        assert_approx_eq(points[1].x(), -3.0, 1e-12);
-        assert_approx_eq(points[1].y(), 4.0, 1e-12);
-    }
-
-    #[test]
-    fn xlsx_range_parser_fails_on_line_with_three_values() {
-        let range = Range::from_sparse(vec![
-            Cell::new((0, 0), Data::Int(1)),
-            Cell::new((0, 1), Data::Int(2)),
-            Cell::new((0, 2), Data::Int(3)),
-        ]);
-
-        let error =
-            parse_points_from_xlsx_range(&range).expect_err("xlsx row with three values must fail");
-        assert!(
-            error.contains("Line 1: expected exactly two numeric values, got 3"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn xlsx_range_parser_uses_sheet_row_number_in_error() {
-        let range = Range::from_sparse(vec![
-            Cell::new((9, 0), Data::Int(1)),
-            Cell::new((9, 1), Data::Int(2)),
-            Cell::new((9, 2), Data::Int(3)),
-        ]);
-
-        let error =
-            parse_points_from_xlsx_range(&range).expect_err("xlsx row with three values must fail");
-        assert!(
-            error.contains("Line 10: expected exactly two numeric values, got 3"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn xlsx_range_parser_fails_when_no_points_found() {
-        let range = Range::from_sparse(vec![
-            Cell::new((0, 0), Data::String("name".to_string())),
-            Cell::new((0, 1), Data::String("value".to_string())),
-        ]);
-
-        let error =
-            parse_points_from_xlsx_range(&range).expect_err("empty xlsx worksheet must fail");
-        assert!(
-            error.contains("No valid points found in Excel worksheet"),
-            "unexpected error: {error}"
-        );
-    }
-
-    #[test]
-    fn file_import_replaces_points_text_pushes_undo_and_clears_redo() {
-        let previous_text = "0 1\n1 2\n";
-        let mut app = CurveFitApp {
-            status: Some(StatusMessage::Error(format!(
-                "{}previous error",
-                super::FILE_IMPORT_ERROR_PREFIX
-            ))),
-            ..Default::default()
-        };
-        app.selected_layer_mut().points = super::PointsEditorState {
-            text: previous_text.to_string(),
-            redo_stack: vec!["stale redo entry".to_string()],
-            ..Default::default()
-        };
-        let path = write_temp_file("csv", b"10;20\n30;40\n");
-
-        app.handle_points_file_import_path(&path);
-        cleanup_temp_file(&path);
-
-        assert_eq!(
-            app.selected_points_editor().text,
-            "10.00000000 20.00000000\n30.00000000 40.00000000\n"
-        );
-        assert_eq!(
-            app.selected_points_editor().undo_stack,
-            vec![previous_text.to_string()]
-        );
-        assert!(app.selected_points_editor().redo_stack.is_empty());
-        assert!(matches!(app.status, Some(StatusMessage::Ready)));
-    }
-
-    #[test]
-    fn file_import_error_keeps_existing_points_text() {
-        let previous_text = "0 1\n1 2\n";
-        let mut app = CurveFitApp::default();
-        app.selected_layer_mut().points = super::PointsEditorState {
-            text: previous_text.to_string(),
-            ..Default::default()
-        };
-        let path = write_temp_file("csv", b"1,2,3\n");
-
-        app.handle_points_file_import_path(&path);
-        cleanup_temp_file(&path);
-
-        assert_eq!(app.selected_points_editor().text, previous_text);
-        assert!(app.selected_points_editor().undo_stack.is_empty());
-        assert!(matches!(
-            app.status.as_ref(),
-            Some(StatusMessage::Error(message)) if message.starts_with(super::FILE_IMPORT_ERROR_PREFIX)
-        ));
-    }
 }

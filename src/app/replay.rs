@@ -16,18 +16,6 @@ pub(super) struct ReplayFrame {
     pub(super) payload: ReplayFramePayload,
 }
 
-pub(super) fn upsert_replay_frame_in(frames: &mut Vec<ReplayFrame>, frame: ReplayFrame) {
-    if let Some(last) = frames.last_mut()
-        && last.iteration == frame.iteration
-    {
-        // Одна и та же итерация может прийти повторно как более свежий снимок.
-        *last = frame;
-        return;
-    }
-
-    frames.push(frame);
-}
-
 /// Состояние управления replay в UI: список кадров, выбор и автовоспроизведение.
 #[derive(Debug, Clone)]
 pub(super) struct ReplayState {
@@ -256,4 +244,15 @@ impl CurveFitApp {
         let remaining = step_interval.saturating_sub(elapsed);
         ctx.request_repaint_after(remaining);
     }
+}
+pub(super) fn upsert_replay_frame_in(frames: &mut Vec<ReplayFrame>, frame: ReplayFrame) {
+    if let Some(last) = frames.last_mut()
+        && last.iteration == frame.iteration
+    {
+        // Одна и та же итерация может прийти повторно как более свежий снимок.
+        *last = frame;
+        return;
+    }
+
+    frames.push(frame);
 }

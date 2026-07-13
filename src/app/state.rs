@@ -1,7 +1,11 @@
 //! Центральные типы состояния приложения, снимки UI и сообщения рантайма фитинга.
 
-use super::*;
 use std::hash::{DefaultHasher, Hash, Hasher};
+
+use super::*;
+
+/// Легковесный отпечаток состояния правой панели для детекта изменений без аллокаций.
+type RightPanelFitFingerprint = u64;
 
 /// Неизменяемое представление выбранного оптимизатора и его input-состояния.
 pub(super) enum ActiveOptimizerView<'a> {
@@ -140,26 +144,6 @@ impl ActiveOptimizerViewMut<'_> {
     }
 }
 
-/// Легковесный отпечаток состояния правой панели для детекта изменений без аллокаций.
-type RightPanelFitFingerprint = u64;
-
-#[derive(Debug)]
-/// Трасса одной итерации параметрического фитинга для replay/диагностики.
-pub(super) struct ParametricIterationTraceEntry {
-    pub(super) iteration: u64,
-    pub(super) metrics: IterationMetricSnapshot,
-    pub(super) params: CurveParams,
-}
-
-#[derive(Debug)]
-/// Трасса одной итерации сплайнового фитинга для replay/диагностики.
-pub(super) struct SplineIterationTraceEntry {
-    pub(super) iteration: u64,
-    pub(super) metrics: IterationMetricSnapshot,
-    pub(super) knot_y: Vec<f64>,
-    pub(super) curve: Vec<[f64; 2]>,
-}
-
 #[derive(Debug)]
 /// Исходные данные для заполнения UI перед стартом worker-а.
 pub(super) enum FitRunUiSeed {
@@ -199,6 +183,23 @@ pub(super) enum WasmFitRunner {
 pub(super) enum WasmFitJob {
     Deferred(WasmFitRunner),
     Running(WasmFitRunner),
+}
+
+#[derive(Debug)]
+/// Трасса одной итерации параметрического фитинга для replay/диагностики.
+pub(super) struct ParametricIterationTraceEntry {
+    pub(super) iteration: u64,
+    pub(super) metrics: IterationMetricSnapshot,
+    pub(super) params: CurveParams,
+}
+
+#[derive(Debug)]
+/// Трасса одной итерации сплайнового фитинга для replay/диагностики.
+pub(super) struct SplineIterationTraceEntry {
+    pub(super) iteration: u64,
+    pub(super) metrics: IterationMetricSnapshot,
+    pub(super) knot_y: Vec<f64>,
+    pub(super) curve: Vec<[f64; 2]>,
 }
 
 /// Состояние и UI-логика интерактивного приложения для подгонки кривых.
@@ -529,16 +530,14 @@ impl CurveFitApp {
     ) -> Option<SplineConfig> {
         let min_knots = model.spline_min_knots()?;
         let knots = self.spline_knots.max(min_knots);
-        Some(
-            SplineConfig {
-                knots,
-                samples: Self::auto_spline_samples(points_len, knots),
-                knot_strategy: self.spline_knot_strategy,
-                extrapolation: self.spline_extrapolation,
-                duplicate_x_policy: self.spline_duplicate_x_policy,
-            }
-            .normalized(),
+        SplineConfig::try_new(
+            knots,
+            Self::auto_spline_samples(points_len, knots),
+            self.spline_knot_strategy,
+            self.spline_extrapolation,
+            self.spline_duplicate_x_policy,
         )
+        .ok()
     }
 
     pub(super) fn cached_formula_svg(
@@ -836,14 +835,14 @@ impl CurveFitApp {
             return;
         };
 
-        self.sync_spline_initial_knot_y_inputs(config.knots);
+        self.sync_spline_initial_knot_y_inputs(config.knots());
         let values_result = match method {
-            ParamInitMethod::Default => Ok(vec![0.0; config.knots]),
+            ParamInitMethod::Default => Ok(vec![0.0; config.knots()]),
             ParamInitMethod::DataBased => {
                 self.build_data_based_spline_initial_knot_y(family, config)
             }
             ParamInitMethod::Randomized => {
-                Ok(self.build_randomized_spline_initial_knot_y(config.knots))
+                Ok(self.build_randomized_spline_initial_knot_y(config.knots()))
             }
         };
 

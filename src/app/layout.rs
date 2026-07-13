@@ -1,6 +1,7 @@
 //! Главный `eframe`-цикл и раскладка верхней, боковых и нижней панелей приложения.
 
 use super::*;
+
 impl eframe::App for CurveFitApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         Self::apply_visual_style(ctx);

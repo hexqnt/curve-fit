@@ -2,16 +2,6 @@
 
 use super::*;
 
-#[inline]
-fn rgb(r: u8, g: u8, b: u8) -> egui::Color32 {
-    egui::Color32::from_rgb(r, g, b)
-}
-
-#[inline]
-fn stroke(color: egui::Color32) -> egui::Stroke {
-    egui::Stroke::new(1.0_f32, color)
-}
-
 #[derive(Debug, Clone, Copy)]
 struct VisualPalette {
     panel_fill: egui::Color32,
@@ -77,36 +67,6 @@ impl VisualPalette {
             open_bg_stroke: rgb(103, 160, 188),
         }
     }
-}
-
-#[inline]
-fn apply_visual_palette(visuals: &mut egui::Visuals, palette: VisualPalette) {
-    visuals.panel_fill = palette.panel_fill;
-    visuals.window_fill = palette.window_fill;
-    visuals.faint_bg_color = palette.faint_bg_color;
-    visuals.extreme_bg_color = palette.extreme_bg_color;
-    visuals.code_bg_color = palette.code_bg_color;
-    visuals.window_stroke = stroke(palette.window_stroke);
-    visuals.selection.bg_fill = palette.selection_bg_fill;
-    visuals.selection.stroke = stroke(palette.selection_stroke);
-    visuals.hyperlink_color = palette.hyperlink_color;
-    visuals.widgets.inactive.weak_bg_fill = palette.inactive_bg_fill;
-    visuals.widgets.inactive.bg_stroke = stroke(palette.inactive_bg_stroke);
-    visuals.widgets.hovered.weak_bg_fill = palette.hovered_bg_fill;
-    visuals.widgets.hovered.bg_stroke = stroke(palette.hovered_bg_stroke);
-    visuals.widgets.active.weak_bg_fill = palette.active_bg_fill;
-    visuals.widgets.active.bg_stroke = stroke(palette.active_bg_stroke);
-    visuals.widgets.open.weak_bg_fill = palette.open_bg_fill;
-    visuals.widgets.open.bg_stroke = stroke(palette.open_bg_stroke);
-}
-
-#[inline]
-fn apply_widget_corner_radius(visuals: &mut egui::Visuals, radius: egui::CornerRadius) {
-    visuals.widgets.noninteractive.corner_radius = radius;
-    visuals.widgets.inactive.corner_radius = radius;
-    visuals.widgets.hovered.corner_radius = radius;
-    visuals.widgets.active.corner_radius = radius;
-    visuals.widgets.open.corner_radius = radius;
 }
 
 impl CurveFitApp {
@@ -176,4 +136,43 @@ impl CurveFitApp {
                 style.visuals.widgets.noninteractive.bg_stroke.color,
             ))
     }
+}
+#[inline]
+fn rgb(r: u8, g: u8, b: u8) -> egui::Color32 {
+    egui::Color32::from_rgb(r, g, b)
+}
+
+#[inline]
+fn stroke(color: egui::Color32) -> egui::Stroke {
+    egui::Stroke::new(1.0_f32, color)
+}
+
+#[inline]
+fn apply_visual_palette(visuals: &mut egui::Visuals, palette: VisualPalette) {
+    visuals.panel_fill = palette.panel_fill;
+    visuals.window_fill = palette.window_fill;
+    visuals.faint_bg_color = palette.faint_bg_color;
+    visuals.extreme_bg_color = palette.extreme_bg_color;
+    visuals.code_bg_color = palette.code_bg_color;
+    visuals.window_stroke = stroke(palette.window_stroke);
+    visuals.selection.bg_fill = palette.selection_bg_fill;
+    visuals.selection.stroke = stroke(palette.selection_stroke);
+    visuals.hyperlink_color = palette.hyperlink_color;
+    visuals.widgets.inactive.weak_bg_fill = palette.inactive_bg_fill;
+    visuals.widgets.inactive.bg_stroke = stroke(palette.inactive_bg_stroke);
+    visuals.widgets.hovered.weak_bg_fill = palette.hovered_bg_fill;
+    visuals.widgets.hovered.bg_stroke = stroke(palette.hovered_bg_stroke);
+    visuals.widgets.active.weak_bg_fill = palette.active_bg_fill;
+    visuals.widgets.active.bg_stroke = stroke(palette.active_bg_stroke);
+    visuals.widgets.open.weak_bg_fill = palette.open_bg_fill;
+    visuals.widgets.open.bg_stroke = stroke(palette.open_bg_stroke);
+}
+
+#[inline]
+fn apply_widget_corner_radius(visuals: &mut egui::Visuals, radius: egui::CornerRadius) {
+    visuals.widgets.noninteractive.corner_radius = radius;
+    visuals.widgets.inactive.corner_radius = radius;
+    visuals.widgets.hovered.corner_radius = radius;
+    visuals.widgets.active.corner_radius = radius;
+    visuals.widgets.open.corner_radius = radius;
 }

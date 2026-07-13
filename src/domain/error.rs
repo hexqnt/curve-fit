@@ -65,6 +65,7 @@ pub enum InputError {
     InvalidAdamConfig(&'static str),
 }
 
+impl std::error::Error for InputError {}
 impl fmt::Display for InputError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -147,5 +148,3 @@ impl fmt::Display for InputError {
         }
     }
 }
-
-impl std::error::Error for InputError {}

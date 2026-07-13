@@ -8,6 +8,128 @@ use super::{
     rational_11, rational_22, rational_nn, saturating_trend_basis, softplus,
 };
 
+const MAX_MODEL_PARAM_COUNT: usize = 11;
+type ValueKernel = fn(&Param, f64) -> f64;
+type ValueGradKernel = fn(&Param, f64, &mut [f64]) -> f64;
+
+/// Выбранное один раз ядро модели для пакетной обработки точек.
+#[derive(Clone, Copy)]
+enum PointKernel {
+    Plain {
+        value: ValueKernel,
+        value_grad: ValueGradKernel,
+    },
+    Saturating,
+}
+
+impl PointKernel {
+    fn for_family(family: CurveFamily) -> Self {
+        if family.is_polynomial() {
+            return Self::Plain {
+                value: polynomial::value_at,
+                value_grad: polynomial::value_grad_at,
+            };
+        }
+
+        let (value, value_grad): (ValueKernel, ValueGradKernel) = match family {
+            CurveFamily::Arrhenius => (arrhenius::value_at, arrhenius::value_grad_at),
+            CurveFamily::Inverse => (inverse::value_at, inverse::value_grad_at),
+            CurveFamily::Logistic => (logistic::value_at, logistic::value_grad_at),
+            CurveFamily::Gompertz => (gompertz::value_at, gompertz::value_grad_at),
+            CurveFamily::BiExponential => (bi_exponential::value_at, bi_exponential::value_grad_at),
+            CurveFamily::DampedSinusoid => {
+                (damped_sinusoid::value_at, damped_sinusoid::value_grad_at)
+            }
+            CurveFamily::Lorentzian => (lorentzian::value_at, lorentzian::value_grad_at),
+            CurveFamily::NaturalLog => (natural_log::value_at, natural_log::value_grad_at),
+            CurveFamily::FourPl => (four_pl::value_at, four_pl::value_grad_at),
+            CurveFamily::FivePl => (five_pl::value_at, five_pl::value_grad_at),
+            CurveFamily::MichaelisMenten => {
+                (michaelis_menten::value_at, michaelis_menten::value_grad_at)
+            }
+            CurveFamily::ExponentialBasic => (
+                exponential_basic::value_at,
+                exponential_basic::value_grad_at,
+            ),
+            CurveFamily::ExponentialLinear => (
+                exponential_linear::value_at,
+                exponential_linear::value_grad_at,
+            ),
+            CurveFamily::ExponentialHalfLife => (
+                exponential_half_life::value_at,
+                exponential_half_life::value_grad_at,
+            ),
+            CurveFamily::FallingExponential => (
+                falling_exponential::value_at,
+                falling_exponential::value_grad_at,
+            ),
+            CurveFamily::HyperbolicTangent => (
+                hyperbolic_tangent::value_at,
+                hyperbolic_tangent::value_grad_at,
+            ),
+            CurveFamily::ArctangentStep => {
+                (arctangent_step::value_at, arctangent_step::value_grad_at)
+            }
+            CurveFamily::Softplus => (softplus::value_at, softplus::value_grad_at),
+            CurveFamily::Power => (power::value_at, power::value_grad_at),
+            CurveFamily::Gaussian => (gaussian::value_at, gaussian::value_grad_at),
+            CurveFamily::Rational11 => (rational_11::value_at, rational_11::value_grad_at),
+            CurveFamily::Rational22 => (rational_22::value_at, rational_22::value_grad_at),
+            CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
+                (rational_nn::value_at, rational_nn::value_grad_at)
+            }
+            CurveFamily::Emg => (emg::value_at, emg::value_grad_at),
+            CurveFamily::PseudoVoigt => (pseudo_voigt::value_at, pseudo_voigt::value_grad_at),
+            CurveFamily::SaturatingTrendBasis1
+            | CurveFamily::SaturatingTrendBasis2
+            | CurveFamily::SaturatingTrendBasis3
+            | CurveFamily::SaturatingTrendBasis4
+            | CurveFamily::SaturatingTrendBasis5
+            | CurveFamily::SaturatingTrendBasis6 => return Self::Saturating,
+            _ => unreachable!("Polynomial families are handled by the guarded branch above"),
+        };
+        Self::Plain { value, value_grad }
+    }
+
+    #[inline]
+    fn value(
+        self,
+        family: CurveFamily,
+        param: &Param,
+        x: f64,
+        saturating_trend_taus: Option<&[f64]>,
+    ) -> f64 {
+        match self {
+            Self::Plain { value, .. } => value(param, x),
+            Self::Saturating => saturating_trend_basis::value_at(
+                param,
+                x,
+                saturating_trend_taus_for_family(family, saturating_trend_taus),
+            ),
+        }
+    }
+
+    #[inline]
+    fn value_grad(
+        self,
+        family: CurveFamily,
+        param: &Param,
+        x: f64,
+        saturating_trend_taus: Option<&[f64]>,
+        grad: &mut [f64],
+    ) -> f64 {
+        match self {
+            Self::Plain { value_grad, .. } => value_grad(param, x, grad),
+            Self::Saturating => saturating_trend_basis::value_grad_at(
+                param,
+                x,
+                saturating_trend_taus_for_family(family, saturating_trend_taus),
+                grad,
+            ),
+        }
+    }
+}
+
 #[inline]
 fn saturating_trend_taus_for_family(
     family: CurveFamily,
@@ -36,49 +158,7 @@ pub(crate) fn value_at_with_saturating_taus(
     x: f64,
     saturating_trend_taus: Option<&[f64]>,
 ) -> f64 {
-    if family.is_polynomial() {
-        return polynomial::value_at(param, x);
-    }
-
-    match family {
-        CurveFamily::Arrhenius => arrhenius::value_at(param, x),
-        CurveFamily::Inverse => inverse::value_at(param, x),
-        CurveFamily::Logistic => logistic::value_at(param, x),
-        CurveFamily::Gompertz => gompertz::value_at(param, x),
-        CurveFamily::BiExponential => bi_exponential::value_at(param, x),
-        CurveFamily::DampedSinusoid => damped_sinusoid::value_at(param, x),
-        CurveFamily::Lorentzian => lorentzian::value_at(param, x),
-        CurveFamily::NaturalLog => natural_log::value_at(param, x),
-        CurveFamily::FourPl => four_pl::value_at(param, x),
-        CurveFamily::FivePl => five_pl::value_at(param, x),
-        CurveFamily::MichaelisMenten => michaelis_menten::value_at(param, x),
-        CurveFamily::ExponentialBasic => exponential_basic::value_at(param, x),
-        CurveFamily::ExponentialLinear => exponential_linear::value_at(param, x),
-        CurveFamily::ExponentialHalfLife => exponential_half_life::value_at(param, x),
-        CurveFamily::FallingExponential => falling_exponential::value_at(param, x),
-        CurveFamily::HyperbolicTangent => hyperbolic_tangent::value_at(param, x),
-        CurveFamily::ArctangentStep => arctangent_step::value_at(param, x),
-        CurveFamily::Softplus => softplus::value_at(param, x),
-        CurveFamily::Power => power::value_at(param, x),
-        CurveFamily::Gaussian => gaussian::value_at(param, x),
-        CurveFamily::Rational11 => rational_11::value_at(param, x),
-        CurveFamily::Rational22 => rational_22::value_at(param, x),
-        CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
-            rational_nn::value_at(param, x)
-        }
-        CurveFamily::Emg => emg::value_at(param, x),
-        CurveFamily::PseudoVoigt => pseudo_voigt::value_at(param, x),
-        CurveFamily::SaturatingTrendBasis1
-        | CurveFamily::SaturatingTrendBasis2
-        | CurveFamily::SaturatingTrendBasis3
-        | CurveFamily::SaturatingTrendBasis4
-        | CurveFamily::SaturatingTrendBasis5
-        | CurveFamily::SaturatingTrendBasis6 => {
-            let taus = saturating_trend_taus_for_family(family, saturating_trend_taus);
-            saturating_trend_basis::value_at(param, x, taus)
-        }
-        _ => unreachable!("Polynomial families are handled by the guarded branch above"),
-    }
+    PointKernel::for_family(family).value(family, param, x, saturating_trend_taus)
 }
 
 pub(crate) fn objective_value(
@@ -94,9 +174,10 @@ pub(crate) fn objective_value(
         return 0.0;
     }
 
+    let kernel = PointKernel::for_family(family);
     let mut sum = 0.0;
     for (&x, &y) in x_values.iter().zip(y_values.iter()) {
-        let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
+        let prediction = kernel.value(family, param, x, saturating_trend_taus);
         let contribution = loss.value(prediction, y);
         if !contribution.is_finite() {
             return f64::INFINITY;
@@ -115,97 +196,6 @@ pub(crate) fn has_analytic_grad(family: CurveFamily) -> bool {
     !matches!(family, CurveFamily::Emg)
 }
 
-/// Добавляет несмасштабированный вклад в градиент параметров модели:
-/// `dF/dθ = (dF/dŷ) * (dŷ/dθ)`.
-///
-/// Здесь `value_first` — внешняя производная `dF/dŷ` по каждой точке.
-/// Это позволяет использовать один и тот же model-kernel как для loss,
-/// так и для произвольного downstream-звена в цепочке.
-pub(crate) fn add_model_grad_unscaled(
-    family: CurveFamily,
-    x_values: &[f64],
-    param: &Param,
-    saturating_trend_taus: Option<&[f64]>,
-    value_first: &[f64],
-    gradient: &mut [f64],
-) {
-    debug_assert_eq!(x_values.len(), value_first.len());
-    debug_assert_eq!(gradient.len(), param.len());
-
-    if family.is_polynomial() {
-        polynomial::add_value_grad(x_values, param, value_first, gradient);
-        return;
-    }
-
-    match family {
-        CurveFamily::Arrhenius => arrhenius::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Inverse => inverse::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Logistic => logistic::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Gompertz => gompertz::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::BiExponential => {
-            bi_exponential::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::DampedSinusoid => {
-            damped_sinusoid::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::Lorentzian => {
-            lorentzian::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::NaturalLog => {
-            natural_log::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::FourPl => four_pl::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::FivePl => five_pl::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::MichaelisMenten => {
-            michaelis_menten::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::ExponentialBasic => {
-            exponential_basic::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::ExponentialLinear => {
-            exponential_linear::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::ExponentialHalfLife => {
-            exponential_half_life::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::FallingExponential => {
-            falling_exponential::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::HyperbolicTangent => {
-            hyperbolic_tangent::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::ArctangentStep => {
-            arctangent_step::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::Softplus => softplus::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Power => power::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Gaussian => gaussian::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::Rational11 => {
-            rational_11::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::Rational22 => {
-            rational_22::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::Rational33 | CurveFamily::Rational44 | CurveFamily::Rational55 => {
-            rational_nn::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::PseudoVoigt => {
-            pseudo_voigt::add_value_grad(x_values, param, value_first, gradient)
-        }
-        CurveFamily::Emg => emg::add_value_grad(x_values, param, value_first, gradient),
-        CurveFamily::SaturatingTrendBasis1
-        | CurveFamily::SaturatingTrendBasis2
-        | CurveFamily::SaturatingTrendBasis3
-        | CurveFamily::SaturatingTrendBasis4
-        | CurveFamily::SaturatingTrendBasis5
-        | CurveFamily::SaturatingTrendBasis6 => {
-            let taus = saturating_trend_taus_for_family(family, saturating_trend_taus);
-            saturating_trend_basis::add_value_grad(x_values, param, taus, value_first, gradient)
-        }
-        _ => unreachable!("Polynomial families are handled by the guarded branch above"),
-    }
-}
-
 pub(crate) fn objective_value_grad_analytic(
     family: CurveFamily,
     x_values: &[f64],
@@ -220,45 +210,47 @@ pub(crate) fn objective_value_grad_analytic(
         return None;
     }
 
-    let value = objective_value(
-        family,
-        x_values,
-        y_values,
-        param,
-        saturating_trend_taus,
-        loss,
-    );
     let mut gradient = vec![0.0; param.len()];
-    if !x_values.is_empty() {
-        // dF/dy_hat для каждой точки, где F — вклад функции потерь.
-        // Вычисляем отдельно от model-kernel'а:
-        // это сохраняет разделение ответственности model vs loss.
-        let mut value_first = vec![0.0; x_values.len()];
-        for ((&x, &y), derivative_out) in x_values
-            .iter()
-            .zip(y_values.iter())
-            .zip(value_first.iter_mut())
+    if x_values.is_empty() {
+        return Some((0.0, gradient));
+    }
+
+    debug_assert!(param.len() <= MAX_MODEL_PARAM_COUNT);
+    let kernel = PointKernel::for_family(family);
+    let mut point_gradient = [0.0; MAX_MODEL_PARAM_COUNT];
+    let mut value = 0.0;
+    for (&x, &y) in x_values.iter().zip(y_values.iter()) {
+        let prediction = kernel.value_grad(
+            family,
+            param,
+            x,
+            saturating_trend_taus,
+            &mut point_gradient[..param.len()],
+        );
+        let contribution = loss.value(prediction, y);
+        let derivative = loss.d_prediction(prediction, y);
+        if !contribution.is_finite() || !derivative.is_finite() {
+            return None;
+        }
+        value += contribution;
+        for (accumulator, point_derivative) in
+            gradient.iter_mut().zip(point_gradient.iter().copied())
         {
-            let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
-            let derivative = loss.d_prediction(prediction, y);
-            if !derivative.is_finite() {
+            let next = *accumulator + derivative * point_derivative;
+            if !next.is_finite() {
                 return None;
             }
-            *derivative_out = derivative;
+            *accumulator = next;
         }
+        if !value.is_finite() {
+            return None;
+        }
+    }
 
-        add_model_grad_unscaled(
-            family,
-            x_values,
-            param,
-            saturating_trend_taus,
-            &value_first,
-            &mut gradient,
-        );
-        let sample_scale = 1.0 / x_values.len() as f64;
-        for gradient_value in &mut gradient {
-            *gradient_value *= sample_scale;
-        }
+    let sample_scale = 1.0 / x_values.len() as f64;
+    value *= sample_scale;
+    for gradient_value in &mut gradient {
+        *gradient_value *= sample_scale;
     }
 
     Some((value, gradient))
@@ -392,6 +384,7 @@ pub(crate) fn model_raw_hessian_from_value_derivatives(
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn objective_raw_hessian_analytic(
     family: CurveFamily,
     x_values: &[f64],
@@ -404,13 +397,14 @@ pub(crate) fn objective_raw_hessian_analytic(
 
     let mut value_first = vec![0.0; x_values.len()];
     let mut value_second = vec![0.0; x_values.len()];
+    let kernel = PointKernel::for_family(family);
 
     for ((&x, &y), (first_out, second_out)) in x_values
         .iter()
         .zip(y_values.iter())
         .zip(value_first.iter_mut().zip(value_second.iter_mut()))
     {
-        let prediction = value_at_with_saturating_taus(family, param, x, saturating_trend_taus);
+        let prediction = kernel.value(family, param, x, saturating_trend_taus);
         let first_derivative = loss.d_prediction(prediction, y);
         let second_derivative = loss.d2_prediction(prediction, y);
         if !first_derivative.is_finite() || !second_derivative.is_finite() {
@@ -440,21 +434,68 @@ pub(crate) fn objective_value_grad_raw_hessian_analytic(
 ) -> Option<(f64, Grad, Hessian)> {
     debug_assert_eq!(x_values.len(), y_values.len());
 
-    let (value, gradient) = objective_value_grad_analytic(
+    if !has_analytic_grad(family) {
+        return None;
+    }
+    if x_values.is_empty() {
+        return Some((
+            0.0,
+            vec![0.0; param.len()],
+            Hessian::zeros((param.len(), param.len())),
+        ));
+    }
+
+    debug_assert!(param.len() <= MAX_MODEL_PARAM_COUNT);
+    let kernel = PointKernel::for_family(family);
+    let mut point_gradient = [0.0; MAX_MODEL_PARAM_COUNT];
+    let mut gradient = vec![0.0; param.len()];
+    let mut value_first = vec![0.0; x_values.len()];
+    let mut value_second = vec![0.0; x_values.len()];
+    let mut value = 0.0;
+
+    for (index, (&x, &y)) in x_values.iter().zip(y_values.iter()).enumerate() {
+        let prediction = kernel.value_grad(
+            family,
+            param,
+            x,
+            saturating_trend_taus,
+            &mut point_gradient[..param.len()],
+        );
+        let contribution = loss.value(prediction, y);
+        let first = loss.d_prediction(prediction, y);
+        let second = loss.d2_prediction(prediction, y);
+        if !contribution.is_finite() || !first.is_finite() || !second.is_finite() {
+            return None;
+        }
+        value += contribution;
+        value_first[index] = first;
+        value_second[index] = second;
+        for (accumulator, point_derivative) in
+            gradient.iter_mut().zip(point_gradient.iter().copied())
+        {
+            let next = *accumulator + first * point_derivative;
+            if !next.is_finite() {
+                return None;
+            }
+            *accumulator = next;
+        }
+        if !value.is_finite() {
+            return None;
+        }
+    }
+
+    let sample_scale = 1.0 / x_values.len() as f64;
+    value *= sample_scale;
+    for gradient_value in &mut gradient {
+        *gradient_value *= sample_scale;
+    }
+    let hessian = model_raw_hessian_from_value_derivatives(
         family,
         x_values,
-        y_values,
         param,
         saturating_trend_taus,
-        loss,
-    )?;
-    let hessian = objective_raw_hessian_analytic(
-        family,
-        x_values,
-        y_values,
-        param,
-        saturating_trend_taus,
-        loss,
+        &value_first,
+        &value_second,
     )?;
     Some((value, gradient, hessian))
 }

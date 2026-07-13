@@ -1,7 +1,8 @@
 //! Нижняя панель статуса и компактный выбор метрики оптимизации.
 
-use super::*;
 use std::borrow::Cow;
+
+use super::*;
 
 const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
 

@@ -72,23 +72,6 @@ pub(super) struct PointLayersState {
     next_color_index: usize,
 }
 
-impl Default for PointLayersState {
-    fn default() -> Self {
-        let selected_id = PointLayerId::first();
-        Self {
-            layers: vec![PointLayer::new(
-                selected_id,
-                format!("{DEFAULT_LAYER_NAME_PREFIX} 1"),
-                LAYER_COLOR_PALETTE[0],
-            )],
-            selected_id,
-            next_id: 2,
-            next_name_index: 2,
-            next_color_index: 1,
-        }
-    }
-}
-
 impl PointLayersState {
     pub(super) fn selected_index(&self) -> usize {
         self.layers
@@ -173,5 +156,21 @@ impl PointLayersState {
         self.layers.remove(selected_index);
         let next_index = selected_index.min(self.layers.len().saturating_sub(1));
         self.selected_id = self.layers[next_index].id;
+    }
+}
+impl Default for PointLayersState {
+    fn default() -> Self {
+        let selected_id = PointLayerId::first();
+        Self {
+            layers: vec![PointLayer::new(
+                selected_id,
+                format!("{DEFAULT_LAYER_NAME_PREFIX} 1"),
+                LAYER_COLOR_PALETTE[0],
+            )],
+            selected_id,
+            next_id: 2,
+            next_name_index: 2,
+            next_color_index: 1,
+        }
     }
 }

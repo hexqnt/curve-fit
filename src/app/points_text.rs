@@ -9,6 +9,61 @@ use crate::domain::Point;
 
 use super::ParsedPointsCache;
 
+struct ClipboardNumericTokens<'a> {
+    line: &'a str,
+    bytes: &'a [u8],
+    index: usize,
+}
+
+impl<'a> ClipboardNumericTokens<'a> {
+    fn new(line: &'a str) -> Self {
+        Self {
+            line,
+            bytes: line.as_bytes(),
+            index: 0,
+        }
+    }
+}
+
+impl<'a> Iterator for ClipboardNumericTokens<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Сканируем строку по байтам без regex и без промежуточного `Vec`,
+        // чтобы дешево отсеивать числа внутри идентификаторов вроде `row-1`,
+        // `v1.2` или `sample_3`.
+        while self.index < self.bytes.len() {
+            let start = self.index;
+            let current = self.bytes[start];
+            if !is_number_start_byte(current) || is_digit_after_disallowed_prefix(self.bytes, start)
+            {
+                self.index += 1;
+                continue;
+            }
+
+            let previous_is_word = start > 0 && is_word_byte(self.bytes[start - 1]);
+            if previous_is_word {
+                self.index += 1;
+                continue;
+            }
+
+            let Some(end) = parse_numeric_token_end(self.bytes, start) else {
+                self.index += 1;
+                continue;
+            };
+            if end <= start {
+                self.index += 1;
+                continue;
+            }
+
+            self.index = end;
+            return Some(&self.line[start..end]);
+        }
+
+        None
+    }
+}
+
 pub(super) fn parse_f64(field_name: &str, raw_value: &str) -> Result<f64, String> {
     let trimmed = raw_value.trim();
     if trimmed.is_empty() {
@@ -123,61 +178,6 @@ fn parse_numeric_token_end(bytes: &[u8], start: usize) -> Option<usize> {
     }
 
     Some(index)
-}
-
-struct ClipboardNumericTokens<'a> {
-    line: &'a str,
-    bytes: &'a [u8],
-    index: usize,
-}
-
-impl<'a> ClipboardNumericTokens<'a> {
-    fn new(line: &'a str) -> Self {
-        Self {
-            line,
-            bytes: line.as_bytes(),
-            index: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for ClipboardNumericTokens<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Сканируем строку по байтам без regex и без промежуточного `Vec`,
-        // чтобы дешево отсеивать числа внутри идентификаторов вроде `row-1`,
-        // `v1.2` или `sample_3`.
-        while self.index < self.bytes.len() {
-            let start = self.index;
-            let current = self.bytes[start];
-            if !is_number_start_byte(current) || is_digit_after_disallowed_prefix(self.bytes, start)
-            {
-                self.index += 1;
-                continue;
-            }
-
-            let previous_is_word = start > 0 && is_word_byte(self.bytes[start - 1]);
-            if previous_is_word {
-                self.index += 1;
-                continue;
-            }
-
-            let Some(end) = parse_numeric_token_end(self.bytes, start) else {
-                self.index += 1;
-                continue;
-            };
-            if end <= start {
-                self.index += 1;
-                continue;
-            }
-
-            self.index = end;
-            return Some(&self.line[start..end]);
-        }
-
-        None
-    }
 }
 
 fn clipboard_numeric_tokens(line: &str) -> ClipboardNumericTokens<'_> {

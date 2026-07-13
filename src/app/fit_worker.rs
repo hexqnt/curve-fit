@@ -4,6 +4,9 @@ use super::replay::{ReplayFrame, ReplayFramePayload, upsert_replay_frame_in};
 use super::*;
 
 #[cfg(not(target_arch = "wasm32"))]
+const FIT_WORKER_POLL_REPAINT_INTERVAL: Duration = Duration::from_millis(33);
+
+#[cfg(not(target_arch = "wasm32"))]
 /// Полный снимок входных данных, передаваемых в фоновый поток параметрического фитинга.
 struct ParametricFitWorkerInput {
     family: CurveFamily,
@@ -16,9 +19,6 @@ struct ParametricFitWorkerInput {
     metric_quantization: MetricQuantization,
     cancel_flag: Arc<AtomicBool>,
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-const FIT_WORKER_POLL_REPAINT_INTERVAL: Duration = Duration::from_millis(33);
 
 impl CurveFitApp {
     fn plot_points_from_pairs<I>(pairs: I) -> Vec<PlotPoint>
@@ -479,7 +479,13 @@ impl CurveFitApp {
                     } else {
                         params
                     };
-                    let metrics = if let Some(points) = self.active_fit_points.as_ref() {
+                    let metrics = if normalization.is_some() {
+                        let Some(points) = self.active_fit_points.as_ref() else {
+                            self.finalize_fit_failed_runtime(
+                                "Fit points are unavailable after denormalization".to_string(),
+                            );
+                            break;
+                        };
                         calculate_iteration_metrics_with_quantization(
                             points,
                             &params,
@@ -613,7 +619,7 @@ impl CurveFitApp {
                     Ok(IncrementalFitStep::Iteration {
                         iteration,
                         mse: _,
-                        metrics: _,
+                        metrics,
                         params,
                     }) => {
                         let params = if let Some(normalization) = normalization {
@@ -624,12 +630,16 @@ impl CurveFitApp {
                         } else {
                             params
                         };
-                        let metrics = calculate_iteration_metrics_with_quantization(
-                            progress_points,
-                            &params,
-                            loss_metric,
-                            metric_quantization,
-                        );
+                        let metrics = if normalization.is_some() || display_points.is_some() {
+                            calculate_iteration_metrics_with_quantization(
+                                progress_points,
+                                &params,
+                                loss_metric,
+                                metric_quantization,
+                            )
+                        } else {
+                            metrics
+                        };
                         iteration_trace.push(ParametricIterationTraceEntry {
                             iteration,
                             metrics,
@@ -799,8 +809,8 @@ impl CurveFitApp {
                 ));
                 return;
             };
-            self.sync_spline_initial_knot_y_inputs(spline_config.knots);
-            let initial_knot_y = match self.parse_spline_initial_knot_y(spline_config.knots) {
+            self.sync_spline_initial_knot_y_inputs(spline_config.knots());
+            let initial_knot_y = match self.parse_spline_initial_knot_y(spline_config.knots()) {
                 Ok(values) => values,
                 Err(error) => {
                     self.status = Some(StatusMessage::Error(error));

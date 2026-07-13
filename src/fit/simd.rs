@@ -1,3 +1,8 @@
+use std::simd::Select;
+use std::simd::StdFloat;
+use std::simd::cmp::SimdPartialOrd;
+use std::simd::num::SimdFloat;
+
 use super::{LARGE_COST, OptimizationLossMetric, positive_x};
 
 const MAX_POLYNOMIAL_PARAMS: usize = 10;
@@ -6,11 +11,6 @@ const MAX_POLYNOMIAL_PARAMS: usize = 10;
 type Vf64 = std::simd::f64x8;
 #[cfg(target_arch = "wasm32")]
 type Vf64 = std::simd::f64x2;
-
-use std::simd::Select;
-use std::simd::StdFloat;
-use std::simd::cmp::SimdPartialOrd;
-use std::simd::num::SimdFloat;
 
 pub(super) fn polynomial_cost(
     param: &[f64],

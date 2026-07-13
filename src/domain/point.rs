@@ -1,8 +1,9 @@
 //! Типы точки и набора точек с инвариантами на конечность координат и минимальный размер.
 
-use super::InputError;
 use std::ops::Deref;
 use std::sync::Arc;
+
+use super::InputError;
 
 const MIN_POINTS: usize = 2;
 

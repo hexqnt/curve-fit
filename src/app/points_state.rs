@@ -44,88 +44,6 @@ impl Default for PointsEditorState {
     }
 }
 
-pub(super) fn invalidate_points_editor_cache(points: &mut PointsEditorState) {
-    points.cache_dirty = true;
-    points.text_sync_pending = false;
-    // Небольшой debounce уменьшает число парсингов во время быстрого ввода текста.
-    points.parse_debounce_deadline =
-        Some(Instant::now() + Duration::from_millis(POINTS_PARSE_DEBOUNCE_MS));
-}
-
-pub(super) fn points_editor_cache_with_policy(
-    points: &mut PointsEditorState,
-    force: bool,
-) -> &ParsedPointsCache {
-    // Политика пересчета кэша:
-    // - сразу, если кэша нет;
-    // - по force;
-    // - или после окончания debounce.
-    let should_parse = if points.cache.is_none() {
-        true
-    } else if !points.cache_dirty {
-        false
-    } else if force {
-        true
-    } else {
-        points
-            .parse_debounce_deadline
-            .map(|deadline| Instant::now() >= deadline)
-            .unwrap_or(true)
-    };
-
-    if should_parse || points.cache.is_none() {
-        // Текст парсим ровно один раз на пакет правок, а дальше работаем из кэша.
-        points.cache = Some(parse_points_text_cache(&points.text));
-        points.cache_dirty = false;
-        points.text_sync_pending = false;
-        points.parse_debounce_deadline = None;
-    }
-    points.cache.get_or_insert_with(|| ParsedPointsCache {
-        parsed_points: Err("Internal error: points cache is unavailable".to_string()),
-        parse_error_line: None,
-        plot_points: Vec::<PlotPoint>::new().into(),
-    })
-}
-
-pub(super) fn flush_points_editor_text_from_cache_if_pending(points: &mut PointsEditorState) {
-    if !points.text_sync_pending {
-        return;
-    }
-
-    // Лениво сериализуем точки обратно в текст только тогда, когда это реально нужно UI.
-    let synced_text = points.cache.as_ref().and_then(|cache| {
-        cache
-            .parsed_points
-            .as_ref()
-            .ok()
-            .map(|points| points_to_text(points))
-    });
-    if let Some(synced_text) = synced_text {
-        points.text = synced_text;
-    }
-    points.text_sync_pending = false;
-}
-
-pub(super) fn set_points_editor_cache_from_valid_points(
-    points: &mut PointsEditorState,
-    valid_points: &[Point],
-) {
-    let parsed_points = valid_points.to_vec();
-    let plot_points: Arc<[PlotPoint]> = parsed_points
-        .iter()
-        .map(|point| PlotPoint::new(point.x(), point.y()))
-        .collect::<Vec<_>>()
-        .into();
-    points.cache = Some(ParsedPointsCache {
-        parsed_points: Ok(parsed_points),
-        parse_error_line: None,
-        plot_points,
-    });
-    points.cache_dirty = false;
-    points.text_sync_pending = false;
-    points.parse_debounce_deadline = None;
-}
-
 impl CurveFitApp {
     pub(super) fn selected_layer(&self) -> &PointLayer {
         self.point_layers.selected()
@@ -508,4 +426,85 @@ impl CurveFitApp {
 
         self.write_points_text(&points, true);
     }
+}
+pub(super) fn invalidate_points_editor_cache(points: &mut PointsEditorState) {
+    points.cache_dirty = true;
+    points.text_sync_pending = false;
+    // Небольшой debounce уменьшает число парсингов во время быстрого ввода текста.
+    points.parse_debounce_deadline =
+        Some(Instant::now() + Duration::from_millis(POINTS_PARSE_DEBOUNCE_MS));
+}
+
+pub(super) fn points_editor_cache_with_policy(
+    points: &mut PointsEditorState,
+    force: bool,
+) -> &ParsedPointsCache {
+    // Политика пересчета кэша:
+    // - сразу, если кэша нет;
+    // - по force;
+    // - или после окончания debounce.
+    let should_parse = if points.cache.is_none() {
+        true
+    } else if !points.cache_dirty {
+        false
+    } else if force {
+        true
+    } else {
+        points
+            .parse_debounce_deadline
+            .map(|deadline| Instant::now() >= deadline)
+            .unwrap_or(true)
+    };
+
+    if should_parse || points.cache.is_none() {
+        // Текст парсим ровно один раз на пакет правок, а дальше работаем из кэша.
+        points.cache = Some(parse_points_text_cache(&points.text));
+        points.cache_dirty = false;
+        points.text_sync_pending = false;
+        points.parse_debounce_deadline = None;
+    }
+    points.cache.get_or_insert_with(|| ParsedPointsCache {
+        parsed_points: Err("Internal error: points cache is unavailable".to_string()),
+        parse_error_line: None,
+        plot_points: Vec::<PlotPoint>::new().into(),
+    })
+}
+
+pub(super) fn flush_points_editor_text_from_cache_if_pending(points: &mut PointsEditorState) {
+    if !points.text_sync_pending {
+        return;
+    }
+
+    // Лениво сериализуем точки обратно в текст только тогда, когда это реально нужно UI.
+    let synced_text = points.cache.as_ref().and_then(|cache| {
+        cache
+            .parsed_points
+            .as_ref()
+            .ok()
+            .map(|points| points_to_text(points))
+    });
+    if let Some(synced_text) = synced_text {
+        points.text = synced_text;
+    }
+    points.text_sync_pending = false;
+}
+
+pub(super) fn set_points_editor_cache_from_valid_points(
+    points: &mut PointsEditorState,
+    valid_points: &[Point],
+) {
+    let parsed_points = valid_points.to_vec();
+    let plot_points: Arc<[PlotPoint]> = parsed_points
+        .iter()
+        .map(|point| PlotPoint::new(point.x(), point.y()))
+        .collect::<Vec<_>>()
+        .into();
+    points.cache = Some(ParsedPointsCache {
+        parsed_points: Ok(parsed_points),
+        parse_error_line: None,
+        plot_points,
+    });
+    points.cache_dirty = false;
+    points.text_sync_pending = false;
+    points.parse_debounce_deadline = None;
 }

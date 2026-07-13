@@ -42,32 +42,6 @@ impl UiLanguage {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn system_locale_tag() -> Option<String> {
-    sys_locale::get_locale()
-}
-
-#[cfg(target_arch = "wasm32")]
-fn system_locale_tag() -> Option<String> {
-    web_sys::window().and_then(|window| window.navigator().language())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn dialog_directory_from_path(path: &Path) -> Option<PathBuf> {
-    if path.is_dir() {
-        return Some(path.to_path_buf());
-    }
-    path.parent().map(Path::to_path_buf)
-}
-
-pub(super) fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
-    params.with_values(|values| values.iter().map(|value| value.to_string()).collect())
-}
-
-pub(super) fn tau_grid_to_input_strings(values: &[f64]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
-}
-
 /// Инструмент редактирования точек непосредственно на графике.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum PlotTool {
@@ -160,4 +134,29 @@ pub(super) struct ExtendedMetrics {
     pub(super) mae: f64,
     pub(super) r2: f64,
     pub(super) max_abs_error: f64,
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn system_locale_tag() -> Option<String> {
+    sys_locale::get_locale()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn system_locale_tag() -> Option<String> {
+    web_sys::window().and_then(|window| window.navigator().language())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) fn dialog_directory_from_path(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return Some(path.to_path_buf());
+    }
+    path.parent().map(Path::to_path_buf)
+}
+
+pub(super) fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
+    params.with_values(|values| values.iter().map(|value| value.to_string()).collect())
+}
+
+pub(super) fn tau_grid_to_input_strings(values: &[f64]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
 }

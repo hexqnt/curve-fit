@@ -2,6 +2,21 @@
 
 use ndarray::Array2;
 
+pub(crate) use common::{HESSIAN_DIAGONAL_JITTER, PARAM_EPS};
+pub(crate) use data_term::DataTerm;
+#[cfg(test)]
+pub(crate) use dispatch::value_at;
+pub(crate) use dispatch::value_at_with_saturating_taus;
+pub(crate) use loss::PredictionLoss;
+pub(crate) use objective::{
+    CentralDiffGradient, CentralDiffHessian, CurveObjective, ObjectiveGrad, ObjectiveHessian,
+    ObjectiveValue,
+};
+#[cfg(test)]
+pub(crate) use objective::{central_diff_gradient_from_value, central_diff_hessian_from_gradient};
+pub(crate) use saturating_trend_basis::SATURATING_TREND_PARAM_COUNT;
+pub(crate) use term::{TermGrad, TermHessian, TermValue};
+
 mod arctangent_step;
 mod arrhenius;
 mod bi_exponential;
@@ -33,28 +48,8 @@ mod rational_11;
 mod rational_22;
 mod rational_nn;
 mod saturating_trend_basis;
-#[cfg(test)]
-mod simd_tests;
 mod softplus;
 mod term;
-#[cfg(test)]
-mod test_support;
-
-pub(crate) use common::{HESSIAN_DIAGONAL_JITTER, PARAM_EPS};
-pub(crate) use data_term::DataTerm;
-#[cfg(test)]
-pub(crate) use dispatch::value_at;
-pub(crate) use dispatch::value_at_with_saturating_taus;
-pub(crate) use loss::PredictionLoss;
-pub(crate) use objective::{
-    CentralDiffGradient, CentralDiffHessian, CurveObjective, ObjectiveGrad, ObjectiveHessian,
-    ObjectiveValue,
-};
-#[cfg(test)]
-pub(crate) use objective::{central_diff_gradient_from_value, central_diff_hessian_from_gradient};
-pub(crate) use saturating_trend_basis::SATURATING_TREND_PARAM_COUNT;
-pub(crate) use term::{TermGrad, TermHessian, TermValue};
-
 pub(crate) type Param = [f64];
 pub(crate) type Grad = Vec<f64>;
 pub(crate) type Hessian = Array2<f64>;
@@ -69,3 +64,7 @@ pub(crate) fn positive_x(value: f64) -> f64 {
 pub(crate) fn softplus(value: f64) -> f64 {
     common::softplus(value)
 }
+#[cfg(test)]
+mod simd_tests;
+#[cfg(test)]
+mod test_support;

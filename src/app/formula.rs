@@ -8,14 +8,15 @@ use ratex_svg::{SvgOptions, render_to_svg};
 use ratex_types::color::Color as RatexColor;
 use ratex_types::display_item::DisplayList;
 
-use super::i18n::tr;
-use super::{FormulaReferenceSection, ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
 use crate::domain::DEFAULT_SATURATING_TREND_TAUS_YEARS;
 use crate::domain::{
     MAX_RATIONAL_DEGREE, MAX_SATURATING_TREND_TAU_COUNT, MIN_RATIONAL_DEGREE,
     MIN_SATURATING_TREND_TAU_COUNT,
 };
 use crate::fit::OptimizationLossMetric;
+
+use super::i18n::tr;
+use super::{FormulaReferenceSection, ModelChoice, ModelFormulaInfo, ResolvedModel, UiLanguage};
 
 // Держим размер формулы на уровне основного текста интерфейса.
 const FORMULA_FONT_SIZE: f64 = 22.0;

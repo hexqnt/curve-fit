@@ -1,25 +1,23 @@
 //! Общая инфраструктура подготовки, оценки и расчета метрик для сплайнов.
 
-use super::*;
+use std::cell::RefCell;
 
-#[derive(Debug, Clone, PartialEq)]
-/// Подробный результат подгонки сплайна.
-pub struct SplineResult {
-    pub knots: Vec<[f64; 2]>,
-    pub curve: Vec<[f64; 2]>,
-    pub mse: f64,
-    pub rmse: f64,
-    pub mae: f64,
-    pub r2: f64,
-    pub max_abs_error: f64,
-    pub residuals: Vec<[f64; 2]>,
-    pub iterations: u64,
-}
+use super::*;
 
 /// Число узлов сплайна по умолчанию.
 pub const DEFAULT_SPLINE_KNOTS: usize = 8;
 /// Число сэмплов кривой для визуализации по умолчанию.
 pub const DEFAULT_SPLINE_SAMPLES: usize = 200;
+
+const MIN_LINEAR_SPLINE_KNOTS: usize = 2;
+const MIN_MONOTONE_SPLINE_KNOTS: usize = 2;
+const MIN_NATURAL_SPLINE_KNOTS: usize = 3;
+const MIN_AKIMA_SPLINE_KNOTS: usize = 5;
+const SPLINE_FD_REL_STEP: f64 = 1e-6;
+const SPLINE_FD_MIN_STEP: f64 = 1e-7;
+const SPLINE_CURVE_DOMAIN_PADDING_RATIO: f64 = 0.1;
+const SPLINE_CURVE_DOMAIN_EPS: f64 = 1e-9;
+const SPLINE_CURVE_DOMAIN_FALLBACK_PADDING: f64 = 1.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 /// Стратегия сокращения исходных точек до фиксированного числа узлов.
@@ -61,109 +59,6 @@ impl SplineDuplicateXPolicy {
     /// Полный список вариантов обработки повторов.
     pub const ALL: [Self; 4] = [Self::Error, Self::MeanY, Self::MedianY, Self::FirstY];
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Конфигурация построения и оптимизации сплайна.
-pub struct SplineConfig {
-    pub knots: usize,
-    pub samples: usize,
-    pub knot_strategy: SplineKnotStrategy,
-    pub extrapolation: SplineExtrapolation,
-    pub duplicate_x_policy: SplineDuplicateXPolicy,
-}
-
-impl Default for SplineConfig {
-    fn default() -> Self {
-        Self {
-            knots: DEFAULT_SPLINE_KNOTS,
-            samples: DEFAULT_SPLINE_SAMPLES,
-            knot_strategy: SplineKnotStrategy::default(),
-            extrapolation: SplineExtrapolation::default(),
-            duplicate_x_policy: SplineDuplicateXPolicy::default(),
-        }
-    }
-}
-
-impl SplineConfig {
-    /// Нормализует конфигурацию, обеспечивая минимально допустимые значения.
-    pub fn normalized(self) -> Self {
-        Self {
-            knots: self.knots.max(2),
-            samples: self.samples.max(2),
-            knot_strategy: self.knot_strategy,
-            extrapolation: self.extrapolation,
-            duplicate_x_policy: self.duplicate_x_policy,
-        }
-    }
-}
-
-fn aggregate_duplicate_y(values: &[[f64; 2]], policy: SplineDuplicateXPolicy) -> f64 {
-    match policy {
-        SplineDuplicateXPolicy::Error | SplineDuplicateXPolicy::FirstY => values[0][1],
-        SplineDuplicateXPolicy::MeanY => {
-            values.iter().map(|point| point[1]).sum::<f64>() / values.len() as f64
-        }
-        SplineDuplicateXPolicy::MedianY => {
-            let mut sorted = values.iter().map(|point| point[1]).collect::<Vec<_>>();
-            sorted.sort_by(|a, b| a.total_cmp(b));
-            median_of_sorted(&sorted)
-        }
-    }
-}
-
-pub(super) fn sorted_points_with_duplicate_policy(
-    points: &Points,
-    policy: SplineDuplicateXPolicy,
-) -> Result<Vec<[f64; 2]>, FitError> {
-    let mut sorted = points
-        .iter()
-        .map(|point| [point.x(), point.y()])
-        .collect::<Vec<_>>();
-    sorted.sort_by(|a, b| a[0].total_cmp(&b[0]));
-
-    if sorted.len() < 2 {
-        return Ok(sorted);
-    }
-
-    let mut deduplicated = Vec::with_capacity(sorted.len());
-    let mut index = 0;
-    while index < sorted.len() {
-        let x = sorted[index][0];
-        let mut next = index + 1;
-        // Считаем почти равные x дублями, чтобы сгладить эффект шумов округления.
-        while next < sorted.len() && (sorted[next][0] - x).abs() <= 1e-12 {
-            next += 1;
-        }
-
-        let duplicate_count = next - index;
-        if duplicate_count == 1 {
-            deduplicated.push(sorted[index]);
-            index = next;
-            continue;
-        }
-
-        if matches!(policy, SplineDuplicateXPolicy::Error) {
-            return Err(FitError::InvalidSplineInput(format!(
-                "Spline requires unique x values, but found duplicate x={x}"
-            )));
-        }
-
-        deduplicated.push([x, aggregate_duplicate_y(&sorted[index..next], policy)]);
-        index = next;
-    }
-
-    Ok(deduplicated)
-}
-
-const MIN_LINEAR_SPLINE_KNOTS: usize = 2;
-const MIN_MONOTONE_SPLINE_KNOTS: usize = 2;
-const MIN_NATURAL_SPLINE_KNOTS: usize = 3;
-const MIN_AKIMA_SPLINE_KNOTS: usize = 5;
-const SPLINE_FD_REL_STEP: f64 = 1e-6;
-const SPLINE_FD_MIN_STEP: f64 = 1e-7;
-const SPLINE_CURVE_DOMAIN_PADDING_RATIO: f64 = 0.1;
-const SPLINE_CURVE_DOMAIN_EPS: f64 = 1e-9;
-const SPLINE_CURVE_DOMAIN_FALLBACK_PADDING: f64 = 1.0;
 
 /// Нормализованный вид сплайновых семейств внутри алгоритмов оптимизации.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,6 +120,445 @@ impl SplineEvaluator {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+/// Подробный результат подгонки сплайна.
+pub struct SplineResult {
+    pub knots: Vec<[f64; 2]>,
+    pub curve: Vec<[f64; 2]>,
+    pub mse: f64,
+    pub rmse: f64,
+    pub mae: f64,
+    pub r2: f64,
+    pub max_abs_error: f64,
+    pub residuals: Vec<[f64; 2]>,
+    pub iterations: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Конфигурация построения и оптимизации сплайна.
+pub struct SplineConfig {
+    knots: usize,
+    samples: usize,
+    knot_strategy: SplineKnotStrategy,
+    extrapolation: SplineExtrapolation,
+    duplicate_x_policy: SplineDuplicateXPolicy,
+}
+
+impl SplineConfig {
+    /// Создаёт конфигурацию и проверяет общие инварианты сплайна.
+    pub fn try_new(
+        knots: usize,
+        samples: usize,
+        knot_strategy: SplineKnotStrategy,
+        extrapolation: SplineExtrapolation,
+        duplicate_x_policy: SplineDuplicateXPolicy,
+    ) -> Result<Self, FitError> {
+        if knots < 2 {
+            return Err(FitError::InvalidSplineInput(
+                "Spline requires at least 2 knots".to_string(),
+            ));
+        }
+        if samples < 2 {
+            return Err(FitError::InvalidSplineInput(
+                "Spline curve requires at least 2 samples".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            knots,
+            samples,
+            knot_strategy,
+            extrapolation,
+            duplicate_x_policy,
+        })
+    }
+
+    pub fn knots(self) -> usize {
+        self.knots
+    }
+    pub fn samples(self) -> usize {
+        self.samples
+    }
+    pub fn knot_strategy(self) -> SplineKnotStrategy {
+        self.knot_strategy
+    }
+    pub fn extrapolation(self) -> SplineExtrapolation {
+        self.extrapolation
+    }
+    pub fn duplicate_x_policy(self) -> SplineDuplicateXPolicy {
+        self.duplicate_x_policy
+    }
+}
+
+impl Default for SplineConfig {
+    fn default() -> Self {
+        Self {
+            knots: DEFAULT_SPLINE_KNOTS,
+            samples: DEFAULT_SPLINE_SAMPLES,
+            knot_strategy: SplineKnotStrategy::default(),
+            extrapolation: SplineExtrapolation::default(),
+            duplicate_x_policy: SplineDuplicateXPolicy::default(),
+        }
+    }
+}
+
+pub(super) struct SplineProblem {
+    family: SplineFamilyKind,
+    knot_x: Box<[f64]>,
+    points: Points,
+    extrapolation: SplineExtrapolation,
+    loss_metric: OptimizationLossMetric,
+    residual_quantizer: ResidualQuantizer,
+    linear_basis: Option<Box<[LinearBasis]>>,
+    analytic_derivatives: bool,
+    knot_buffer: RefCell<Vec<[f64; 2]>>,
+}
+
+impl SplineProblem {
+    pub(super) fn new(
+        family: SplineFamilyKind,
+        initial_knots: &[[f64; 2]],
+        points: &Points,
+        extrapolation: SplineExtrapolation,
+        loss_metric: OptimizationLossMetric,
+        metric_quantization: MetricQuantization,
+    ) -> Self {
+        let knot_x = initial_knots
+            .iter()
+            .map(|point| point[0])
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let linear_basis = (family == SplineFamilyKind::Linear).then(|| {
+            points
+                .iter()
+                .map(|point| LinearBasis::new(&knot_x, point.x(), extrapolation))
+                .collect()
+        });
+        let knot_count = knot_x.len();
+        Self {
+            family,
+            knot_x,
+            points: points.clone(),
+            extrapolation,
+            loss_metric,
+            residual_quantizer: ResidualQuantizer::new(metric_quantization),
+            linear_basis,
+            analytic_derivatives: metric_quantization == MetricQuantization::Disabled,
+            knot_buffer: RefCell::new(Vec::with_capacity(knot_count)),
+        }
+    }
+
+    fn evaluate_objective(&self, knot_y: &[f64]) -> f64 {
+        if knot_y.len() != self.knot_x.len() {
+            return LARGE_COST;
+        }
+
+        if let Some(basis) = &self.linear_basis {
+            return self.accumulate_objective_from_linear_basis(knot_y, basis);
+        }
+
+        self.evaluate_objective_with_knot_buffer(knot_y, &mut self.knot_buffer.borrow_mut())
+    }
+
+    fn evaluate_objective_with_knot_buffer(
+        &self,
+        knot_y: &[f64],
+        knot_buffer: &mut Vec<[f64; 2]>,
+    ) -> f64 {
+        if knot_y.len() != self.knot_x.len() {
+            return LARGE_COST;
+        }
+
+        materialize_spline_knots_into(self.knot_x.as_ref(), knot_y, knot_buffer);
+        self.evaluate_objective_from_knots(knot_buffer)
+    }
+
+    fn evaluate_objective_from_knots(&self, knots: &[[f64; 2]]) -> f64 {
+        let evaluator = match build_spline_evaluator(self.family, knots, self.extrapolation) {
+            Ok(evaluator) => evaluator,
+            Err(_) => return LARGE_COST,
+        };
+        self.accumulate_objective(|x| evaluator.evaluate(knots, x))
+    }
+
+    fn accumulate_objective(&self, mut evaluate: impl FnMut(f64) -> f64) -> f64 {
+        let mut objective_sum = 0.0;
+        let mut max_abs_residual = 0.0_f64;
+        for point in &self.points {
+            let prediction = self.residual_quantizer.quantize_value(evaluate(point.x()));
+            let observed = self.residual_quantizer.quantize_value(point.y());
+            let residual = prediction - observed;
+            if !residual.is_finite() {
+                return LARGE_COST;
+            }
+            if self.loss_metric == OptimizationLossMetric::Chebyshev {
+                max_abs_residual = max_abs_residual.max(residual.abs());
+            } else {
+                objective_sum += self.loss_metric.value_from_prediction(prediction, observed);
+                if !objective_sum.is_finite() {
+                    return LARGE_COST;
+                }
+            }
+        }
+        if self.loss_metric == OptimizationLossMetric::Chebyshev {
+            max_abs_residual
+        } else {
+            objective_sum / self.points.len() as f64
+        }
+    }
+
+    fn accumulate_objective_from_linear_basis(&self, knot_y: &[f64], basis: &[LinearBasis]) -> f64 {
+        debug_assert_eq!(basis.len(), self.points.len());
+        let mut objective_sum = 0.0;
+        let mut max_abs_residual = 0.0_f64;
+        for (point, basis) in self.points.iter().zip(basis.iter().copied()) {
+            let prediction = self
+                .residual_quantizer
+                .quantize_value(basis.evaluate(knot_y));
+            let observed = self.residual_quantizer.quantize_value(point.y());
+            let residual = prediction - observed;
+            if !residual.is_finite() {
+                return LARGE_COST;
+            }
+            if self.loss_metric == OptimizationLossMetric::Chebyshev {
+                max_abs_residual = max_abs_residual.max(residual.abs());
+            } else {
+                objective_sum += self.loss_metric.value_from_prediction(prediction, observed);
+            }
+        }
+        if self.loss_metric == OptimizationLossMetric::Chebyshev {
+            max_abs_residual
+        } else if objective_sum.is_finite() {
+            objective_sum / self.points.len() as f64
+        } else {
+            LARGE_COST
+        }
+    }
+
+    fn linear_gradient(&self, knot_y: &[f64], basis: &[LinearBasis]) -> Array1<f64> {
+        let mut gradient = Array1::zeros(knot_y.len());
+        let scale = 1.0 / self.points.len() as f64;
+        for (point, basis) in self.points.iter().zip(basis.iter().copied()) {
+            let prediction = basis.evaluate(knot_y);
+            let derivative = self
+                .loss_metric
+                .prediction_derivative(prediction, point.y())
+                * scale;
+            if !derivative.is_finite() {
+                gradient.fill(LARGE_COST);
+                return gradient;
+            }
+            for (&index, &weight) in basis.indices.iter().zip(basis.weights.iter()) {
+                gradient[index] += derivative * weight;
+            }
+        }
+        gradient
+    }
+
+    fn linear_hessian(&self, knot_y: &[f64], basis: &[LinearBasis]) -> Array2<f64> {
+        let mut hessian = Array2::zeros((knot_y.len(), knot_y.len()));
+        let scale = 1.0 / self.points.len() as f64;
+        for (point, basis) in self.points.iter().zip(basis.iter().copied()) {
+            let prediction = basis.evaluate(knot_y);
+            let second = self
+                .loss_metric
+                .prediction_second_derivative(prediction, point.y())
+                * scale;
+            for row in 0..2 {
+                for column in 0..2 {
+                    hessian[[basis.indices[row], basis.indices[column]]] +=
+                        second * basis.weights[row] * basis.weights[column];
+                }
+            }
+        }
+        stabilize_hessian(&mut hessian);
+        hessian
+    }
+}
+
+impl CostFunction for SplineProblem {
+    type Param = Array1<f64>;
+    type Output = f64;
+
+    fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
+        Ok(self.evaluate_objective(array1_as_slice(param)))
+    }
+}
+
+impl Gradient for SplineProblem {
+    type Param = Array1<f64>;
+    type Gradient = Array1<f64>;
+
+    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
+        let param_slice = array1_as_slice(param);
+        if self.analytic_derivatives
+            && self.loss_metric != OptimizationLossMetric::Chebyshev
+            && let Some(basis) = &self.linear_basis
+        {
+            return Ok(self.linear_gradient(param_slice, basis));
+        }
+
+        let mut probe = param.clone();
+        let mut gradient = Array1::zeros(param_slice.len());
+        let mut knot_buffer = Vec::with_capacity(self.knot_x.len());
+        for (index, gradient_value) in gradient.iter_mut().enumerate() {
+            // Численный градиент по центральной схеме конечной разности.
+            let base_step =
+                ((param_slice[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
+            let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
+                let step = base_step * factor;
+                probe[index] = param_slice[index] + step;
+                let cost_plus = self
+                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
+                probe[index] = param_slice[index] - step;
+                let cost_minus = self
+                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
+                probe[index] = param_slice[index];
+                finite_central_difference(cost_plus, cost_minus, step)
+            });
+            *gradient_value = derivative.unwrap_or(LARGE_COST);
+        }
+        Ok(gradient)
+    }
+}
+
+impl Hessian for SplineProblem {
+    type Param = Array1<f64>;
+    type Hessian = Array2<f64>;
+
+    fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
+        if self.analytic_derivatives
+            && !self.loss_metric.requires_numerical_hessian()
+            && let Some(basis) = &self.linear_basis
+        {
+            return Ok(self.linear_hessian(array1_as_slice(param), basis));
+        }
+        numerical_hessian_from_gradient(self, param)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LinearBasis {
+    indices: [usize; 2],
+    weights: [f64; 2],
+}
+
+impl LinearBasis {
+    fn new(knot_x: &[f64], x: f64, extrapolation: SplineExtrapolation) -> Self {
+        let last = knot_x.len() - 1;
+        let segment = if x <= knot_x[0] {
+            if extrapolation == SplineExtrapolation::Clamp {
+                return Self {
+                    indices: [0, 0],
+                    weights: [1.0, 0.0],
+                };
+            }
+            0
+        } else if x >= knot_x[last] {
+            if extrapolation == SplineExtrapolation::Clamp {
+                return Self {
+                    indices: [last, last],
+                    weights: [1.0, 0.0],
+                };
+            }
+            last - 1
+        } else {
+            knot_x.partition_point(|&knot| knot < x).saturating_sub(1)
+        };
+        let t = (x - knot_x[segment]) / (knot_x[segment + 1] - knot_x[segment]);
+        Self {
+            indices: [segment, segment + 1],
+            weights: [1.0 - t, t],
+        }
+    }
+
+    #[inline]
+    fn evaluate(self, knot_y: &[f64]) -> f64 {
+        self.weights[0] * knot_y[self.indices[0]] + self.weights[1] * knot_y[self.indices[1]]
+    }
+}
+
+pub(super) struct PreparedSplineInputs {
+    pub(super) config: SplineConfig,
+    pub(super) knot_x: Box<[f64]>,
+    pub(super) initial_y: Vec<f64>,
+    pub(super) curve_x_bounds: [f64; 2],
+}
+
+pub(super) struct SplineFinalizeContext<'a> {
+    pub(super) points: &'a Points,
+    pub(super) family: SplineFamilyKind,
+    pub(super) config: SplineConfig,
+    pub(super) knot_x: &'a [f64],
+    pub(super) curve_x_bounds: [f64; 2],
+    pub(super) loss_metric: OptimizationLossMetric,
+    pub(super) metric_quantization: MetricQuantization,
+}
+
+pub(super) struct BuiltSplineCurve {
+    pub(super) knots: Vec<[f64; 2]>,
+    pub(super) evaluator: SplineEvaluator,
+    pub(super) curve: Vec<[f64; 2]>,
+}
+
+fn aggregate_duplicate_y(values: &[[f64; 2]], policy: SplineDuplicateXPolicy) -> f64 {
+    match policy {
+        SplineDuplicateXPolicy::Error | SplineDuplicateXPolicy::FirstY => values[0][1],
+        SplineDuplicateXPolicy::MeanY => {
+            values.iter().map(|point| point[1]).sum::<f64>() / values.len() as f64
+        }
+        SplineDuplicateXPolicy::MedianY => {
+            let mut sorted = values.iter().map(|point| point[1]).collect::<Vec<_>>();
+            sorted.sort_by(|a, b| a.total_cmp(b));
+            median_of_sorted(&sorted)
+        }
+    }
+}
+
+pub(super) fn sorted_points_with_duplicate_policy(
+    points: &Points,
+    policy: SplineDuplicateXPolicy,
+) -> Result<Vec<[f64; 2]>, FitError> {
+    let mut sorted = points
+        .iter()
+        .map(|point| [point.x(), point.y()])
+        .collect::<Vec<_>>();
+    sorted.sort_by(|a, b| a[0].total_cmp(&b[0]));
+
+    if sorted.len() < 2 {
+        return Ok(sorted);
+    }
+
+    let mut deduplicated = Vec::with_capacity(sorted.len());
+    let mut index = 0;
+    while index < sorted.len() {
+        let x = sorted[index][0];
+        let mut next = index + 1;
+        // Считаем почти равные x дублями, чтобы сгладить эффект шумов округления.
+        while next < sorted.len() && (sorted[next][0] - x).abs() <= 1e-12 {
+            next += 1;
+        }
+
+        let duplicate_count = next - index;
+        if duplicate_count == 1 {
+            deduplicated.push(sorted[index]);
+            index = next;
+            continue;
+        }
+
+        if matches!(policy, SplineDuplicateXPolicy::Error) {
+            return Err(FitError::InvalidSplineInput(format!(
+                "Spline requires unique x values, but found duplicate x={x}"
+            )));
+        }
+
+        deduplicated.push([x, aggregate_duplicate_y(&sorted[index..next], policy)]);
+        index = next;
+    }
+
+    Ok(deduplicated)
+}
+
 fn build_spline_evaluator(
     family: SplineFamilyKind,
     knots: &[[f64; 2]],
@@ -281,144 +615,6 @@ pub(super) fn materialize_spline_knots_into(
             .zip(knot_y.iter().copied())
             .map(|(x, y)| [x, y]),
     );
-}
-
-pub(super) struct SplineProblem {
-    family: SplineFamilyKind,
-    knot_x: Box<[f64]>,
-    points: Points,
-    extrapolation: SplineExtrapolation,
-    loss_metric: OptimizationLossMetric,
-    residual_quantizer: ResidualQuantizer,
-}
-
-impl SplineProblem {
-    pub(super) fn new(
-        family: SplineFamilyKind,
-        initial_knots: &[[f64; 2]],
-        points: &Points,
-        extrapolation: SplineExtrapolation,
-        loss_metric: OptimizationLossMetric,
-        metric_quantization: MetricQuantization,
-    ) -> Self {
-        let knot_x = initial_knots
-            .iter()
-            .map(|point| point[0])
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        Self {
-            family,
-            knot_x,
-            points: points.clone(),
-            extrapolation,
-            loss_metric,
-            residual_quantizer: ResidualQuantizer::new(metric_quantization),
-        }
-    }
-
-    fn evaluate_objective(&self, knot_y: &[f64]) -> f64 {
-        if knot_y.len() != self.knot_x.len() {
-            return LARGE_COST;
-        }
-
-        let mut knot_buffer = Vec::with_capacity(self.knot_x.len());
-        self.evaluate_objective_with_knot_buffer(knot_y, &mut knot_buffer)
-    }
-
-    fn evaluate_objective_with_knot_buffer(
-        &self,
-        knot_y: &[f64],
-        knot_buffer: &mut Vec<[f64; 2]>,
-    ) -> f64 {
-        if knot_y.len() != self.knot_x.len() {
-            return LARGE_COST;
-        }
-
-        materialize_spline_knots_into(self.knot_x.as_ref(), knot_y, knot_buffer);
-        self.evaluate_objective_from_knots(knot_buffer)
-    }
-
-    fn evaluate_objective_from_knots(&self, knots: &[[f64; 2]]) -> f64 {
-        let evaluator = match build_spline_evaluator(self.family, knots, self.extrapolation) {
-            Ok(evaluator) => evaluator,
-            Err(_) => return LARGE_COST,
-        };
-        self.accumulate_objective(|x| evaluator.evaluate(knots, x))
-    }
-
-    fn accumulate_objective(&self, mut evaluate: impl FnMut(f64) -> f64) -> f64 {
-        let mut objective_sum = 0.0;
-        let mut max_abs_residual = 0.0_f64;
-        for point in &self.points {
-            let prediction = self.residual_quantizer.quantize_value(evaluate(point.x()));
-            let observed = self.residual_quantizer.quantize_value(point.y());
-            let residual = prediction - observed;
-            if !residual.is_finite() {
-                return LARGE_COST;
-            }
-            if self.loss_metric == OptimizationLossMetric::Chebyshev {
-                max_abs_residual = max_abs_residual.max(residual.abs());
-            } else {
-                objective_sum += self.loss_metric.value_from_prediction(prediction, observed);
-                if !objective_sum.is_finite() {
-                    return LARGE_COST;
-                }
-            }
-        }
-        if self.loss_metric == OptimizationLossMetric::Chebyshev {
-            max_abs_residual
-        } else {
-            objective_sum / self.points.len() as f64
-        }
-    }
-}
-
-impl CostFunction for SplineProblem {
-    type Param = Array1<f64>;
-    type Output = f64;
-
-    fn cost(&self, param: &Self::Param) -> Result<Self::Output, argmin::core::Error> {
-        Ok(self.evaluate_objective(array1_as_slice(param)))
-    }
-}
-
-impl Gradient for SplineProblem {
-    type Param = Array1<f64>;
-    type Gradient = Array1<f64>;
-
-    fn gradient(&self, param: &Self::Param) -> Result<Self::Gradient, argmin::core::Error> {
-        let param_slice = array1_as_slice(param);
-        let mut probe = param.clone();
-        let mut gradient = Array1::zeros(param_slice.len());
-        let mut knot_buffer = Vec::with_capacity(self.knot_x.len());
-        for (index, gradient_value) in gradient.iter_mut().enumerate() {
-            // Численный градиент по центральной схеме конечной разности.
-            let base_step =
-                ((param_slice[index].abs() + 1.0) * SPLINE_FD_REL_STEP).max(SPLINE_FD_MIN_STEP);
-            let derivative = FD_STEP_RETRY_FACTORS.iter().copied().find_map(|factor| {
-                let step = base_step * factor;
-                probe[index] = param_slice[index] + step;
-                let cost_plus = self
-                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
-                probe[index] = param_slice[index] - step;
-                let cost_minus = self
-                    .evaluate_objective_with_knot_buffer(array1_as_slice(&probe), &mut knot_buffer);
-                probe[index] = param_slice[index];
-                finite_central_difference(cost_plus, cost_minus, step)
-            });
-            *gradient_value = derivative.unwrap_or(LARGE_COST);
-        }
-        Ok(gradient)
-    }
-}
-
-impl Hessian for SplineProblem {
-    type Param = Array1<f64>;
-    type Hessian = Array2<f64>;
-
-    fn hessian(&self, param: &Self::Param) -> Result<Self::Hessian, argmin::core::Error> {
-        numerical_hessian_from_gradient(self, param)
-    }
 }
 
 fn median_of_sorted(values: &[f64]) -> f64 {
@@ -833,26 +1029,18 @@ fn ensure_min_knot_count(
     Ok(())
 }
 
-pub(super) struct PreparedSplineInputs {
-    pub(super) config: SplineConfig,
-    pub(super) knot_x: Box<[f64]>,
-    pub(super) initial_y: Vec<f64>,
-    pub(super) curve_x_bounds: [f64; 2],
-}
-
 pub(super) fn prepare_spline_inputs(
     points: &Points,
     config: SplineConfig,
     family: SplineFamilyKind,
     initial_knot_y: Option<&[f64]>,
 ) -> Result<PreparedSplineInputs, FitError> {
-    let config = config.normalized();
     if points.len() >= family.min_knots() {
-        ensure_min_knot_count(config.knots, family.min_knots(), family.name())?;
+        ensure_min_knot_count(config.knots(), family.min_knots(), family.name())?;
     }
 
-    let sorted = sorted_points_with_duplicate_policy(points, config.duplicate_x_policy)?;
-    let initial_knots = approximate_spline_knots(&sorted, config.knots, config.knot_strategy);
+    let sorted = sorted_points_with_duplicate_policy(points, config.duplicate_x_policy())?;
+    let initial_knots = approximate_spline_knots(&sorted, config.knots(), config.knot_strategy());
     if initial_knots.len() < family.min_knots() {
         return Err(FitError::InvalidSplineInput(format!(
             "{} requires at least {} points",
@@ -899,16 +1087,6 @@ pub(super) fn prepare_spline_inputs(
     })
 }
 
-pub(super) struct SplineFinalizeContext<'a> {
-    pub(super) points: &'a Points,
-    pub(super) family: SplineFamilyKind,
-    pub(super) config: SplineConfig,
-    pub(super) knot_x: &'a [f64],
-    pub(super) curve_x_bounds: [f64; 2],
-    pub(super) loss_metric: OptimizationLossMetric,
-    pub(super) metric_quantization: MetricQuantization,
-}
-
 pub(super) fn build_spline_result_from_knot_y(
     context: &SplineFinalizeContext<'_>,
     knot_y: &[f64],
@@ -916,8 +1094,8 @@ pub(super) fn build_spline_result_from_knot_y(
 ) -> Result<(SplineResult, IterationMetricSnapshot), FitError> {
     let built = build_spline_curve_from_knot_y(
         context.family,
-        context.config.extrapolation,
-        context.config.samples,
+        context.config.extrapolation(),
+        context.config.samples(),
         context.knot_x,
         knot_y,
         context.curve_x_bounds,
@@ -969,19 +1147,13 @@ pub(crate) fn build_spline_initial_curve_from_knot_y(
     let prepared = prepare_spline_inputs(points, config, family, Some(knot_y))?;
     let built = build_spline_curve_from_knot_y(
         family,
-        prepared.config.extrapolation,
-        prepared.config.samples,
+        prepared.config.extrapolation(),
+        prepared.config.samples(),
         prepared.knot_x.as_ref(),
         &prepared.initial_y,
         prepared.curve_x_bounds,
     )?;
     Ok(built.curve)
-}
-
-pub(super) struct BuiltSplineCurve {
-    pub(super) knots: Vec<[f64; 2]>,
-    pub(super) evaluator: SplineEvaluator,
-    pub(super) curve: Vec<[f64; 2]>,
 }
 
 pub(super) fn build_spline_curve_from_knot_y(

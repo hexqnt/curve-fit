@@ -3,6 +3,7 @@
 use crate::models;
 
 use super::{CurveFamily, InputError, SaturatingTrendTauGrid};
+
 #[derive(Debug, Clone, PartialEq)]
 /// Типобезопасное представление параметров всех поддерживаемых семейств.
 pub enum CurveParams {

@@ -1,6 +1,19 @@
 //! Общие тестовые фикстуры и вспомогательные функции для модулей `app/tests/*`.
 
 #[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+
+use eframe::egui;
+use egui_plot::PlotPoint;
+
+#[cfg(not(target_arch = "wasm32"))]
 use super::FitWorkerMessage;
 use super::{
     CLIPBOARD_IMPORT_ERROR_PREFIX, CurveFitApp, DiagnosticsTab, ExtendedMetrics, FitRunUiSeed,
@@ -14,17 +27,6 @@ use crate::fit::{
     DEFAULT_METRIC_QUANTIZATION_DECIMAL_PLACES, IterationMetricSnapshot, MetricQuantization,
     OptimizationLossMetric, SplineResult,
 };
-use eframe::egui;
-use egui_plot::PlotPoint;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
-#[cfg(not(target_arch = "wasm32"))]
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, Instant};
 
 // Все import-ы специально поднимаются в этот модуль,
 // чтобы подмодули `app/tests/*` брали их через `use super::*;`.

@@ -1,5 +1,6 @@
-use super::common::{positive_param_with_derivative, positive_x};
 use ndarray::Array2;
+
+use super::common::{positive_param_with_derivative, positive_x};
 
 const PARAM_COUNT: usize = 4;
 
@@ -78,26 +79,6 @@ pub(super) fn value_at(param: &[f64], x: f64) -> f64 {
 #[inline]
 pub(super) fn value_grad_at(param: &[f64], x: f64, grad: &mut [f64]) -> f64 {
     Params::parse(param).value_grad_at(x, grad)
-}
-
-pub(super) fn add_value_grad(
-    x_values: &[f64],
-    param: &[f64],
-    value_first: &[f64],
-    gradient: &mut [f64],
-) {
-    debug_assert_eq!(x_values.len(), value_first.len());
-    debug_assert_eq!(gradient.len(), param.len());
-    let params = Params::parse(param);
-
-    let mut point_grad = [0.0; PARAM_COUNT];
-    for (&x, &upstream) in x_values.iter().zip(value_first.iter()) {
-        params.value_grad_at(x, &mut point_grad);
-
-        for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
-            *gradient_value += upstream * point_grad_value;
-        }
-    }
 }
 
 pub(super) fn add_value_grad_raw_hessian(

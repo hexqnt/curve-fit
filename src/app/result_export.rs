@@ -1,15 +1,44 @@
 //! Сериализация результата фитинга в JSON и интеграция с экспортом из интерфейса.
 
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+
 #[cfg(not(target_arch = "wasm32"))]
 use chrono::{SecondsFormat, Utc};
 #[cfg(not(target_arch = "wasm32"))]
 use egui_file_dialog::DialogState;
 use serde::Serialize;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 #[cfg(target_arch = "wasm32")]
 use web_sys::js_sys::Date;
+
+use super::*;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::ensure_json_extension;
+    use std::path::PathBuf;
+
+    #[test]
+    fn ensure_json_extension_adds_extension_for_path_without_it() {
+        let path = PathBuf::from("/tmp/fit-result");
+        let with_extension = ensure_json_extension(path);
+        assert_eq!(with_extension, PathBuf::from("/tmp/fit-result.json"));
+    }
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum FitExportResult {
+    Parametric {
+        parameter_count: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tau_grid_years: Option<Vec<f64>>,
+        parameters: Vec<FitExportParameter>,
+    },
+    Spline {
+        knot_count: usize,
+        knots: Vec<FitExportKnot>,
+    },
+}
 
 /// Сериализуемая сводка результата фитинга для буфера обмена и сохранения в файл.
 #[derive(Debug, Clone, Serialize)]
@@ -56,19 +85,26 @@ struct FitExportMetrics {
     max_abs_error: Option<f64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum FitExportResult {
-    Parametric {
-        parameter_count: usize,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        tau_grid_years: Option<Vec<f64>>,
-        parameters: Vec<FitExportParameter>,
-    },
-    Spline {
-        knot_count: usize,
-        knots: Vec<FitExportKnot>,
-    },
+impl FitExportMetrics {
+    fn from_basic_metrics(mse: f64, rmse: f64) -> Self {
+        Self {
+            mse,
+            rmse,
+            mae: None,
+            r2: None,
+            max_abs_error: None,
+        }
+    }
+
+    fn from_complete_metrics(metrics: ExtendedMetrics) -> Self {
+        Self {
+            mse: metrics.mse,
+            rmse: metrics.rmse,
+            mae: Some(metrics.mae),
+            r2: Some(metrics.r2),
+            max_abs_error: Some(metrics.max_abs_error),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -288,28 +324,6 @@ fn metric_quantization_decimal_places(metric_quantization: MetricQuantization) -
     }
 }
 
-impl FitExportMetrics {
-    fn from_basic_metrics(mse: f64, rmse: f64) -> Self {
-        Self {
-            mse,
-            rmse,
-            mae: None,
-            r2: None,
-            max_abs_error: None,
-        }
-    }
-
-    fn from_complete_metrics(metrics: ExtendedMetrics) -> Self {
-        Self {
-            mse: metrics.mse,
-            rmse: metrics.rmse,
-            mae: Some(metrics.mae),
-            r2: Some(metrics.r2),
-            max_abs_error: Some(metrics.max_abs_error),
-        }
-    }
-}
-
 fn model_choice_ref(model: ModelChoice) -> FitExportNamedId {
     FitExportNamedId {
         id: model_choice_id(model),
@@ -491,17 +505,4 @@ fn ensure_json_extension(mut path: PathBuf) -> PathBuf {
         path.set_extension("json");
     }
     path
-}
-
-#[cfg(all(test, not(target_arch = "wasm32")))]
-mod tests {
-    use super::ensure_json_extension;
-    use std::path::PathBuf;
-
-    #[test]
-    fn ensure_json_extension_adds_extension_for_path_without_it() {
-        let path = PathBuf::from("/tmp/fit-result");
-        let with_extension = ensure_json_extension(path);
-        assert_eq!(with_extension, PathBuf::from("/tmp/fit-result.json"));
-    }
 }

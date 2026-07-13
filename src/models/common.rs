@@ -1,17 +1,17 @@
-use ndarray::Array2;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) type Vf64 = std::simd::f64x8;
-#[cfg(target_arch = "wasm32")]
-pub(crate) type Vf64 = std::simd::f64x2;
-
 use std::simd::Select;
 use std::simd::StdFloat;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
 
+use ndarray::Array2;
+
 pub(crate) const PARAM_EPS: f64 = 1e-9;
 pub(crate) const HESSIAN_DIAGONAL_JITTER: f64 = 1e-9;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Vf64 = std::simd::f64x8;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Vf64 = std::simd::f64x2;
 
 #[inline]
 pub(crate) fn positive_x(value: f64) -> f64 {

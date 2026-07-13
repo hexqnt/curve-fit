@@ -1,8 +1,10 @@
-use super::common::Vf64;
-use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian};
-use ndarray::Array2;
 use std::simd::cmp::SimdPartialOrd;
 use std::simd::num::SimdFloat;
+
+use ndarray::Array2;
+
+use super::common::Vf64;
+use super::common::{is_finite_non_negative, scale_and_mirror_upper_hessian};
 
 const MAX_POLYNOMIAL_PARAMS: usize = 10;
 const MAX_UPPER_HESSIAN_LEN: usize = MAX_POLYNOMIAL_PARAMS * (MAX_POLYNOMIAL_PARAMS + 1) / 2;
@@ -57,53 +59,6 @@ pub(super) fn value_grad_simd_at(param: &[f64], x: Vf64, grad: &mut [Vf64]) -> V
     }
 
     value
-}
-
-pub(super) fn add_value_grad(
-    x_values: &[f64],
-    param: &[f64],
-    value_first: &[f64],
-    gradient: &mut [f64],
-) {
-    debug_assert_eq!(x_values.len(), value_first.len());
-    debug_assert_eq!(gradient.len(), param.len());
-    debug_assert!(gradient.len() <= MAX_POLYNOMIAL_PARAMS);
-
-    {
-        let (x_chunks, x_tail) = x_values.as_chunks::<{ Vf64::LEN }>();
-        let (value_first_chunks, value_first_tail) = value_first.as_chunks::<{ Vf64::LEN }>();
-        debug_assert_eq!(x_chunks.len(), value_first_chunks.len());
-        debug_assert_eq!(x_tail.len(), value_first_tail.len());
-
-        let mut accum = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
-        let accum = &mut accum[..gradient.len()];
-        let mut point_grad = [Vf64::splat(0.0); MAX_POLYNOMIAL_PARAMS];
-        let point_grad = &mut point_grad[..gradient.len()];
-
-        for (x_chunk, value_first_chunk) in x_chunks.iter().zip(value_first_chunks.iter()) {
-            let x = Vf64::from_array(*x_chunk);
-            let upstream = Vf64::from_array(*value_first_chunk);
-            value_grad_simd_at(param, x, point_grad);
-
-            for (accum_value, point_grad_value) in accum.iter_mut().zip(point_grad.iter().copied())
-            {
-                *accum_value += upstream * point_grad_value;
-            }
-        }
-
-        for (gradient_value, accum_value) in gradient.iter_mut().zip(accum.iter().copied()) {
-            *gradient_value += accum_value.reduce_sum();
-        }
-
-        let mut point_grad = [0.0; MAX_POLYNOMIAL_PARAMS];
-        let point_grad = &mut point_grad[..gradient.len()];
-        for (&x, &upstream) in x_tail.iter().zip(value_first_tail.iter()) {
-            value_grad_at(param, x, point_grad);
-            for (gradient_value, point_grad_value) in gradient.iter_mut().zip(point_grad.iter()) {
-                *gradient_value += upstream * point_grad_value;
-            }
-        }
-    }
 }
 
 pub(super) fn add_value_grad_raw_hessian(

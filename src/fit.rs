@@ -25,18 +25,6 @@ use crate::models::{
     TermValue,
 };
 
-mod common;
-mod error;
-mod finite_diff;
-mod metrics;
-mod optimizer_engine;
-mod parametric;
-mod spline_core;
-
-mod curve;
-mod simd;
-mod spline;
-
 // Общие символы для внутренних `fit/*` модулей (подключаются через `use super::*;`).
 use self::common::*;
 use self::error::*;
@@ -79,6 +67,18 @@ pub(crate) use self::metrics::{
 pub(crate) use self::optimizer_engine::{IncrementalSplineFitRunner, IncrementalSplineFitStep};
 pub(crate) use self::spline::default_spline_initial_knot_y;
 pub(crate) use self::spline_core::{SplineFamilyKind, build_spline_initial_curve_from_knot_y};
+
+mod common;
+mod error;
+mod finite_diff;
+mod metrics;
+mod optimizer_engine;
+mod parametric;
+mod spline_core;
+
+mod curve;
+mod simd;
+mod spline;
 
 #[doc(hidden)]
 pub mod simd_bench {

@@ -2,11 +2,6 @@
 #![forbid(unsafe_code)]
 //! Публичный API библиотеки для подгонки параметрических кривых и сплайнов.
 
-pub mod app;
-pub mod domain;
-pub mod fit;
-pub(crate) mod models;
-
 pub use app::CurveFitApp;
 pub use domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
@@ -26,3 +21,8 @@ pub use fit::{
     fit_natural_cubic_spline_with_config, fit_natural_cubic_spline_with_optimizer_config,
     sample_curve,
 };
+
+pub mod app;
+pub mod domain;
+pub mod fit;
+pub(crate) mod models;

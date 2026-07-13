@@ -1,6 +1,31 @@
 use super::*;
 
 #[test]
+fn spline_config_rejects_invalid_dimensions() {
+    let defaults = SplineConfig::default();
+    assert!(
+        SplineConfig::try_new(
+            1,
+            defaults.samples(),
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )
+        .is_err()
+    );
+    assert!(
+        SplineConfig::try_new(
+            defaults.knots(),
+            1,
+            defaults.knot_strategy(),
+            defaults.extrapolation(),
+            defaults.duplicate_x_policy(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn linear_spline_builds_curve() {
     let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
     let result =
@@ -16,13 +41,14 @@ fn linear_spline_curve_extends_beyond_sample_extremes() {
     let points = build_points(&[0.0, 1.0, 2.0, 3.0], |x| 2.0 * x + 1.0);
     let result = fit_linear_spline_with_config(
         &points,
-        SplineConfig {
-            knots: 2,
-            samples: 40,
-            knot_strategy: SplineKnotStrategy::BinMean,
-            extrapolation: SplineExtrapolation::Linear,
-            duplicate_x_policy: SplineDuplicateXPolicy::Error,
-        },
+        SplineConfig::try_new(
+            2,
+            40,
+            SplineKnotStrategy::BinMean,
+            SplineExtrapolation::Linear,
+            SplineDuplicateXPolicy::Error,
+        )
+        .expect("test spline config must be valid"),
     )
     .expect("linear spline with two knots must succeed");
 
@@ -44,13 +70,14 @@ fn spline_initial_curve_preview_extends_beyond_sample_extremes() {
     let curve = build_spline_initial_curve_from_knot_y(
         &points,
         SplineFamilyKind::Linear,
-        SplineConfig {
-            knots: 2,
-            samples: 40,
-            knot_strategy: SplineKnotStrategy::BinMean,
-            extrapolation: SplineExtrapolation::Linear,
-            duplicate_x_policy: SplineDuplicateXPolicy::Error,
-        },
+        SplineConfig::try_new(
+            2,
+            40,
+            SplineKnotStrategy::BinMean,
+            SplineExtrapolation::Linear,
+            SplineDuplicateXPolicy::Error,
+        )
+        .expect("test spline config must be valid"),
         &[2.0, 6.0],
     )
     .expect("initial spline preview must be built");
@@ -109,13 +136,14 @@ fn akima_spline_requires_at_least_five_knots() {
     });
     let error = fit_akima_spline_with_config(
         &points,
-        SplineConfig {
-            knots: 4,
-            samples: 64,
-            knot_strategy: SplineKnotStrategy::BinMean,
-            extrapolation: SplineExtrapolation::Clamp,
-            duplicate_x_policy: SplineDuplicateXPolicy::Error,
-        },
+        SplineConfig::try_new(
+            4,
+            64,
+            SplineKnotStrategy::BinMean,
+            SplineExtrapolation::Clamp,
+            SplineDuplicateXPolicy::Error,
+        )
+        .expect("test spline config must be valid"),
     )
     .expect_err("akima should reject knot count below 5");
 
@@ -190,13 +218,14 @@ fn incremental_spline_runner_reports_iteration_steps() {
     let mut runner = IncrementalSplineFitRunner::new_with_optimizer_config(
         &points,
         SplineFamilyKind::Linear,
-        SplineConfig {
-            knots: DEFAULT_SPLINE_KNOTS,
-            samples: 48,
-            knot_strategy: SplineKnotStrategy::BinMean,
-            extrapolation: SplineExtrapolation::Clamp,
-            duplicate_x_policy: SplineDuplicateXPolicy::Error,
-        },
+        SplineConfig::try_new(
+            DEFAULT_SPLINE_KNOTS,
+            48,
+            SplineKnotStrategy::BinMean,
+            SplineExtrapolation::Clamp,
+            SplineDuplicateXPolicy::Error,
+        )
+        .expect("test spline config must be valid"),
         &optimizer_config,
     )
     .expect("incremental linear spline runner must be created");
@@ -221,13 +250,14 @@ fn incremental_spline_runner_rejects_wrong_custom_init_length() {
     let error = IncrementalSplineFitRunner::new_with_initial_knot_y_and_optimizer_config(
         &points,
         SplineFamilyKind::Linear,
-        SplineConfig {
-            knots: DEFAULT_SPLINE_KNOTS,
-            samples: 48,
-            knot_strategy: SplineKnotStrategy::BinMean,
-            extrapolation: SplineExtrapolation::Clamp,
-            duplicate_x_policy: SplineDuplicateXPolicy::Error,
-        },
+        SplineConfig::try_new(
+            DEFAULT_SPLINE_KNOTS,
+            48,
+            SplineKnotStrategy::BinMean,
+            SplineExtrapolation::Clamp,
+            SplineDuplicateXPolicy::Error,
+        )
+        .expect("test spline config must be valid"),
         &optimizer_config,
         Some(&[1.0, 2.0, 3.0]),
     );

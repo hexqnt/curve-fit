@@ -1,5 +1,6 @@
-use super::*;
 use crate::domain::SaturatingTrendTauGrid;
+
+use super::*;
 
 #[test]
 fn lbfgs_fits_linear_data() {
