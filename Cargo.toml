@@ -17,42 +17,42 @@ argmin-math = { version = "0.5.1", default-features = false, features = [
     "vec",
     "ndarray_v0_16-nolinalg",
 ] }
-calamine = "0.35.0"
-chrono = "0.4.42"
+calamine = "0.36.0"
+chrono = "0.4.45"
 csv = "1.4.0"
-egui_extras = { version = "0.34.3", default-features = false, features = [
+egui_extras = { version = "0.35.0", default-features = false, features = [
     "svg_text",
 ] }
-egui_plot = "0.35.0"
+egui_plot = "0.36.0"
 ndarray = "0.16.1"
-ratex-layout = "0.1.9"
-ratex-parser = "0.1.9"
-ratex-svg = { version = "0.1.9", features = ["embed-fonts"] }
-ratex-types = "0.1.9"
+ratex-layout = "0.1.13"
+ratex-parser = "0.1.13"
+ratex-svg = { version = "0.1.13", features = ["embed-fonts"] }
+ratex-types = "0.1.13"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 stochastic_optimizers = "0.3.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.34.1", default-features = false, features = [
+eframe = { version = "0.35.0", default-features = false, features = [
     "default_fonts",
     "glow",
     "x11",
     "wayland",
 ] }
-egui-file-dialog = "0.13.0"
+egui-file-dialog = "0.14.1"
 sys-locale = "0.3.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-eframe = { version = "0.34.3", default-features = false, features = [
+eframe = { version = "0.35.0", default-features = false, features = [
     "default_fonts",
     "glow",
 ] }
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
-wasm-bindgen = "0.2.122"
-wasm-bindgen-futures = "0.4.72"
+wasm-bindgen = "0.2.126"
+wasm-bindgen-futures = "0.4.76"
 web-time = "1.1.0"
-web-sys = { version = "0.3.99", features = [
+web-sys = { version = "0.3.103", features = [
     "Clipboard",
     "Document",
     "Element",

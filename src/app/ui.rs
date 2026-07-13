@@ -72,7 +72,7 @@ impl CurveFitApp {
 
     pub(super) fn panel_card_collapsible(
         ui: &mut egui::Ui,
-        id_salt: impl std::hash::Hash,
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
         title: impl Into<egui::WidgetText>,
         add_body: impl FnOnce(&mut egui::Ui),
     ) {
@@ -91,7 +91,7 @@ impl CurveFitApp {
     pub(super) fn panel_card_collapsible_with_collapsed_trailing<State>(
         state: &mut State,
         ui: &mut egui::Ui,
-        id_salt: impl std::hash::Hash,
+        id_salt: impl std::hash::Hash + std::fmt::Debug,
         title: impl Into<egui::WidgetText>,
         add_body: impl FnOnce(&mut State, &mut egui::Ui),
         add_collapsed_trailing: impl FnOnce(&mut State, &mut egui::Ui),

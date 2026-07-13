@@ -39,13 +39,13 @@ impl eframe::App for CurveFitApp {
 
         egui::Panel::top("header_panel")
             .frame(Self::top_bottom_panel_frame(panel_style))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.ui_header(ui);
             });
 
         egui::Panel::bottom("status_bar")
             .frame(Self::top_bottom_panel_frame(panel_style))
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 self.ui_status_bar(ui);
             });
 
@@ -56,7 +56,7 @@ impl eframe::App for CurveFitApp {
                 .max_size(LEFT_PANEL_MAX_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let language = self.ui_language;
                     Self::setup_side_panel_content(ui);
                     Self::panel_card_collapsible(
@@ -92,7 +92,7 @@ impl eframe::App for CurveFitApp {
                 .min_size(RIGHT_PANEL_MIN_WIDTH)
                 .resizable(true)
                 .frame(Self::side_panel_frame(panel_style))
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let language = self.ui_language;
                     Self::right_side_panel_scroll_area(ui, |ui| {
                         Self::panel_card_collapsible_with_collapsed_trailing(
@@ -140,14 +140,14 @@ impl eframe::App for CurveFitApp {
                 .default_size(DIAGNOSTICS_PANEL_DEFAULT_HEIGHT)
                 .min_size(DIAGNOSTICS_PANEL_MIN_HEIGHT)
                 .frame(Self::top_bottom_panel_frame(panel_style))
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     let available_height = ui.available_height();
                     ui.set_height(available_height);
                     self.ui_iteration_diagnostics(ui);
                 });
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             self.ui_plot(ui, ui.available_height().max(2.0));
         });
     }
