@@ -120,6 +120,43 @@ fn simd_perf_gate() {
         poly_grad_ratio
     );
 
+    let poly_value_gradient_separate = measure_cost(120, || {
+        poly_gradient.fill(0.0);
+        let value = simd_bench::polynomial_cost_simd(&poly_param, &poly_x, &poly_y, loss_metric);
+        simd_bench::polynomial_gradient_simd(
+            &poly_x,
+            &poly_y,
+            &poly_param,
+            loss_metric,
+            &mut poly_gradient,
+        );
+        black_box(&poly_gradient);
+        value
+    });
+    let poly_value_gradient_fused = measure_cost(120, || {
+        poly_gradient.fill(0.0);
+        let value = simd_bench::polynomial_value_gradient_simd(
+            &poly_x,
+            &poly_y,
+            &poly_param,
+            loss_metric,
+            &mut poly_gradient,
+        );
+        black_box(&poly_gradient);
+        value
+    });
+    let poly_value_gradient_ratio =
+        speedup_ratio(poly_value_gradient_separate, poly_value_gradient_fused);
+    println!(
+        "Polynomial fused value+gradient speedup: {:.3}x (separate={:?}, fused={:?})",
+        poly_value_gradient_ratio, poly_value_gradient_separate, poly_value_gradient_fused
+    );
+    assert!(
+        poly_value_gradient_ratio >= 1.25,
+        "Polynomial fused value+gradient speedup is below threshold: {:.3}x",
+        poly_value_gradient_ratio
+    );
+
     let (inverse_param, inverse_x, inverse_y) = inverse_dataset();
     let inverse_cost_scalar = measure_cost(200, || {
         simd_bench::inverse_cost_scalar(&inverse_param, &inverse_x, &inverse_y, loss_metric)
@@ -170,5 +207,45 @@ fn simd_perf_gate() {
         inverse_grad_ratio >= 1.25,
         "Inverse gradient speedup is below threshold: {:.3}x",
         inverse_grad_ratio
+    );
+
+    let inverse_value_gradient_separate = measure_cost(200, || {
+        inverse_gradient.fill(0.0);
+        let value =
+            simd_bench::inverse_cost_simd(&inverse_param, &inverse_x, &inverse_y, loss_metric);
+        simd_bench::inverse_gradient_simd(
+            &inverse_x,
+            &inverse_y,
+            &inverse_param,
+            loss_metric,
+            &mut inverse_gradient,
+        );
+        black_box(&inverse_gradient);
+        value
+    });
+    let inverse_value_gradient_fused = measure_cost(200, || {
+        inverse_gradient.fill(0.0);
+        let value = simd_bench::inverse_value_gradient_simd(
+            &inverse_x,
+            &inverse_y,
+            &inverse_param,
+            loss_metric,
+            &mut inverse_gradient,
+        );
+        black_box(&inverse_gradient);
+        value
+    });
+    let inverse_value_gradient_ratio = speedup_ratio(
+        inverse_value_gradient_separate,
+        inverse_value_gradient_fused,
+    );
+    println!(
+        "Inverse fused value+gradient speedup: {:.3}x (separate={:?}, fused={:?})",
+        inverse_value_gradient_ratio, inverse_value_gradient_separate, inverse_value_gradient_fused
+    );
+    assert!(
+        inverse_value_gradient_ratio >= 1.25,
+        "Inverse fused value+gradient speedup is below threshold: {:.3}x",
+        inverse_value_gradient_ratio
     );
 }

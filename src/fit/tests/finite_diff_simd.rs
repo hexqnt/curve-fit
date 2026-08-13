@@ -322,6 +322,66 @@ fn simd_inverse_gradient_matches_scalar_reference_for_all_loss_metrics() {
 }
 
 #[test]
+fn fused_simd_polynomial_value_gradient_matches_separate_kernels() {
+    let (param, x_values, y_values) = test_xy_for_polynomial();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let expected_value = simd::polynomial_cost_simd(&param, &x_values, &y_values, loss_metric);
+        let mut expected_gradient = vec![0.0; param.len()];
+        simd::accumulate_polynomial_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut expected_gradient,
+        );
+
+        let mut gradient = vec![0.0; param.len()];
+        let value = simd::polynomial_value_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut gradient,
+        );
+
+        assert_close(value, expected_value, 1e-10, 1e-10);
+        for (actual, expected) in gradient.iter().zip(expected_gradient.iter()) {
+            assert_close(*actual, *expected, 1e-7, 1e-7);
+        }
+    }
+}
+
+#[test]
+fn fused_simd_inverse_value_gradient_matches_separate_kernels() {
+    let (param, x_values, y_values) = test_xy_for_inverse();
+    for loss_metric in OptimizationLossMetric::ALL {
+        let expected_value = simd::inverse_cost_simd(&param, &x_values, &y_values, loss_metric);
+        let mut expected_gradient = vec![0.0; param.len()];
+        simd::accumulate_inverse_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut expected_gradient,
+        );
+
+        let mut gradient = vec![0.0; param.len()];
+        let value = simd::inverse_value_gradient_simd(
+            &x_values,
+            &y_values,
+            &param,
+            loss_metric,
+            &mut gradient,
+        );
+
+        assert_close(value, expected_value, 1e-10, 1e-10);
+        for (actual, expected) in gradient.iter().zip(expected_gradient.iter()) {
+            assert_close(*actual, *expected, 1e-8, 1e-8);
+        }
+    }
+}
+
+#[test]
 fn polynomial_cost_with_quantization_uses_quantized_scalar_pipeline() {
     use argmin::core::CostFunction;
 

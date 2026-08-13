@@ -167,6 +167,26 @@ pub mod simd_bench {
     ) {
         simd::accumulate_inverse_gradient_simd(x_values, y_values, param, loss_metric, gradient);
     }
+
+    pub fn polynomial_value_gradient_simd(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) -> f64 {
+        simd::polynomial_value_gradient_simd(x_values, y_values, param, loss_metric, gradient)
+    }
+
+    pub fn inverse_value_gradient_simd(
+        x_values: &[f64],
+        y_values: &[f64],
+        param: &[f64],
+        loss_metric: OptimizationLossMetric,
+        gradient: &mut [f64],
+    ) -> f64 {
+        simd::inverse_value_gradient_simd(x_values, y_values, param, loss_metric, gradient)
+    }
 }
 
 #[cfg(test)]

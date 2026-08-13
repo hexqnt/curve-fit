@@ -151,7 +151,7 @@ impl Gradient for CurveProblem {
                 *value = LARGE_COST;
             }
         }
-        Ok(vec_to_array1(&gradient))
+        Ok(Array1::from_vec(gradient))
     }
 }
 
@@ -267,6 +267,14 @@ impl TermValue for CurveProblemTerm<'_> {
     }
 }
 
+#[inline]
+fn add_scaled_gradient(accumulator: &mut [f64], local: &[f64], scale: f64) {
+    debug_assert_eq!(accumulator.len(), local.len());
+    for (accumulator, &local) in accumulator.iter_mut().zip(local) {
+        *accumulator += local * scale;
+    }
+}
+
 impl TermGrad for CurveProblemTerm<'_> {
     fn add_value_grad(&self, param: &[f64], value: &mut f64, gradient: &mut [f64]) {
         if self.simd_enabled() && self.problem.family.is_polynomial() {
@@ -274,7 +282,7 @@ impl TermGrad for CurveProblemTerm<'_> {
             debug_assert!(parameter_count <= MAX_POLYNOMIAL_PARAMS);
             let mut local_gradient = [0.0; MAX_POLYNOMIAL_PARAMS];
             let local_gradient = &mut local_gradient[..parameter_count];
-            simd::accumulate_polynomial_gradient(
+            let local_value = simd::polynomial_value_gradient(
                 self.problem.point_x.as_ref(),
                 self.problem.point_y.as_ref(),
                 param,
@@ -282,22 +290,13 @@ impl TermGrad for CurveProblemTerm<'_> {
                 local_gradient,
             );
             let sample_scale = 1.0 / self.problem.point_x.len() as f64;
-            *value += simd::polynomial_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            for (gradient_value, local_value) in
-                gradient.iter_mut().zip(local_gradient.iter().copied())
-            {
-                *gradient_value += local_value * sample_scale;
-            }
+            *value += local_value;
+            add_scaled_gradient(gradient, local_gradient, sample_scale);
             return;
         }
         if self.simd_enabled() && self.problem.family == CurveFamily::Inverse {
             let mut local_gradient = [0.0; 2];
-            simd::accumulate_inverse_gradient(
+            let local_value = simd::inverse_value_gradient(
                 self.problem.point_x.as_ref(),
                 self.problem.point_y.as_ref(),
                 param,
@@ -305,18 +304,8 @@ impl TermGrad for CurveProblemTerm<'_> {
                 &mut local_gradient,
             );
             let sample_scale = 1.0 / self.problem.point_x.len() as f64;
-            for local_value in &mut local_gradient {
-                *local_value *= sample_scale;
-            }
-            *value += simd::inverse_cost(
-                param,
-                self.problem.point_x.as_ref(),
-                self.problem.point_y.as_ref(),
-                self.problem.loss_metric,
-            );
-            for (gradient_value, local_value) in gradient.iter_mut().zip(local_gradient) {
-                *gradient_value += local_value;
-            }
+            *value += local_value;
+            add_scaled_gradient(gradient, &local_gradient, sample_scale);
             return;
         }
         self.fallback_term().add_value_grad(param, value, gradient);
