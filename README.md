@@ -1,52 +1,67 @@
 # curve-fit
 
-`curve-fit` — учебное приложение для подбора параметров кривой по набору точек.
-Главная цель проекта: нарабатывать интуицию о том, как ведут себя разные модели и оптимизаторы
-на реальных и синтетических данных.
-
-Проект не пытается быть “production-утилитой” для универсального фитинга: это песочница для экспериментов и обучения.
+[English](./README.md) · [Русский](./README.ru.md)
 
 [![CI](https://github.com/hexqnt/curve-fit/actions/workflows/ci.yml/badge.svg)](https://github.com/hexqnt/curve-fit/actions/workflows/ci.yml)
 
+`curve-fit` is an educational application for fitting curves to real or synthetic data. It provides an interactive way to explore how different models, optimizers, and loss functions affect the result and convergence process.
+
+Try the [web version](https://curve-fit.hexq.ru) or install the desktop application for better performance on larger datasets.
+
 ![curve-fit screenshot](images/curve-fit-screenshot.png)
 
-## Что внутри
+## Features
 
-- Параметрические семейства:
-  - полиномы, экспоненциальные, сигмоиды, пиковые модели, степенные, двухэкспоненциальные и осциллирующие (затухающая синусоида),
-  - cплайны: линейный, монотонный кубический (PCHIP), натуральный кубический, Akima.
-- Несколько оптимизаторов и метрик лосса для сравнения динамики сходимости.
-- Диагностика итераций и визуализация результата в интерактивном UI.
+- Parametric models, including polynomial, exponential, sigmoid, peak, power, bi-exponential, and damped oscillation models.
+- Linear, PCHIP, natural cubic, and Akima splines.
+- Multiple optimizers and loss functions.
+- Interactive plots, iteration diagnostics, and data import and export.
 
-## Desktop vs Web
+`curve-fit` is designed as a learning and experimentation tool, not as a general-purpose production fitting library.
 
-Десктопная версия имеет:
+## Install a prebuilt release
 
-- чуть выше производительность
-- меньше риск подвисаний во время обучения (фитинга)
+Download the archive for your platform from the [latest GitHub release](https://github.com/hexqnt/curve-fit/releases/latest):
 
-## Run Desktop
+| Platform            | Archive suffix       | Executable      |
+| ------------------- | -------------------- | --------------- |
+| Linux x86-64        | `linux-x86_64.zip`   | `curve-fit`     |
+| macOS Apple silicon | `macos-aarch64.zip`  | `curve-fit`     |
+| Windows x86-64      | `windows-x86_64.zip` | `curve-fit.exe` |
+
+Extract the archive, then launch the executable. On Linux or macOS, you can run it from a terminal:
 
 ```bash
-cargo run
+chmod +x curve-fit
+./curve-fit
 ```
 
-## Run Web (wasm)
+On Windows, double-click `curve-fit.exe` or run it from PowerShell:
 
-1. Установить target:
-
-```bash
-rustup target add wasm32-unknown-unknown
+```powershell
+.\curve-fit.exe
 ```
 
-1. Установить `trunk` (если не установлен):
+If macOS blocks the first launch, allow the application in **System Settings → Privacy & Security**, then open it again.
+
+## Install from source
+
+Install [Rust](https://rustup.rs), then install and run `curve-fit` with the nightly toolchain:
 
 ```bash
-cargo install trunk
+rustup toolchain install nightly
+cargo +nightly install --git https://github.com/hexqnt/curve-fit --locked
+curve-fit
 ```
 
-1. Запустить web-версию:
+On Linux, compiling may also require the X11, Wayland, and OpenGL development packages provided by your distribution.
+
+## Run the web version locally
+
+Clone the repository, then run:
 
 ```bash
-trunk serve
+rustup target add --toolchain nightly wasm32-unknown-unknown
+cargo install trunk --locked
+trunk serve --open
 ```
