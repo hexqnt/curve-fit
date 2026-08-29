@@ -1,6 +1,6 @@
 # curve-fit
 
-[English](./README.md) · [Русский](./README.ru.md)
+[🇺🇸 English](./README.md) · [🇷🇺 Русский](./README.ru.md)
 
 [![CI](https://github.com/hexqnt/curve-fit/actions/workflows/ci.yml/badge.svg)](https://github.com/hexqnt/curve-fit/actions/workflows/ci.yml)
 
