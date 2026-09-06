@@ -1,7 +1,7 @@
 //! Парсинг и сериализация текстового и clipboard-представления точек.
 
 use std::borrow::Cow;
-use std::fmt::Write as _;
+use std::fmt::{Display, Write as _};
 
 use egui_plot::PlotPoint;
 
@@ -64,7 +64,7 @@ impl<'a> Iterator for ClipboardNumericTokens<'a> {
     }
 }
 
-pub(super) fn parse_f64(field_name: &str, raw_value: &str) -> Result<f64, String> {
+pub(super) fn parse_f64(field_name: impl Display, raw_value: &str) -> Result<f64, String> {
     let trimmed = raw_value.trim();
     if trimmed.is_empty() {
         return Err(format!("Field '{field_name}' is empty"));
@@ -82,7 +82,7 @@ pub(super) fn parse_f64(field_name: &str, raw_value: &str) -> Result<f64, String
 }
 
 fn parse_line_coordinate(line_number: usize, axis: &str, raw_value: &str) -> Result<f64, String> {
-    parse_f64(&format!("line {line_number} {axis}"), raw_value)
+    parse_f64(format_args!("line {line_number} {axis}"), raw_value)
 }
 
 fn parse_line_point_values(line_number: usize, x_raw: &str, y_raw: &str) -> Result<Point, String> {

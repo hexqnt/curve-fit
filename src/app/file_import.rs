@@ -336,20 +336,22 @@ fn parse_points_from_csv_bytes(file_bytes: &[u8]) -> Result<Vec<Point>, String> 
         .has_headers(false)
         .flexible(true)
         .delimiter(delimiter)
-        .from_reader(std::io::Cursor::new(normalized));
+        .from_reader(normalized);
 
     let mut points = Vec::new();
-    for (line_index, record_result) in reader.byte_records().enumerate() {
-        let line_number = line_index + 1;
-        let record = record_result
-            .map_err(|error| format!("CSV parse error at line {line_number}: {error}"))?;
-
+    let mut record = csv::ByteRecord::new();
+    let mut line_number = 1;
+    while reader
+        .read_byte_record(&mut record)
+        .map_err(|error| format!("CSV parse error at line {line_number}: {error}"))?
+    {
         if let Some(point) = parse_point_from_clipboard_like_fragments(
             line_number,
             record.iter().map(String::from_utf8_lossy),
         )? {
             points.push(point);
         }
+        line_number += 1;
     }
 
     if points.is_empty() {
@@ -426,11 +428,7 @@ fn spreadsheet_cell_to_text(cell: &Data) -> Cow<'_, str> {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn strip_utf8_bom(file_bytes: &[u8]) -> &[u8] {
-    if file_bytes.starts_with(&UTF8_BOM) {
-        &file_bytes[UTF8_BOM.len()..]
-    } else {
-        file_bytes
-    }
+    file_bytes.strip_prefix(&UTF8_BOM).unwrap_or(file_bytes)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -119,10 +119,11 @@ impl CurveFitApp {
         ParsedSplineInitialKnotY::parse(&self.spline_initial_knot_y_inputs, expected_count)
     }
 }
+
 fn parse_indexed_f64_inputs(inputs: &[String], field_prefix: &str) -> Result<Vec<f64>, String> {
     inputs
         .iter()
         .enumerate()
-        .map(|(index, raw_value)| parse_f64(&format!("{field_prefix}[{index}]"), raw_value))
+        .map(|(index, raw_value)| parse_f64(format_args!("{field_prefix}[{index}]"), raw_value))
         .collect()
 }

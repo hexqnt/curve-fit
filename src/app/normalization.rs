@@ -143,9 +143,8 @@ impl ParametricNormalization {
     }
 
     fn transform_polynomial_params(self, values: &mut [f64], direction: ScaleDirection) {
-        let degree = values.len() - 1;
-        for (index, value) in values.iter_mut().enumerate() {
-            let power = (degree - index) as i32;
+        for (power, value) in values.iter_mut().rev().enumerate() {
+            let power = power as i32;
             self.transform_value(value, ParamScale::new(power, -1), direction);
         }
     }
@@ -170,14 +169,11 @@ impl ParametricNormalization {
             return;
         }
 
-        let numerator_len = degree + 1;
-        for (index, value) in values.iter_mut().enumerate().take(numerator_len) {
-            let power = (degree - index) as i32;
-            self.transform_value(value, ParamScale::new(power, -1), direction);
-        }
+        let (numerator, denominator) = values.split_at_mut(degree + 1);
+        self.transform_polynomial_params(numerator, direction);
 
-        for (index, value) in values.iter_mut().enumerate().skip(numerator_len) {
-            let power = (index - degree) as i32;
+        for (index, value) in denominator.iter_mut().enumerate() {
+            let power = (index + 1) as i32;
             self.transform_value(value, ParamScale::new(power, 0), direction);
         }
     }
