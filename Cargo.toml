@@ -11,6 +11,22 @@ readme = "README.md"
 keywords = ["curve-fitting", "spline", "optimization", "egui", "wasm"]
 categories = ["science", "mathematics", "visualization", "gui"]
 
+[workspace]
+members = ["tools/test-support", "tools/tests"]
+default-members = [".", "tools/tests"]
+resolver = "3"
+
+[workspace.dependencies]
+curve-fit = { path = "." }
+curve-fit-test-support = { path = "tools/test-support" }
+egui_kittest = { version = "0.36.2", features = ["eframe"] }
+eframe = { version = "0.36.2", default-features = false }
+
+[features]
+default = []
+# Наблюдение состояния и дополнительные имена UI-элементов для тестовой инфраструктуры.
+testing = []
+
 [dependencies]
 argmin = { version = "0.11.0", default-features = false }
 argmin-math = { version = "0.5.1", default-features = false, features = [
@@ -34,7 +50,7 @@ serde_json = "1.0.151"
 stochastic_optimizers = "0.3.0"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-eframe = { version = "0.36.1", default-features = false, features = [
+eframe = { workspace = true, features = [
     "default_fonts",
     "glow",
     "x11",
@@ -44,7 +60,7 @@ egui-file-dialog = "0.15.0"
 sys-locale = "0.3.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-eframe = { version = "0.36.1", default-features = false, features = [
+eframe = { workspace = true, features = [
     "default_fonts",
     "glow",
 ] }

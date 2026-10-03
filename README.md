@@ -65,3 +65,13 @@ rustup target add --toolchain nightly wasm32-unknown-unknown
 cargo install trunk --locked
 trunk serve --open
 ```
+
+## Tests
+
+```bash
+cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+cargo test -p curve-fit-ui-tests
+cargo test -p curve-fit-ui-tests --test ui layers
+```

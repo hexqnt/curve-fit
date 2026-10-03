@@ -5,9 +5,13 @@ use super::*;
 impl CurveFitApp {
     /// Создает приложение и настраивает загрузчики изображений для иконок/формул.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        egui_extras::install_image_loaders(&cc.egui_ctx);
+        Self::with_language(&cc.egui_ctx, UiLanguage::from_system_locale())
+    }
+
+    pub(super) fn with_language(ctx: &egui::Context, ui_language: UiLanguage) -> Self {
+        egui_extras::install_image_loaders(ctx);
         Self {
-            ui_language: UiLanguage::from_system_locale(),
+            ui_language,
             ..Self::default()
         }
     }

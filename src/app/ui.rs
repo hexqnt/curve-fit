@@ -224,9 +224,18 @@ impl CurveFitApp {
         on: &mut bool,
         label: impl Into<egui::WidgetText>,
     ) -> egui::Response {
+        let label = label.into();
         ui.horizontal(|ui| {
             let switch_response = Self::toggle_switch(ui, on);
-            ui.label(label);
+            #[cfg(feature = "testing")]
+            switch_response
+                .ctx
+                .accesskit_node_builder(switch_response.id, |node| {
+                    node.set_label(label.text());
+                });
+            let _label_response = ui.label(label);
+            #[cfg(feature = "testing")]
+            let switch_response = switch_response.labelled_by(_label_response.id);
             switch_response
         })
         .inner

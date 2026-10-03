@@ -175,12 +175,14 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .spacing(egui::vec2(8.0, 6.0))
             .show(ui, |ui| {
                 for (index, parameter_name) in family.parameter_names().iter().enumerate() {
-                    ui.label(*parameter_name);
-                    ui.add_enabled(
+                    let _label = ui.label(*parameter_name);
+                    let _input = ui.add_enabled(
                         can_edit_params,
                         egui::TextEdit::singleline(&mut app.parameter_inputs[index])
                             .desired_width(120.0),
                     );
+                    #[cfg(feature = "testing")]
+                    _input.labelled_by(_label.id);
                     ui.end_row();
                 }
             });

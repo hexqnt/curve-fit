@@ -174,5 +174,8 @@ const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const APP_REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const REPLAY_FAST_REPAINT_INTERVAL_MS: u64 = 16;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
 #[cfg(test)]
 mod tests;

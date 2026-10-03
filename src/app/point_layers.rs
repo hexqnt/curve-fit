@@ -16,7 +16,7 @@ const LAYER_COLOR_PALETTE: [egui::Color32; 8] = [
 
 /// Стабильный идентификатор слоя точек.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct PointLayerId(u64);
+pub struct PointLayerId(u64);
 
 impl PointLayerId {
     fn first() -> Self {

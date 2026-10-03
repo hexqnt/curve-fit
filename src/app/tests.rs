@@ -16,11 +16,10 @@ use egui_plot::PlotPoint;
 #[cfg(not(target_arch = "wasm32"))]
 use super::FitWorkerMessage;
 use super::{
-    CLIPBOARD_IMPORT_ERROR_PREFIX, CurveFitApp, DiagnosticsTab, ExtendedMetrics, FitRunUiSeed,
-    IterationDiagnostics, ModelChoice, OptimizerMethod, OptimizerPreset, POINTS_PARSE_ERROR_PREFIX,
-    POINTS_POSITIVE_AXIS_EPS, ParamInitMethod, ParametricIterationTraceEntry, PointsEditorState,
-    ReplayFrame, ReplayFramePayload, ReplayState, StatusMessage, UiLanguage,
-    data_based_params_for_family, dialog_directory_from_path,
+    CurveFitApp, DiagnosticsTab, ExtendedMetrics, FitRunUiSeed, IterationDiagnostics, ModelChoice,
+    OptimizerMethod, POINTS_PARSE_ERROR_PREFIX, POINTS_POSITIVE_AXIS_EPS, ParamInitMethod,
+    ParametricIterationTraceEntry, PointsEditorState, ReplayFrame, ReplayFramePayload, ReplayState,
+    StatusMessage, UiLanguage, data_based_params_for_family, dialog_directory_from_path,
 };
 use crate::domain::{CurveFamily, CurveParams, FitResult, OptimizerConfig, Point, Points};
 use crate::fit::{

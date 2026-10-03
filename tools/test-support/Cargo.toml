@@ -1,0 +1,11 @@
+[package]
+name = "curve-fit-test-support"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+curve-fit = { workspace = true, features = ["testing"] }
+egui_kittest.workspace = true
+eframe.workspace = true

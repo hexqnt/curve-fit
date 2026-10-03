@@ -3,6 +3,8 @@
 //! Публичный API библиотеки для подгонки параметрических кривых и сплайнов.
 
 pub use app::CurveFitApp;
+#[cfg(feature = "testing")]
+pub use app::testing;
 pub use domain::{
     AdamConfig, CurveFamily, CurveParams, FitResult, InputError, LbfgsConfig, NelderMeadConfig,
     NewtonCgConfig, OptimizerConfig, OptimizerMethod, Point, Points, SgdConfig,

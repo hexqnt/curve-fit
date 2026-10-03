@@ -229,6 +229,12 @@ pub(super) fn ui_point_layers(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                             false,
                         )
                     };
+                    #[cfg(feature = "testing")]
+                    if is_text_field {
+                        ui.ctx().accesskit_node_builder(name_response.id, |node| {
+                            node.set_label(tr(language, "Layer name", "Название слоя"));
+                        });
+                    }
                     if name_response.clicked() {
                         should_select = true;
                     }
@@ -597,6 +603,10 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     .layouter(&mut layouter)
                     .interactive(can_edit_points),
             );
+            #[cfg(feature = "testing")]
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_label(tr(language, "Input points", "Ввод точек"));
+            });
             let response = CurveFitApp::info_hover(response, points_input_hint(language));
             if response.changed() {
                 app.push_points_undo_snapshot(before_edit);
@@ -705,6 +715,10 @@ fn toolbar_icon_button(icon: egui::Image<'static>) -> egui::Button<'static> {
 }
 
 fn toolbar_hover_tooltip(response: egui::Response, text: &'static str) -> egui::Response {
+    #[cfg(feature = "testing")]
+    response.ctx.accesskit_node_builder(response.id, |node| {
+        node.set_label(text.lines().next().unwrap_or(text));
+    });
     response.on_hover_ui(|ui| {
         ui.set_max_width(360.0);
         ui.spacing_mut().item_spacing.y = 3.0;
