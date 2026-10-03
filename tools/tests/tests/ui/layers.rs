@@ -51,7 +51,10 @@ fn selected_layer_only_editing_preserves_other_layers() {
     );
     assert_eq!(state(&harness).selected_layer.points_text, "10 20\n30 40\n");
 
-    click(&mut harness, "Layer 1");
+    harness
+        .get_by_role_and_label(Role::Label, "Layer 1")
+        .click();
+    harness.run();
     assert_eq!(state(&harness).selected_layer_index, 0);
     assert_eq!(
         harness.get_by_label("Input points").value().as_deref(),
