@@ -13,8 +13,6 @@ mod initialization;
 mod layers;
 mod optimizer;
 mod points;
-#[cfg(target_os = "linux")]
-mod visual;
 mod windows;
 
 fn click(harness: &mut AppHarness, label: &str) {

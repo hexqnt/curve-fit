@@ -1,3 +1,0 @@
-output_path = "tests/ui/snapshots"
-threshold = 0.6
-max_failed_pixels = 0

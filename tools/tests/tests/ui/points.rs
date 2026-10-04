@@ -24,6 +24,21 @@ fn points_editor_paste_preserves_unicode_history_and_clears_redo_on_new_edit() {
         );
         harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
         harness.run();
+        // Дожидаемся отложенного парсинга: подпись ошибки не должна сбрасывать фокус и выделение.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while harness.query_by_label("Parse error at line 3").is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "Parse error did not appear in time"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+            harness.step();
+        }
+        assert!(
+            harness
+                .get_by_role_and_label(Role::MultilineTextInput, "Input points")
+                .is_focused()
+        );
         harness
             .input_mut()
             .events

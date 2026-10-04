@@ -47,7 +47,6 @@ jobs:
             libxinerama-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
-            mesa-vulkan-drivers \
             libxcb-shape0-dev \
             libxcb-xfixes0-dev
 

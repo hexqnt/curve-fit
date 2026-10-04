@@ -591,12 +591,15 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 }
                 ui.fonts_mut(|fonts| fonts.layout_job(job))
             };
+            // Подписи ошибок меняют порядок виджетов, поэтому фокус и выделение привязываем к слою.
+            let editor_id = egui::Id::new(("points_text_editor", app.selected_layer().id));
             let points_editor = app.selected_points_editor_mut();
             // До первого изменения заимствуем текст, чтобы не копировать его на каждом кадре.
             let mut text = Cow::Borrowed(points_editor.text.as_str());
             let response = ui.add_enabled(
                 can_edit_points,
                 egui::TextEdit::multiline(&mut text)
+                    .id(editor_id)
                     .desired_width(text_width)
                     .desired_rows(desired_rows)
                     .font(egui::TextStyle::Monospace)
