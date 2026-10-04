@@ -55,7 +55,7 @@ fn auto_refit_pending_rerun_starts_after_fit_transitions_to_idle() {
     app.run_fit();
     assert!(app.fit_in_progress);
 
-    app.parameter_inputs[0] = "0.1".to_string();
+    app.parameter_inputs[0] = "0.1".into();
     app.track_right_panel_fit_changes_and_maybe_refit();
     assert!(app.auto_refit_pending_rerun);
 

@@ -181,19 +181,19 @@ impl VisualPalette {
     }
 }
 
-impl CurveFitApp {
-    pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::symmetric(
-                PANEL_INNER_MARGIN_X,
-                PANEL_INNER_MARGIN_Y,
-            ))
-            .outer_margin(egui::Margin::symmetric(0, PANEL_CARD_OUTER_MARGIN_Y))
-            .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
-            .fill(ui.visuals().faint_bg_color)
-            .stroke(stroke(ui.visuals().widgets.noninteractive.bg_stroke.color))
-    }
+pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(
+            PANEL_INNER_MARGIN_X,
+            PANEL_INNER_MARGIN_Y,
+        ))
+        .outer_margin(egui::Margin::symmetric(0, PANEL_CARD_OUTER_MARGIN_Y))
+        .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
+        .fill(ui.visuals().faint_bg_color)
+        .stroke(stroke(ui.visuals().widgets.noninteractive.bg_stroke.color))
+}
 
+impl CurveFitApp {
     /// Применяет единый визуальный стиль приложения.
     pub(super) fn apply_visual_style(ctx: &egui::Context) {
         ctx.global_style_mut(|style| {

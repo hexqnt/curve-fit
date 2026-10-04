@@ -2,8 +2,8 @@
 
 use std::borrow::Cow;
 
-use super::components::ToggleSwitch;
 use super::*;
+use crate::app::widgets::{Choice, ToggleSwitch};
 
 const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
 
@@ -15,7 +15,7 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             ui,
             egui::ComboBox::from_label(tr(language, "Metric", "Метрика")),
         );
-        let _ = components::info_hover(
+        let _ = widgets::info_hover(
             metric_response,
             tr(
                 language,
@@ -33,7 +33,7 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         );
         let quantization_response =
             ui.add(ToggleSwitch::new(&mut app.metric_quantization_enabled).label(label));
-        let _ = components::info_hover(
+        let _ = widgets::info_hover(
             quantization_response,
             tr(
                 language,
@@ -72,21 +72,12 @@ fn ui_optimization_metric_selector(
     selector: egui::ComboBox,
 ) -> egui::Response {
     let language = app.ui_language;
-    selector
-        .selected_text(optimization_loss_metric_label(
-            language,
-            app.optimization_loss_metric,
-        ))
-        .show_ui(ui, |ui| {
-            for metric in OptimizationLossMetric::ALL {
-                ui.selectable_value(
-                    &mut app.optimization_loss_metric,
-                    metric,
-                    optimization_loss_metric_label(language, metric),
-                );
-            }
-        })
-        .response
+    ui.add(Choice::new(
+        selector,
+        &mut app.optimization_loss_metric,
+        &OptimizationLossMetric::ALL,
+        |metric| optimization_loss_metric_label(language, metric),
+    ))
 }
 
 pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {

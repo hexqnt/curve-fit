@@ -9,20 +9,20 @@ use crate::app::{
 };
 
 #[derive(Clone, Copy)]
-pub(in crate::app::ui) enum FitAction {
+pub(in crate::app) enum FitAction {
     Fit,
     Stop,
 }
 
 #[must_use = "Add this widget to a UI with ui.add(widget)"]
-pub(in crate::app::ui) struct FitActionButton {
+pub(in crate::app) struct FitActionButton {
     language: UiLanguage,
     action: FitAction,
     min_size: egui::Vec2,
 }
 
 impl FitActionButton {
-    pub(in crate::app::ui) fn new(language: UiLanguage, action: FitAction) -> Self {
+    pub(in crate::app) fn new(language: UiLanguage, action: FitAction) -> Self {
         Self {
             language,
             action,
@@ -30,7 +30,7 @@ impl FitActionButton {
         }
     }
 
-    pub(in crate::app::ui) fn min_size(mut self, size: egui::Vec2) -> Self {
+    pub(in crate::app) fn min_size(mut self, size: egui::Vec2) -> Self {
         self.min_size = size;
         self
     }

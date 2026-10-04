@@ -207,7 +207,7 @@ fn auto_refit_runs_after_parameter_edit_and_can_be_disabled() {
         .get_by_role_and_label(Role::TextInput, "a")
         .type_text("0.5");
     harness.run_steps(2);
-    assert_eq!(state(&harness).parameter_inputs[0], "0.5");
+    assert_eq!(&state(&harness).parameter_inputs[0], "0.5");
     assert!(state(&harness).fit_in_progress);
     pause.resume();
     wait_for_fit(&mut harness);

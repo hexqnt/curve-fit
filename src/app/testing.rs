@@ -28,12 +28,35 @@ impl<'a> From<&'a PointLayer> for LayerState<'a> {
     }
 }
 
+/// Заимствованный текст числовых черновиков без копирования или доступа к мутации.
+#[derive(Debug, Clone, Copy)]
+pub struct ParameterInputs<'a>(&'a [super::NumberDraft]);
+
+impl<'a> ParameterInputs<'a> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn iter(self) -> impl ExactSizeIterator<Item = &'a str> + DoubleEndedIterator {
+        self.0.iter().map(super::NumberDraft::text)
+    }
+}
+
+impl std::ops::Index<usize> for ParameterInputs<'_> {
+    type Output = str;
+    fn index(&self, index: usize) -> &Self::Output {
+        self.0[index].text()
+    }
+}
+
 #[derive(Debug)]
 pub struct AppState<'a> {
     layers: &'a [PointLayer],
     pub selected_layer_index: usize,
     pub selected_layer: LayerState<'a>,
-    pub parameter_inputs: &'a [String],
+    pub parameter_inputs: ParameterInputs<'a>,
     pub optimizer_method: OptimizerMethod,
     pub error: Option<&'a str>,
     pub fit_in_progress: bool,
@@ -65,7 +88,7 @@ impl CurveFitApp {
             layers: &self.point_layers.layers,
             selected_layer_index: self.point_layers.selected_index(),
             selected_layer: LayerState::from(self.selected_layer()),
-            parameter_inputs: &self.parameter_inputs,
+            parameter_inputs: ParameterInputs(&self.parameter_inputs),
             optimizer_method: self.optimizer_method,
             error: match &self.status {
                 Some(StatusMessage::Error(error)) => Some(error),

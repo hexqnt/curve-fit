@@ -153,10 +153,10 @@ pub(super) fn dialog_directory_from_path(path: &Path) -> Option<PathBuf> {
     path.parent().map(Path::to_path_buf)
 }
 
-pub(super) fn params_to_input_strings(params: &CurveParams) -> Vec<String> {
-    params.with_values(|values| values.iter().map(|value| value.to_string()).collect())
+pub(super) fn params_to_input_drafts(params: &CurveParams) -> Vec<NumberDraft> {
+    params.with_values(|values| values.iter().copied().map(NumberDraft::from).collect())
 }
 
-pub(super) fn tau_grid_to_input_strings(values: &[f64]) -> Vec<String> {
-    values.iter().map(|value| value.to_string()).collect()
+pub(super) fn tau_grid_to_input_drafts(values: &[f64]) -> Vec<NumberDraft> {
+    values.iter().copied().map(NumberDraft::from).collect()
 }

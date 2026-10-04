@@ -90,7 +90,7 @@ fn fitted_initialization_is_disabled_without_a_fit() {
 fn parameter_inputs_keep_focus_and_values_across_model_controls() {
     let mut harness = harness();
     replace_text(&mut harness, Role::TextInput, "a", "1.25");
-    assert_eq!(state(&harness).parameter_inputs[0], "1.25");
+    assert_eq!(&state(&harness).parameter_inputs[0], "1.25");
     choose(&mut harness, "Model type", "Saturating Trend Basis");
     replace_text(&mut harness, Role::TextInput, "tau1", "0.125");
     assert_eq!(
@@ -125,4 +125,32 @@ fn parameter_inputs_keep_focus_and_values_across_model_controls() {
             .as_deref(),
         Some("0")
     );
+}
+
+#[test]
+fn numeric_drafts_preserve_incomplete_input_and_focus_across_error_rows() {
+    let mut harness = harness();
+    replace_text(&mut harness, Role::TextInput, "a", "-");
+    assert_eq!(&state(&harness).parameter_inputs[0], "-");
+    assert!(harness.query_by_label("Enter a number").is_none());
+
+    harness.get_by_role_and_label(Role::TextInput, "b").click();
+    harness.run();
+    assert!(harness.query_by_label("Enter a number").is_some());
+    assert!(
+        harness
+            .get_by_role_and_label(Role::TextInput, "b")
+            .is_focused()
+    );
+    replace_text(&mut harness, Role::TextInput, "b", "2,5e0");
+    assert_eq!(&state(&harness).parameter_inputs[1], "2,5e0");
+
+    replace_text(&mut harness, Role::TextInput, "a", "1,25");
+    assert!(harness.query_by_label("Enter a number").is_none());
+    assert_eq!(&state(&harness).parameter_inputs[0], "1,25");
+    points(&mut harness, "0 2.5\n1 3.75\n2 5\n");
+    fit_and_wait(&mut harness);
+    let values = state(&harness).fit_result.unwrap().params.values();
+    assert!((values[0] - 1.25).abs() < 1e-6);
+    assert!((values[1] - 2.5).abs() < 1e-6);
 }

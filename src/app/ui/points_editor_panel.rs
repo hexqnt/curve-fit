@@ -2,18 +2,15 @@
 
 use std::borrow::Cow;
 
-use super::components::{
-    ToggleSwitch, toolbar_hover_tooltip, toolbar_icon_button, with_toolbar_hover_style,
-};
 use super::*;
+use crate::app::widgets::{
+    LayerAction, PointLayerRow, PointsTextEdit, ToggleSwitch, ToolbarButton,
+    with_toolbar_hover_style,
+};
 
-const LAYER_ROW_HEIGHT: f32 = 32.0;
 const LAYER_VISIBILITY_COLUMN_WIDTH: f32 = 34.0;
 const LAYER_COLOR_COLUMN_WIDTH: f32 = 72.0;
 const LAYER_COUNT_COLUMN_WIDTH: f32 = 36.0;
-const LAYER_CONTEXT_MENU_ID_SUFFIX: &str = "layer_context_menu";
-
-type LayerContextResponse = (egui::Response, Option<egui::Id>);
 
 pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
@@ -31,11 +28,13 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
             for tool in tools {
                 let selected = app.plot_tool == tool;
-                let button = toolbar_icon_button(tool_icon_image(tool, icon_tint))
-                    .selected(selected)
-                    .frame(true);
-                let response =
-                    toolbar_hover_tooltip(ui.add(button), tool_usage_hint(language, tool));
+                let button = ToolbarButton::new(
+                    tool_icon_image(tool, icon_tint),
+                    tool_usage_hint(language, tool),
+                )
+                .selected(selected)
+                .frame(true);
+                let response = ui.add(button);
                 if response.clicked() {
                     app.plot_tool = tool;
                 }
@@ -64,7 +63,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     SprayBrush::Uniform,
                     spray_brush_label(language, SprayBrush::Uniform),
                 );
-                let _ = components::info_hover(
+                let _ = widgets::info_hover(
                     uniform_response,
                     spray_brush_mode_hint(language, SprayBrush::Uniform),
                 );
@@ -73,7 +72,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     SprayBrush::Gaussian,
                     spray_brush_label(language, SprayBrush::Gaussian),
                 );
-                let _ = components::info_hover(
+                let _ = widgets::info_hover(
                     gaussian_response,
                     spray_brush_mode_hint(language, SprayBrush::Gaussian),
                 );
@@ -94,61 +93,60 @@ pub(super) fn ui_point_layers(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let icon_tint = ui.visuals().text_color();
     let can_edit_layers = !app.fit_in_progress;
 
+    let clipboard_available = !app.clipboard_import_in_progress();
+    let mut toolbar_action = None;
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
-
-            let new_response = ui.add_enabled(
-                can_edit_layers,
-                toolbar_icon_button(layer_new_icon_image(icon_tint)),
-            );
-            if toolbar_hover_tooltip(new_response, layer_new_tooltip(language)).clicked() {
-                app.create_empty_point_layer();
-            }
-
-            let duplicate_response = ui.add_enabled(
-                can_edit_layers,
-                toolbar_icon_button(layer_duplicate_icon_image(icon_tint)),
-            );
-            if toolbar_hover_tooltip(duplicate_response, layer_duplicate_tooltip(language))
-                .clicked()
-            {
-                app.duplicate_selected_point_layer();
-                app.clear_fit_outputs();
-            }
-
-            let clipboard_response = ui.add_enabled(
-                can_edit_layers && !app.clipboard_import_in_progress(),
-                toolbar_icon_button(clipboard_import_icon_image(icon_tint)),
-            );
-            if toolbar_hover_tooltip(clipboard_response, layer_clipboard_tooltip(language))
-                .clicked()
-            {
-                app.request_points_clipboard_import(ui.ctx());
-            }
-
-            let clear_response = ui.add_enabled(
-                can_edit_layers,
-                toolbar_icon_button(clear_icon_image(icon_tint)),
-            );
-            if toolbar_hover_tooltip(clear_response, layer_clear_tooltip(language)).clicked() {
-                app.clear_points_text(true);
-                app.clear_fit_outputs();
-            }
-
-            let delete_response = ui.add_enabled(
-                can_edit_layers,
-                toolbar_icon_button(layer_delete_icon_image(icon_tint)),
-            );
-            if toolbar_hover_tooltip(delete_response, layer_delete_tooltip(language)).clicked() {
-                app.delete_selected_point_layer();
-                app.clear_fit_outputs();
+            for (action, icon, hint, available) in [
+                (
+                    LayerAction::New,
+                    layer_new_icon_image(icon_tint),
+                    layer_new_tooltip(language),
+                    true,
+                ),
+                (
+                    LayerAction::Duplicate,
+                    layer_duplicate_icon_image(icon_tint),
+                    layer_duplicate_tooltip(language),
+                    true,
+                ),
+                (
+                    LayerAction::Paste,
+                    clipboard_import_icon_image(icon_tint),
+                    layer_clipboard_tooltip(language),
+                    clipboard_available,
+                ),
+                (
+                    LayerAction::Clear,
+                    clear_icon_image(icon_tint),
+                    layer_clear_tooltip(language),
+                    true,
+                ),
+                (
+                    LayerAction::Delete,
+                    layer_delete_icon_image(icon_tint),
+                    layer_delete_tooltip(language),
+                    true,
+                ),
+            ] {
+                if ui
+                    .add_enabled(can_edit_layers && available, ToolbarButton::new(icon, hint))
+                    .clicked()
+                {
+                    toolbar_action = Some(action);
+                }
             }
         });
     });
+    if let Some(action) = toolbar_action {
+        apply_layer_action(app, ui.ctx(), action);
+    }
 
     ui.add_space(style::SECTION_GAP);
     let total_rows = app.point_layers.layers.len();
+    let clipboard_available = !app.clipboard_import_in_progress();
+    let mut pending_action = None;
     egui_extras::TableBuilder::new(ui)
         .id_salt("point_layers_list")
         .striped(false)
@@ -162,249 +160,66 @@ pub(super) fn ui_point_layers(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         .column(egui_extras::Column::remainder().at_least(48.0).clip(true))
         .column(egui_extras::Column::exact(LAYER_COUNT_COLUMN_WIDTH))
         .body(|body| {
-            body.rows(LAYER_ROW_HEIGHT, total_rows, |mut row| {
-                let index = row.index();
-                let layer_id = app.point_layers.layers[index].id;
+            body.rows(PointLayerRow::HEIGHT, total_rows, |row| {
+                let layer = &mut app.point_layers.layers[row.index()];
+                let layer_id = layer.id;
                 let selected = layer_id == app.point_layers.selected_id;
-                let (point_count, has_error) = {
-                    let layer = &mut app.point_layers.layers[index];
-                    let cache = points_editor_cache_with_policy(&mut layer.points, false);
-                    (
-                        cache
-                            .parsed_points
-                            .as_ref()
-                            .map(Vec::len)
-                            .unwrap_or_else(|_| cache.plot_points.len()),
-                        cache.parsed_points.is_err(),
-                    )
-                };
-                let mut should_select = false;
-                let mut visibility_changed = false;
-                let mut context_responses: Vec<LayerContextResponse> = Vec::with_capacity(4);
-
-                row.set_selected(selected);
-                row.col(|ui| {
-                    let layer_visible = app.point_layers.layers[index].visible;
-                    let visible_icon = if layer_visible {
-                        layer_visible_icon_image(icon_tint)
-                    } else {
-                        layer_hidden_icon_image(ui.visuals().weak_text_color())
-                    };
-                    let visible_response = toolbar_hover_tooltip(
-                        ui.add_enabled(
-                            can_edit_layers,
-                            toolbar_icon_button(visible_icon).frame(false),
-                        ),
-                        layer_visibility_tooltip(language),
-                    );
-                    if visible_response.double_clicked() {
-                        visibility_changed = app.point_layers.show_only(layer_id);
-                    } else if visible_response.clicked() {
-                        app.point_layers.layers[index].visible = !layer_visible;
-                        visibility_changed = true;
-                    }
-                    context_responses.push((visible_response, None));
-                });
-                row.col(|ui| {
-                    let layer = &mut app.point_layers.layers[index];
-                    let color_response = ui.color_edit_button_srgba(&mut layer.color);
-                    let popup_id = color_response.id.with(LAYER_CONTEXT_MENU_ID_SUFFIX);
-                    context_responses.push((color_response, Some(popup_id)));
-                });
-                row.col(|ui| {
-                    let layer = &mut app.point_layers.layers[index];
-                    let name_width = ui.available_width().max(40.0);
-                    let (name_response, is_text_field) = if selected {
-                        (
-                            ui.add_sized(
-                                [name_width, LAYER_ROW_HEIGHT - 8.0],
-                                egui::TextEdit::singleline(&mut layer.name),
-                            ),
-                            true,
-                        )
-                    } else {
-                        (
-                            ui.add_sized(
-                                [name_width, LAYER_ROW_HEIGHT - 8.0],
-                                egui::Label::new(layer.name.as_str()).sense(egui::Sense::click()),
-                            ),
-                            false,
-                        )
-                    };
-                    #[cfg(feature = "testing")]
-                    if is_text_field {
-                        ui.ctx().accesskit_node_builder(name_response.id, |node| {
-                            node.set_label(tr(language, "Layer name", "Название слоя"));
-                        });
-                    }
-                    if name_response.clicked() {
-                        should_select = true;
-                    }
-                    if !is_text_field {
-                        context_responses.push((name_response, None));
-                    }
-                });
-                row.col(|ui| {
-                    let count_text = if has_error {
-                        format!("{point_count} !")
-                    } else {
-                        point_count.to_string()
-                    };
-                    context_responses.push((
-                        ui.add_sized(
-                            [ui.available_width().max(1.0), LAYER_ROW_HEIGHT - 8.0],
-                            egui::Label::new(egui::RichText::new(count_text).small()),
-                        ),
-                        None,
-                    ));
-                });
-
-                let response = row.response();
-
-                if response.clicked() || should_select {
+                let cache = points_editor_cache_with_policy(&mut layer.points, false);
+                let point_count = cache
+                    .parsed_points
+                    .as_ref()
+                    .map(Vec::len)
+                    .unwrap_or_else(|_| cache.plot_points.len());
+                let has_error = cache.parsed_points.is_err();
+                let result = PointLayerRow::new(layer, language)
+                    .selected(selected)
+                    .editable(can_edit_layers)
+                    .clipboard_available(clipboard_available)
+                    .point_count(point_count, has_error)
+                    .show(row);
+                if result.select {
                     app.point_layers.select(layer_id);
                 }
-                if visibility_changed {
-                    app.refresh_status_after_points_edit();
-                    app.clear_fit_outputs();
-                }
-
-                let pointer_over_child = context_responses
-                    .iter()
-                    .any(|(response, _)| response.contains_pointer());
-                if !pointer_over_child {
-                    show_layer_context_menu(
-                        &response,
-                        app,
-                        layer_id,
-                        can_edit_layers,
-                        language,
-                        None,
-                    );
-                }
-                for (response, popup_id) in context_responses {
-                    show_layer_context_menu(
-                        &response,
-                        app,
-                        layer_id,
-                        can_edit_layers,
-                        language,
-                        popup_id,
-                    );
+                if let Some(action) = result.action {
+                    pending_action = Some((layer_id, action));
                 }
             });
         });
-}
-
-fn show_layer_context_menu(
-    response: &egui::Response,
-    app: &mut CurveFitApp,
-    layer_id: PointLayerId,
-    can_edit_layers: bool,
-    language: UiLanguage,
-    popup_id: Option<egui::Id>,
-) {
-    if let Some(popup_id) = popup_id {
-        egui::Popup::context_menu(response).id(popup_id).show(|ui| {
-            ui_layer_context_menu_contents(ui, app, layer_id, can_edit_layers, language);
-        });
-    } else {
-        response.context_menu(|ui| {
-            ui_layer_context_menu_contents(ui, app, layer_id, can_edit_layers, language);
-        });
+    // Команды применяются после построения таблицы, чтобы удаление не меняло индексы строк.
+    if let Some((layer_id, action)) = pending_action {
+        app.point_layers.select(layer_id);
+        apply_layer_action(app, ui.ctx(), action);
     }
 }
 
-fn ui_layer_context_menu_contents(
-    ui: &mut egui::Ui,
-    app: &mut CurveFitApp,
-    layer_id: PointLayerId,
-    can_edit_layers: bool,
-    language: UiLanguage,
-) {
-    app.point_layers.select(layer_id);
-    let selected_visible = app.selected_layer().visible;
-    if ui
-        .add_enabled(
-            can_edit_layers,
-            egui::Button::new(tr(language, "New empty layer", "Новый пустой слой")),
-        )
-        .clicked()
-    {
-        app.create_empty_point_layer();
-        ui.close();
+fn apply_layer_action(app: &mut CurveFitApp, ctx: &egui::Context, action: LayerAction) {
+    match action {
+        LayerAction::New => {
+            app.create_empty_point_layer();
+            return;
+        }
+        LayerAction::Paste => {
+            app.request_points_clipboard_import(ctx);
+            return;
+        }
+        LayerAction::Duplicate => {
+            app.duplicate_selected_point_layer();
+        }
+        LayerAction::Clear => app.clear_points_text(true),
+        LayerAction::Delete => app.delete_selected_point_layer(),
+        LayerAction::ToggleVisibility => {
+            let layer = app.selected_layer_mut();
+            layer.visible = !layer.visible;
+            app.refresh_status_after_points_edit();
+        }
+        LayerAction::ShowOnly => {
+            if !app.point_layers.show_only(app.selected_layer().id) {
+                return;
+            }
+            app.refresh_status_after_points_edit();
+        }
     }
-    if ui
-        .add_enabled(
-            can_edit_layers,
-            egui::Button::new(tr(language, "Duplicate layer", "Дублировать слой")),
-        )
-        .clicked()
-    {
-        app.duplicate_selected_point_layer();
-        app.clear_fit_outputs();
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            can_edit_layers && !app.clipboard_import_in_progress(),
-            egui::Button::new(tr(
-                language,
-                "New layer from clipboard",
-                "Новый слой из буфера",
-            )),
-        )
-        .clicked()
-    {
-        app.request_points_clipboard_import(ui.ctx());
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            can_edit_layers,
-            egui::Button::new(tr(
-                language,
-                if selected_visible {
-                    "Hide layer"
-                } else {
-                    "Show layer"
-                },
-                if selected_visible {
-                    "Скрыть слой"
-                } else {
-                    "Показать слой"
-                },
-            )),
-        )
-        .clicked()
-    {
-        app.selected_layer_mut().visible = !selected_visible;
-        app.refresh_status_after_points_edit();
-        app.clear_fit_outputs();
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            can_edit_layers,
-            egui::Button::new(tr(language, "Clear layer", "Очистить слой")),
-        )
-        .clicked()
-    {
-        app.clear_points_text(true);
-        app.clear_fit_outputs();
-        ui.close();
-    }
-    if ui
-        .add_enabled(
-            can_edit_layers,
-            egui::Button::new(tr(language, "Delete layer", "Удалить слой")),
-        )
-        .clicked()
-    {
-        app.delete_selected_point_layer();
-        app.clear_fit_outputs();
-        ui.close();
-    }
+    app.clear_fit_outputs();
 }
 
 pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
@@ -451,91 +266,86 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
             let undo_response = ui.add_enabled(
                 can_edit_points && !app.selected_points_editor().undo_stack.is_empty(),
-                toolbar_icon_button(undo_icon_image(icon_tint)),
+                ToolbarButton::new(undo_icon_image(icon_tint), undo_tooltip(language)),
             );
-            if toolbar_hover_tooltip(undo_response, undo_tooltip(language)).clicked() {
+            if undo_response.clicked() {
                 app.undo_points_edit();
             }
             let redo_response = ui.add_enabled(
                 can_edit_points && !app.selected_points_editor().redo_stack.is_empty(),
-                toolbar_icon_button(redo_icon_image(icon_tint)),
+                ToolbarButton::new(redo_icon_image(icon_tint), redo_tooltip(language)),
             );
-            if toolbar_hover_tooltip(redo_response, redo_tooltip(language)).clicked() {
+            if redo_response.clicked() {
                 app.redo_points_edit();
             }
             let import_response = ui.add_enabled(
                 can_import_from_clipboard,
-                toolbar_icon_button(clipboard_import_icon_image(icon_tint)),
+                ToolbarButton::new(
+                    clipboard_import_icon_image(icon_tint),
+                    clipboard_import_tooltip(language),
+                ),
             );
-            if toolbar_hover_tooltip(import_response, clipboard_import_tooltip(language)).clicked()
-            {
+            if import_response.clicked() {
                 app.request_points_clipboard_import(ui.ctx());
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let import_file_response = ui.add_enabled(
                     can_import_from_file,
-                    toolbar_icon_button(file_import_icon_image(icon_tint)),
+                    ToolbarButton::new(
+                        file_import_icon_image(icon_tint),
+                        file_import_tooltip(language),
+                    ),
                 );
-                if toolbar_hover_tooltip(import_file_response, file_import_tooltip(language))
-                    .clicked()
-                {
+                if import_file_response.clicked() {
                     app.request_points_file_import();
                 }
             }
             let clear_response = ui.add_enabled(
                 can_edit_points,
-                toolbar_icon_button(clear_icon_image(icon_tint)),
+                ToolbarButton::new(clear_icon_image(icon_tint), clear_tooltip(language)),
             );
-            if toolbar_hover_tooltip(clear_response, clear_tooltip(language)).clicked() {
+            if clear_response.clicked() {
                 app.clear_points_text(true);
                 app.clear_fit_outputs();
                 app.status = Some(StatusMessage::Cleared);
             }
             ui.add_enabled_ui(can_edit_points, |ui| {
-                let (actions_response, _) = egui::containers::menu::MenuButton::from_button(
-                    toolbar_icon_button(actions_icon_image(icon_tint)),
-                )
-                .ui(ui, |ui| {
-                    if ui
-                        .add_enabled(
-                            can_fill_with_residuals,
-                            egui::Button::new(tr(
-                                language,
-                                "Fill with residuals",
-                                "Заполнить остатками",
-                            )),
-                        )
-                        .clicked()
-                    {
-                        app.fill_points_with_residuals();
-                        ui.close();
-                    }
-                    if ui
-                        .add_enabled(
-                            can_move_points_to_positive_xy,
-                            egui::Button::new(tr(
-                                language,
-                                "Move to positive x/y",
-                                "Перенести в +X/+Y",
-                            )),
-                        )
-                        .clicked()
-                    {
-                        app.move_points_to_positive_xy();
-                        ui.close();
-                    }
-                });
-                let _ = toolbar_hover_tooltip(actions_response, actions_tooltip(language));
+                ToolbarButton::new(actions_icon_image(icon_tint), actions_tooltip(language))
+                    .show_menu(ui, |ui| {
+                        if ui
+                            .add_enabled(
+                                can_fill_with_residuals,
+                                egui::Button::new(tr(
+                                    language,
+                                    "Fill with residuals",
+                                    "Заполнить остатками",
+                                )),
+                            )
+                            .clicked()
+                        {
+                            app.fill_points_with_residuals();
+                            ui.close();
+                        }
+                        if ui
+                            .add_enabled(
+                                can_move_points_to_positive_xy,
+                                egui::Button::new(tr(
+                                    language,
+                                    "Move to positive x/y",
+                                    "Перенести в +X/+Y",
+                                )),
+                            )
+                            .clicked()
+                        {
+                            app.move_points_to_positive_xy();
+                            ui.close();
+                        }
+                    });
             });
         });
     });
 
-    let hint = tr(
-        language,
-        "Example:\n0.0 1.5\n0.5\t2.0\n1.0;2.8",
-        "Пример:\n0.0 1.5\n0.5\t2.0\n1.0;2.8",
-    );
     let row_height = ui.text_style_height(&egui::TextStyle::Monospace).max(1.0);
     let body_height = ui.text_style_height(&egui::TextStyle::Body).max(1.0);
     let small_height = ui.text_style_height(&egui::TextStyle::Small).max(1.0);
@@ -557,40 +367,6 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         .max_height(text_height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let text_width = ui.available_width();
-            let mut layouter = move |ui: &egui::Ui,
-                                     text: &dyn egui::TextBuffer,
-                                     wrap_width: f32|
-                  -> std::sync::Arc<egui::Galley> {
-                let mut job = egui::text::LayoutJob::default();
-                job.wrap.max_width = wrap_width;
-                let text_color = ui.visuals().text_color();
-                let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                let error_bg = style::UiColors::for_visuals(ui.visuals()).input_error_bg;
-                for (index, line) in text.as_str().split_inclusive('\n').enumerate() {
-                    let mut format = egui::TextFormat {
-                        font_id: font_id.clone(),
-                        color: text_color,
-                        ..Default::default()
-                    };
-                    if parse_error_line == Some(index + 1) {
-                        format.background = error_bg;
-                    }
-                    job.append(line, 0.0, format);
-                }
-                if text.as_str().is_empty() {
-                    job.append(
-                        "",
-                        0.0,
-                        egui::TextFormat {
-                            font_id,
-                            color: text_color,
-                            ..Default::default()
-                        },
-                    );
-                }
-                ui.fonts_mut(|fonts| fonts.layout_job(job))
-            };
             // Подписи ошибок меняют порядок виджетов, поэтому фокус и выделение привязываем к слою.
             let editor_id = egui::Id::new(("points_text_editor", app.selected_layer().id));
             let points_editor = app.selected_points_editor_mut();
@@ -598,13 +374,9 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             let mut text = Cow::Borrowed(points_editor.text.as_str());
             let response = ui.add_enabled(
                 can_edit_points,
-                egui::TextEdit::multiline(&mut text)
-                    .id(editor_id)
-                    .desired_width(text_width)
-                    .desired_rows(desired_rows)
-                    .font(egui::TextStyle::Monospace)
-                    .hint_text(hint)
-                    .layouter(&mut layouter),
+                PointsTextEdit::new(&mut text, editor_id, language)
+                    .error_line(parse_error_line)
+                    .desired_rows(desired_rows),
             );
             let before_edit = if response.changed() {
                 let updated_text = text.into_owned();
@@ -612,11 +384,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             } else {
                 None
             };
-            #[cfg(feature = "testing")]
-            ui.ctx().accesskit_node_builder(response.id, |node| {
-                node.set_label(tr(language, "Input points", "Ввод точек"));
-            });
-            let _ = components::info_hover(response, points_input_hint(language));
+            let _ = widgets::info_hover(response, points_input_hint(language));
             if let Some(before_edit) = before_edit {
                 app.push_points_undo_snapshot(before_edit);
                 app.selected_points_editor_mut().redo_stack.clear();
@@ -643,7 +411,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             );
             let normalization_response =
                 ui.add(ToggleSwitch::new(&mut app.normalize_parametric_data).label(label));
-            let _ = components::info_hover(normalization_response, normalization_hint(language));
+            let _ = widgets::info_hover(normalization_response, normalization_hint(language));
         });
     });
 
@@ -770,14 +538,6 @@ fn layer_clipboard_tooltip(language: UiLanguage) -> &'static str {
         language,
         "New layer from clipboard\n- Paste clipboard points into a new selected layer",
         "Новый слой из буфера\n- Вставить точки из буфера в новый выбранный слой",
-    )
-}
-
-fn layer_visibility_tooltip(language: UiLanguage) -> &'static str {
-    tr(
-        language,
-        "Layer visibility\n- Show or hide this layer in the plot and fitting input",
-        "Видимость слоя\n- Показать или скрыть слой на графике и во входе фитинга",
     )
 }
 

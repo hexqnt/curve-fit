@@ -227,8 +227,8 @@ pub struct CurveFitApp {
     pub(super) polynomial_degree: usize,
     pub(super) rational_degree: usize,
     pub(super) saturating_trend_tau_count: usize,
-    pub(super) saturating_trend_tau_inputs: Vec<String>,
-    pub(super) parameter_inputs: Vec<String>,
+    pub(super) saturating_trend_tau_inputs: Vec<NumberDraft>,
+    pub(super) parameter_inputs: Vec<NumberDraft>,
     pub(super) optimizer_method: OptimizerMethod,
     pub(super) optimizer_mode: OptimizerUiMode,
     pub(super) optimization_loss_metric: OptimizationLossMetric,
@@ -267,7 +267,7 @@ pub struct CurveFitApp {
     pub(super) spline_knot_strategy: SplineKnotStrategy,
     pub(super) spline_extrapolation: SplineExtrapolation,
     pub(super) spline_duplicate_x_policy: SplineDuplicateXPolicy,
-    pub(super) spline_initial_knot_y_inputs: Vec<String>,
+    pub(super) spline_initial_knot_y_inputs: Vec<NumberDraft>,
     pub(super) auto_refit_enabled: bool,
     pub(super) auto_refit_pending_rerun: bool,
     pub(super) last_right_panel_fit_snapshot: Option<RightPanelFitFingerprint>,
@@ -622,7 +622,7 @@ impl CurveFitApp {
     }
 
     pub(super) fn set_parameter_inputs_from_params(&mut self, params: &CurveParams) {
-        self.parameter_inputs = params_to_input_strings(params);
+        self.parameter_inputs = params_to_input_drafts(params);
     }
 
     /// Гарантирует, что UI-список `τ` покрывает текущее число активных базисных функций.
@@ -644,26 +644,26 @@ impl CurveFitApp {
             DEFAULT_SATURATING_TREND_TAUS_YEARS
                 [self.saturating_trend_tau_inputs.len()..clamped_count]
                 .iter()
-                .map(|value| value.to_string()),
+                .map(|&value| NumberDraft::from(value)),
         );
     }
 
     pub(super) fn set_saturating_trend_tau_inputs(&mut self, values: &[f64]) {
-        self.saturating_trend_tau_inputs = tau_grid_to_input_strings(values);
+        self.saturating_trend_tau_inputs = tau_grid_to_input_drafts(values);
         self.ensure_saturating_trend_tau_inputs_cover_count();
     }
 
     pub(super) fn sync_spline_initial_knot_y_inputs(&mut self, knot_count: usize) {
         if self.spline_initial_knot_y_inputs.len() < knot_count {
             self.spline_initial_knot_y_inputs
-                .resize_with(knot_count, || "0.0".to_string());
+                .resize_with(knot_count, || "0.0".into());
         } else {
             self.spline_initial_knot_y_inputs.truncate(knot_count);
         }
     }
 
     pub(super) fn set_spline_initial_knot_y_inputs(&mut self, values: &[f64]) {
-        self.spline_initial_knot_y_inputs = values.iter().map(|value| value.to_string()).collect();
+        self.spline_initial_knot_y_inputs = values.iter().copied().map(NumberDraft::from).collect();
     }
 
     pub(super) fn selected_metric_quantization(&self) -> Result<MetricQuantization, String> {

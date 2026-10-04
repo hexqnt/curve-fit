@@ -55,19 +55,19 @@ use self::i18n::file_import_icon_image;
 use self::i18n::{
     actions_icon_image, center_origin_icon_image, clear_icon_image, clipboard_import_icon_image,
     family_label, fit_to_content_icon_image, github_mark_image, language_flag_image,
-    layer_delete_icon_image, layer_duplicate_icon_image, layer_hidden_icon_image,
-    layer_new_icon_image, layer_visible_icon_image, model_choice_label, open_formula_icon_image,
-    optimization_loss_metric_label, origin_bottom_left_icon_image, panels_icon_image,
-    param_init_method_disabled_label, param_init_method_label, param_init_method_name_en,
-    redo_icon_image, replay_pause_icon_image, replay_play_icon_image, reset_icon_image,
-    spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label, tool_icon_image, tr,
-    undo_icon_image, view_icon_image,
+    layer_delete_icon_image, layer_duplicate_icon_image, layer_new_icon_image, model_choice_label,
+    open_formula_icon_image, optimization_loss_metric_label, origin_bottom_left_icon_image,
+    panels_icon_image, param_init_method_name_en, redo_icon_image, replay_pause_icon_image,
+    replay_play_icon_image, reset_icon_image, spline_extrapolation_label,
+    spline_knot_strategy_label, spray_brush_label, tool_icon_image, tr, undo_icon_image,
+    view_icon_image,
 };
 use self::model_catalog::{
     ModelChoice, ModelGroup, ResolvedModel, model_group, model_group_label,
     spline_duplicate_policy_label,
 };
 use self::normalization::ParametricNormalization;
+use self::number_draft::NumberDraft;
 use self::optimizer::{
     AdamInputState, LbfgsInputState, NelderMeadInputState, NewtonCgInputState, OptimizerPreset,
     OptimizerUiMode, SgdInputState, SteepestDescentInputState, adam_config_from_preset,
@@ -88,7 +88,7 @@ use self::points_state::{
     set_points_editor_cache_from_valid_points,
 };
 use self::points_text::{
-    parse_f64, parse_points_from_clipboard_text, parse_points_text_cache, points_to_text,
+    parse_points_from_clipboard_text, parse_points_text_cache, points_to_text,
 };
 use self::replay::ReplayState;
 #[cfg(test)]
@@ -104,8 +104,8 @@ use self::status::StatusMessage;
 use self::types::dialog_directory_from_path;
 use self::types::{
     ExtendedMetrics, FormulaReferenceSection, FormulaSvgCache, ModelFormulaInfo, ParamInitMethod,
-    PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_strings,
-    tau_grid_to_input_strings,
+    PlotTool, SampledCurveCache, SprayBrush, UiLanguage, params_to_input_drafts,
+    tau_grid_to_input_drafts,
 };
 
 pub use self::state::CurveFitApp;
@@ -128,6 +128,7 @@ mod formula;
 mod i18n;
 mod input_parse;
 mod normalization;
+mod number_draft;
 mod optimizer;
 mod param_init;
 mod plot_utils;
@@ -136,6 +137,7 @@ mod points_text;
 mod replay;
 mod result_export;
 mod ui;
+mod widgets;
 
 const PARAMETRIC_PLOT_SAMPLES: usize = 200;
 const C1_MIN: f64 = 1e-8;

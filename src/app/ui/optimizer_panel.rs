@@ -1,7 +1,9 @@
 //! Панель выбора оптимизатора, preset-ов и настроек запуска подгонки.
 
-use super::components::{FitAction, FitActionButton, ToggleSwitch, value_grid, value_row};
 use super::*;
+use crate::app::widgets::{
+    Choice, FitAction, FitActionButton, ToggleSwitch, value_grid, value_row,
+};
 
 fn ui_log_slider(
     ui: &mut egui::Ui,
@@ -47,24 +49,19 @@ fn edit_optimizer_inputs<T>(
 pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     let icon_tint = ui.visuals().text_color();
-    egui::ComboBox::from_label(tr(language, "Method", "Метод"))
-        .selected_text(optimizer_method_label(language, app.optimizer_method))
-        .show_ui(ui, |ui| {
-            for method in OptimizerMethod::ALL {
-                ui.selectable_value(
-                    &mut app.optimizer_method,
-                    method,
-                    optimizer_method_label(language, method),
-                );
-            }
-        });
+    ui.add(Choice::new(
+        egui::ComboBox::from_label(tr(language, "Method", "Метод")),
+        &mut app.optimizer_method,
+        &OptimizerMethod::ALL,
+        |method| optimizer_method_label(language, method),
+    ));
     ui.horizontal_wrapped(|ui| {
         let basic_response = ui.selectable_value(
             &mut app.optimizer_mode,
             OptimizerUiMode::Basic,
             tr(language, "Basic", "Базовый"),
         );
-        let _ = components::info_hover(
+        let _ = widgets::info_hover(
             basic_response,
             optimizer_mode_hint(language, OptimizerUiMode::Basic),
         );
@@ -73,7 +70,7 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             OptimizerUiMode::Advanced,
             tr(language, "Advanced", "Продвинутый"),
         );
-        let _ = components::info_hover(
+        let _ = widgets::info_hover(
             advanced_response,
             optimizer_mode_hint(language, OptimizerUiMode::Advanced),
         );
@@ -348,7 +345,7 @@ fn ui_fit_action_button(app: &mut CurveFitApp, ui: &mut egui::Ui, layout: FitCon
                 let label = tr(language, "Auto-refit", "Авто-рефит");
                 let auto_refit_response =
                     ui.add(ToggleSwitch::new(&mut app.auto_refit_enabled).label(label));
-                let _ = components::info_hover(auto_refit_response, auto_refit_hint(language));
+                let _ = widgets::info_hover(auto_refit_response, auto_refit_hint(language));
             }
 
             let min_size = match layout {

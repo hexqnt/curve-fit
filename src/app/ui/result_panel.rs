@@ -2,8 +2,8 @@
 
 use std::fmt::Write as _;
 
-use super::components::{value_grid, value_row};
 use super::*;
+use crate::app::widgets::{value_grid, value_row};
 
 fn format_f64_list(values: &[f64], precision: usize) -> String {
     let mut formatted = String::new();
@@ -77,7 +77,7 @@ fn resolved_result_metrics(app: &CurveFitApp) -> ExtendedMetrics {
 
 fn ui_result_export_actions(app: &mut CurveFitApp, ui: &mut egui::Ui, language: UiLanguage) {
     ui.horizontal_wrapped(|ui| {
-        let copy_response = components::info_hover(
+        let copy_response = widgets::info_hover(
             ui.button(tr(language, "Copy JSON", "Скопировать JSON")),
             result_json_copy_tooltip(language),
         );
@@ -87,7 +87,7 @@ fn ui_result_export_actions(app: &mut CurveFitApp, ui: &mut egui::Ui, language: 
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let save_response = components::info_hover(
+            let save_response = widgets::info_hover(
                 ui.button(tr(language, "Save JSON", "Сохранить JSON")),
                 result_json_save_tooltip(language),
             );

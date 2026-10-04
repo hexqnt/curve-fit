@@ -1,5 +1,6 @@
 //! Главный `eframe`-цикл и раскладка верхней, боковых и нижней панелей приложения.
 
+use super::widgets::CollapsibleCard;
 use super::*;
 
 impl eframe::App for CurveFitApp {
@@ -60,30 +61,24 @@ impl eframe::App for CurveFitApp {
                 .show(ui, |ui| {
                     let language = self.ui_language;
                     Self::setup_side_panel_content(ui);
-                    Self::panel_card_collapsible(
-                        ui,
+                    CollapsibleCard::new(
                         "left_section_tools",
                         tr(language, "Tools", "Инструменты"),
-                        |ui| {
-                            self.ui_tools(ui);
-                        },
-                    );
-                    Self::panel_card_collapsible(
-                        ui,
-                        "left_section_layers",
-                        tr(language, "Layers", "Слои"),
-                        |ui| {
+                    )
+                    .show(ui, |ui| {
+                        self.ui_tools(ui);
+                    });
+                    CollapsibleCard::new("left_section_layers", tr(language, "Layers", "Слои"))
+                        .show(ui, |ui| {
                             self.ui_point_layers(ui);
-                        },
-                    );
-                    Self::panel_card_collapsible(
-                        ui,
+                        });
+                    CollapsibleCard::new(
                         "left_section_points",
                         tr(language, "Input Points", "Точки"),
-                        |ui| {
-                            self.ui_points_editor(ui);
-                        },
-                    );
+                    )
+                    .show(ui, |ui| {
+                        self.ui_points_editor(ui);
+                    });
                 });
         }
 
@@ -96,38 +91,43 @@ impl eframe::App for CurveFitApp {
                 .show(ui, |ui| {
                     let language = self.ui_language;
                     Self::right_side_panel_scroll_area(ui, |ui| {
-                        Self::panel_card_collapsible_with_collapsed_trailing(
-                            self,
-                            ui,
+                        CollapsibleCard::new(
                             "right_section_model",
                             tr(language, "Model", "Модель"),
+                        )
+                        .show_with_state(
+                            self,
+                            ui,
                             CurveFitApp::ui_family_and_params,
                             CurveFitApp::ui_model_selector_compact,
                         );
-                        Self::panel_card_collapsible_with_collapsed_trailing(
-                            self,
-                            ui,
+                        CollapsibleCard::new(
                             "right_section_metric",
                             tr(language, "Optimization metric", "Метрика оптимизации"),
+                        )
+                        .show_with_state(
+                            self,
+                            ui,
                             CurveFitApp::ui_optimization_metric,
                             CurveFitApp::ui_optimization_metric_selector_compact,
                         );
-                        Self::panel_card_collapsible_with_collapsed_trailing(
-                            self,
-                            ui,
+                        CollapsibleCard::new(
                             "right_section_optimizer",
                             tr(language, "Optimizer", "Оптимизатор"),
+                        )
+                        .show_with_state(
+                            self,
+                            ui,
                             CurveFitApp::ui_optimizer,
                             CurveFitApp::ui_optimizer_action_button_compact,
                         );
-                        Self::panel_card_collapsible(
-                            ui,
+                        CollapsibleCard::new(
                             "right_section_result",
                             tr(language, "Result", "Результат"),
-                            |ui| {
-                                self.ui_result(ui);
-                            },
-                        );
+                        )
+                        .show(ui, |ui| {
+                            self.ui_result(ui);
+                        });
                     });
                 });
             self.track_right_panel_fit_changes_and_maybe_refit();

@@ -4,11 +4,25 @@ use eframe::egui;
 
 use crate::app::style;
 
+mod choice;
+mod collapsible_card;
 mod fit_action_button;
+mod initialization_menu;
+mod parameter_input;
+mod point_layer_row;
+mod points_text_edit;
 mod toggle_switch;
+mod toolbar_button;
 
+pub(super) use choice::Choice;
+pub(super) use collapsible_card::CollapsibleCard;
 pub(super) use fit_action_button::{FitAction, FitActionButton};
+pub(super) use initialization_menu::{InitAction, InitializationMenu};
+pub(super) use parameter_input::ParameterInput;
+pub(super) use point_layer_row::{LayerAction, PointLayerRow};
+pub(super) use points_text_edit::PointsTextEdit;
 pub(super) use toggle_switch::ToggleSwitch;
+pub(super) use toolbar_button::ToolbarButton;
 
 pub(super) fn parameter_grid(id: impl egui::AsIdSalt) -> egui::Grid {
     egui::Grid::new(id)
@@ -28,26 +42,6 @@ pub(super) fn value_row(ui: &mut egui::Ui, label: &str, value: impl Into<egui::R
     ui.end_row();
 }
 
-pub(super) fn parameter_input(
-    ui: &mut egui::Ui,
-    label: impl Into<egui::WidgetText>,
-    value: &mut dyn egui::TextBuffer,
-    enabled: bool,
-) -> egui::Response {
-    let _label = ui.label(label);
-    let response = ui.add_enabled(
-        enabled,
-        egui::TextEdit::singleline(value).desired_width(style::PARAMETER_INPUT_WIDTH),
-    );
-    #[cfg(feature = "testing")]
-    let response = response.labelled_by(_label.id);
-    response
-}
-
-pub(super) fn toolbar_icon_button(icon: egui::Image<'static>) -> egui::Button<'static> {
-    egui::Button::image(icon).min_size(style::TOOLBAR_BUTTON_SIZE)
-}
-
 pub(super) fn with_toolbar_hover_style(
     ui: &mut egui::Ui,
     add_contents: impl FnOnce(&mut egui::Ui),
@@ -62,10 +56,7 @@ pub(super) fn info_hover(response: egui::Response, text: impl AsRef<str>) -> egu
     help_tooltip(response, text, TooltipKind::Info)
 }
 
-pub(super) fn toolbar_hover_tooltip(
-    response: egui::Response,
-    text: &'static str,
-) -> egui::Response {
+fn toolbar_hover_tooltip(response: egui::Response, text: &str) -> egui::Response {
     #[cfg(feature = "testing")]
     response.ctx.accesskit_node_builder(response.id, |node| {
         node.set_label(text.lines().next().unwrap_or(text));

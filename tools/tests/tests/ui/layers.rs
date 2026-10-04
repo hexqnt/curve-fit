@@ -144,3 +144,50 @@ fn clipboard_import_error_keeps_existing_points_text() {
             .is_some()
     );
 }
+
+#[test]
+fn layer_context_menu_selects_its_target_and_defers_deletion_until_after_the_table() {
+    let mut harness = harness();
+    points(&mut harness, "0 1\n1 2\n");
+    click(&mut harness, "New layer");
+    points(&mut harness, "10 20\n30 40\n");
+    harness
+        .get_by_role_and_label(Role::Label, "Layer 1")
+        .click_secondary();
+    harness.run();
+    assert_eq!(state(&harness).selected_layer_index, 0);
+    harness
+        .get_all_by_label("Delete layer")
+        .last()
+        .unwrap()
+        .click();
+    harness.run();
+    assert_eq!(state(&harness).layers().len(), 1);
+    assert_eq!(state(&harness).selected_layer.name, "Layer 2");
+    assert_eq!(state(&harness).selected_layer.points_text, "10 20\n30 40\n");
+}
+
+#[test]
+fn double_clicking_layer_visibility_shows_only_that_layer() {
+    let mut harness = harness();
+    click(&mut harness, "New layer");
+    // Отделяем двойной клик от клика создания слоя, чтобы egui не распознал тройной.
+    harness.run_steps(40);
+    harness
+        .get_all_by_label("Layer visibility")
+        .next()
+        .unwrap()
+        .click();
+    harness.step();
+    harness
+        .get_all_by_label("Layer visibility")
+        .next()
+        .unwrap()
+        .click();
+    harness.run();
+    let snapshot = state(&harness);
+    let mut layers = snapshot.layers();
+    assert!(layers.next().unwrap().visible);
+    assert!(!layers.next().unwrap().visible);
+    assert_eq!(state(&harness).selected_layer_index, 0);
+}

@@ -44,7 +44,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                 "Окно справки по формуле\n- Каждый раздел рендерится через LaTeX и имеет текстовый fallback\n- Можно копировать только модель или всю справку целиком",
             );
             ui.horizontal_wrapped(|ui| {
-                let copy_model_response = components::info_hover(
+                let copy_model_response = widgets::info_hover(
                     ui.button(tr(language, "Copy model formula", "Скопировать формулу модели")),
                     formula_window_hint,
                 );

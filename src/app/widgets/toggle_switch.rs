@@ -4,17 +4,17 @@ use eframe::egui;
 
 /// Заимствует состояние переключателя на время построения кадра.
 #[must_use = "Add this widget to a UI with ui.add(widget)"]
-pub(in crate::app::ui) struct ToggleSwitch<'a> {
+pub(in crate::app) struct ToggleSwitch<'a> {
     on: &'a mut bool,
     label: Option<egui::WidgetText>,
 }
 
 impl<'a> ToggleSwitch<'a> {
-    pub(in crate::app::ui) fn new(on: &'a mut bool) -> Self {
+    pub(in crate::app) fn new(on: &'a mut bool) -> Self {
         Self { on, label: None }
     }
 
-    pub(in crate::app::ui) fn label(mut self, label: impl Into<egui::WidgetText>) -> Self {
+    pub(in crate::app) fn label(mut self, label: impl Into<egui::WidgetText>) -> Self {
         self.label = Some(label.into());
         self
     }

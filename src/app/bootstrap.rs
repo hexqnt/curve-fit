@@ -58,10 +58,10 @@ impl Default for CurveFitApp {
             polynomial_degree,
             rational_degree,
             saturating_trend_tau_count,
-            saturating_trend_tau_inputs: tau_grid_to_input_strings(
+            saturating_trend_tau_inputs: tau_grid_to_input_drafts(
                 &DEFAULT_SATURATING_TREND_TAUS_YEARS,
             ),
-            parameter_inputs: params_to_input_strings(&selected_family.default_params()),
+            parameter_inputs: params_to_input_drafts(&selected_family.default_params()),
             optimizer_method: OptimizerMethod::Lbfgs,
             optimizer_mode: OptimizerUiMode::Basic,
             optimization_loss_metric: OptimizationLossMetric::default(),

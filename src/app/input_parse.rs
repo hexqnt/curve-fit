@@ -1,4 +1,4 @@
-//! Парсинг пользовательских строк в типизированные начальные параметры и узлы сплайна.
+//! Сборка типизированных начальных параметров и узлов сплайна из числовых черновиков.
 
 use super::*;
 
@@ -7,9 +7,9 @@ use super::*;
 pub(super) struct ParsedInitialParams(CurveParams);
 
 impl ParsedInitialParams {
-    pub(super) fn parse(
+    pub(super) fn from_drafts(
         family: CurveFamily,
-        inputs: &[String],
+        inputs: &[NumberDraft],
         saturating_trend_tau_grid: Option<&SaturatingTrendTauGrid>,
     ) -> Result<Self, String> {
         let expected_count = family.parameter_count();
@@ -20,7 +20,7 @@ impl ParsedInitialParams {
             ));
         }
 
-        let values = parse_indexed_f64_inputs(inputs, "parameter")?;
+        let values = collect_input_values(inputs, "parameter")?;
 
         let params =
             CurveParams::try_from_slice_with_tau_grid(family, &values, saturating_trend_tau_grid)
@@ -38,7 +38,10 @@ impl ParsedInitialParams {
 pub(super) struct ParsedSaturatingTrendTauGrid(SaturatingTrendTauGrid);
 
 impl ParsedSaturatingTrendTauGrid {
-    pub(super) fn parse(inputs: &[String], expected_count: usize) -> Result<Self, String> {
+    pub(super) fn from_drafts(
+        inputs: &[NumberDraft],
+        expected_count: usize,
+    ) -> Result<Self, String> {
         if inputs.len() < expected_count {
             return Err(format!(
                 "Saturating-trend tau grid expects at least {expected_count} values, got {}",
@@ -46,7 +49,7 @@ impl ParsedSaturatingTrendTauGrid {
             ));
         }
 
-        let values = parse_indexed_f64_inputs(&inputs[..expected_count], "tau")?;
+        let values = collect_input_values(&inputs[..expected_count], "tau")?;
 
         let grid =
             SaturatingTrendTauGrid::from_values(&values).map_err(|error| error.to_string())?;
@@ -65,7 +68,10 @@ pub(super) struct ParsedSplineInitialKnotY {
 }
 
 impl ParsedSplineInitialKnotY {
-    pub(super) fn parse(inputs: &[String], expected_count: usize) -> Result<Self, String> {
+    pub(super) fn from_drafts(
+        inputs: &[NumberDraft],
+        expected_count: usize,
+    ) -> Result<Self, String> {
         if inputs.len() != expected_count {
             return Err(format!(
                 "Spline initialization expects {expected_count} values, got {}",
@@ -74,7 +80,7 @@ impl ParsedSplineInitialKnotY {
         }
 
         Ok(Self {
-            values: parse_indexed_f64_inputs(inputs, "spline_knot_y")?,
+            values: collect_input_values(inputs, "spline_knot_y")?,
         })
     }
 
@@ -95,7 +101,7 @@ impl CurveFitApp {
         })?;
 
         let tau_grid = self.parsed_saturating_trend_tau_grid()?;
-        ParsedInitialParams::parse(family, &self.parameter_inputs, tau_grid.as_ref())
+        ParsedInitialParams::from_drafts(family, &self.parameter_inputs, tau_grid.as_ref())
     }
 
     pub(super) fn parsed_saturating_trend_tau_grid(
@@ -108,7 +114,7 @@ impl CurveFitApp {
         else {
             return Ok(None);
         };
-        ParsedSaturatingTrendTauGrid::parse(&self.saturating_trend_tau_inputs, expected_count)
+        ParsedSaturatingTrendTauGrid::from_drafts(&self.saturating_trend_tau_inputs, expected_count)
             .map(ParsedSaturatingTrendTauGrid::into_tau_grid)
             .map(Some)
     }
@@ -117,14 +123,14 @@ impl CurveFitApp {
         &self,
         expected_count: usize,
     ) -> Result<ParsedSplineInitialKnotY, String> {
-        ParsedSplineInitialKnotY::parse(&self.spline_initial_knot_y_inputs, expected_count)
+        ParsedSplineInitialKnotY::from_drafts(&self.spline_initial_knot_y_inputs, expected_count)
     }
 }
 
-fn parse_indexed_f64_inputs(inputs: &[String], field_prefix: &str) -> Result<Vec<f64>, String> {
+fn collect_input_values(inputs: &[NumberDraft], field_prefix: &str) -> Result<Vec<f64>, String> {
     inputs
         .iter()
         .enumerate()
-        .map(|(index, raw_value)| parse_f64(format_args!("{field_prefix}[{index}]"), raw_value))
+        .map(|(index, draft)| draft.value(format_args!("{field_prefix}[{index}]")))
         .collect()
 }

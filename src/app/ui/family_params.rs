@@ -1,7 +1,7 @@
 //! Выбор модели и начальных параметров на правой панели.
 
-use super::components::{parameter_grid, parameter_input};
 use super::*;
+use crate::app::widgets::{Choice, InitAction, InitializationMenu, ParameterInput, parameter_grid};
 
 const COLLAPSED_MODEL_SELECTOR_WIDTH: f32 = 170.0;
 const COLLAPSED_MODEL_SELECTOR_MENU_MIN_WIDTH: f32 = 260.0;
@@ -70,7 +70,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.set_saturating_trend_tau_inputs(&DEFAULT_SATURATING_TREND_TAUS_YEARS);
                 tau_grid_changed = true;
             }
-            let _ = components::info_hover(
+            let _ = widgets::info_hover(
                 reset_tau_grid,
                 tr(
                     language,
@@ -87,8 +87,10 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 .take(app.saturating_trend_tau_count)
                 .enumerate()
             {
-                let response =
-                    parameter_input(ui, format!("tau{}", index + 1), value, can_edit_params);
+                let response = ui.add_enabled(
+                    can_edit_params,
+                    ParameterInput::new(format!("tau{}", index + 1), value, language),
+                );
                 if response.changed() {
                     tau_grid_changed = true;
                 }
@@ -105,68 +107,16 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     }
 
     if let Some(family) = app.resolved_model().parametric_family() {
-        let mut method_to_apply = None;
-        let mut apply_fitted_init = false;
-        ui.horizontal_wrapped(|ui| {
-            let init_label_response =
-                ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            let _ = components::info_hover(init_label_response, parametric_init_hint(language));
-            ui.add_enabled_ui(can_edit_params, |ui| {
-                ui.menu_button(
-                    tr(language, "+ Initialize", "+ Инициализация"),
-                    |ui| {
-                        let fitted_init_available = app.has_fitted_params_for_family(family);
-                        if fitted_init_available {
-                            if ui
-                                .button(tr(language, "From fitted model", "Из обученной модели"))
-                                .clicked()
-                            {
-                                apply_fitted_init = true;
-                                ui.close();
-                            }
-                        } else {
-                            ui.add_enabled(
-                                false,
-                                egui::Button::new(tr(
-                                    language,
-                                    "From fitted model (fit this model first)",
-                                    "Из обученной модели (сначала обучите эту модель)",
-                                )),
-                            );
-                        }
-                        ui.separator();
-                        for method in ParamInitMethod::ALL {
-                            if method.is_supported_for_family(family) {
-                                if ui
-                                    .button(param_init_method_label(language, method))
-                                    .clicked()
-                                {
-                                    method_to_apply = Some(method);
-                                    ui.close();
-                                }
-                            } else {
-                                let unavailable_label = format!(
-                                    "{} ({})",
-                                    param_init_method_label(language, method),
-                                    tr(language, "not available", "недоступно")
-                                );
-                                let unavailable_response =
-                                    ui.add_enabled(false, egui::Button::new(unavailable_label));
-                                let _ = components::info_hover(
-                                    unavailable_response,
-                                    param_init_method_disabled_label(language, method),
-                                );
-                            }
-                        }
-                    },
-                );
-            });
-        });
-
-        if apply_fitted_init {
-            app.apply_fitted_param_init();
-        } else if let Some(method) = method_to_apply {
-            app.apply_param_init_method(method);
+        let action = InitializationMenu::parametric(
+            language,
+            family,
+            app.has_fitted_params_for_family(family),
+        )
+        .show(ui, can_edit_params);
+        match action {
+            Some(InitAction::FromFitted) => app.apply_fitted_param_init(),
+            Some(InitAction::Method(method)) => app.apply_param_init_method(method),
+            None => {}
         }
 
         parameter_grid("parametric_initial_params_grid").show(ui, |ui| {
@@ -175,7 +125,10 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 .iter()
                 .zip(&mut app.parameter_inputs)
             {
-                parameter_input(ui, *parameter_name, value, can_edit_params);
+                ui.add_enabled(
+                    can_edit_params,
+                    ParameterInput::new(*parameter_name, value, language),
+                );
                 ui.end_row();
             }
         });
@@ -188,31 +141,9 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         };
         app.spline_knots = app.spline_knots.max(min_knots);
         app.sync_spline_initial_knot_y_inputs(app.spline_knots);
-        let mut spline_method_to_apply = None;
-
-        ui.horizontal_wrapped(|ui| {
-            let init_label_response =
-                ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            let _ = components::info_hover(init_label_response, spline_init_hint(language));
-            ui.add_enabled_ui(can_edit_params, |ui| {
-                ui.menu_button(
-                    tr(language, "+ Initialize", "+ Инициализация"),
-                    |ui| {
-                        for method in ParamInitMethod::ALL {
-                            if ui
-                                .button(param_init_method_label(language, method))
-                                .clicked()
-                            {
-                                spline_method_to_apply = Some(method);
-                                ui.close();
-                            }
-                        }
-                    },
-                );
-            });
-        });
-
-        if let Some(method) = spline_method_to_apply {
+        if let Some(InitAction::Method(method)) =
+            InitializationMenu::spline(language).show(ui, can_edit_params)
+        {
             app.apply_spline_param_init_method(method);
         }
 
@@ -225,54 +156,27 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 )),
             )
             .on_hover_text(knot_count_hint(language));
-            egui::ComboBox::from_label(tr(language, "Knot reduction", "Редукция узлов"))
-                .selected_text(spline_knot_strategy_label(
-                    language,
-                    app.spline_knot_strategy,
-                ))
-                .show_ui(ui, |ui| {
-                    for strategy in SplineKnotStrategy::ALL {
-                        ui.selectable_value(
-                            &mut app.spline_knot_strategy,
-                            strategy,
-                            spline_knot_strategy_label(language, strategy),
-                        );
-                    }
-                })
-                .response
-                .on_hover_text(knot_reduction_hint(language));
-            egui::ComboBox::from_label(tr(language, "Extrapolation", "Экстраполяция"))
-                .selected_text(spline_extrapolation_label(
-                    language,
-                    app.spline_extrapolation,
-                ))
-                .show_ui(ui, |ui| {
-                    for extrapolation in SplineExtrapolation::ALL {
-                        ui.selectable_value(
-                            &mut app.spline_extrapolation,
-                            extrapolation,
-                            spline_extrapolation_label(language, extrapolation),
-                        );
-                    }
-                })
-                .response
-                .on_hover_text(extrapolation_hint(language));
-            egui::ComboBox::from_label(tr(language, "Duplicate x", "Дубли x"))
-                .selected_text(spline_duplicate_policy_label(
-                    language,
-                    app.spline_duplicate_x_policy,
-                ))
-                .show_ui(ui, |ui| {
-                    for policy in SplineDuplicateXPolicy::ALL {
-                        ui.selectable_value(
-                            &mut app.spline_duplicate_x_policy,
-                            policy,
-                            spline_duplicate_policy_label(language, policy),
-                        );
-                    }
-                })
-                .response
-                .on_hover_text(duplicate_x_hint(language));
+            ui.add(Choice::new(
+                egui::ComboBox::from_label(tr(language, "Knot reduction", "Редукция узлов")),
+                &mut app.spline_knot_strategy,
+                &SplineKnotStrategy::ALL,
+                |value| spline_knot_strategy_label(language, value),
+            ))
+            .on_hover_text(knot_reduction_hint(language));
+            ui.add(Choice::new(
+                egui::ComboBox::from_label(tr(language, "Extrapolation", "Экстраполяция")),
+                &mut app.spline_extrapolation,
+                &SplineExtrapolation::ALL,
+                |value| spline_extrapolation_label(language, value),
+            ))
+            .on_hover_text(extrapolation_hint(language));
+            ui.add(Choice::new(
+                egui::ComboBox::from_label(tr(language, "Duplicate x", "Дубли x")),
+                &mut app.spline_duplicate_x_policy,
+                &SplineDuplicateXPolicy::ALL,
+                |value| spline_duplicate_policy_label(language, value),
+            ))
+            .on_hover_text(duplicate_x_hint(language));
         });
         app.sync_spline_initial_knot_y_inputs(app.spline_knots);
         ui.horizontal_wrapped(|ui| {
@@ -285,8 +189,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 ),
                 app.spline_knots
             ));
-            let _ =
-                components::info_hover(spline_sampling_response, spline_sampling_hint(language));
+            let _ = widgets::info_hover(spline_sampling_response, spline_sampling_hint(language));
         });
         ui.label(tr(
             language,
@@ -300,7 +203,10 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .show(ui, |ui| {
                 parameter_grid("spline_initial_knot_y_grid").show(ui, |ui| {
                     for (index, value) in app.spline_initial_knot_y_inputs.iter_mut().enumerate() {
-                        parameter_input(ui, format!("knot_y[{index}]"), value, can_edit_params);
+                        ui.add_enabled(
+                            can_edit_params,
+                            ParameterInput::new(format!("knot_y[{index}]"), value, language),
+                        );
                         ui.end_row();
                     }
                 });
@@ -368,22 +274,6 @@ fn ui_model_selector_menu(app: &mut CurveFitApp, ui: &mut egui::Ui, language: Ui
             }
         }
     }
-}
-
-fn parametric_init_hint(language: UiLanguage) -> &'static str {
-    tr(
-        language,
-        "Initial parameters (parametric models)\n- These values are the optimizer starting point\n- +Initialize can fill defaults/data-based/randomized values\n- \"From fitted model\" reuses parameters from the latest fit of the same family",
-        "Начальные параметры (параметрические модели)\n- Эти значения являются стартовой точкой оптимизатора\n- +Инициализация может подставить значения по умолчанию/по данным/случайно\n- \"Из обученной модели\" берёт параметры из последнего фитинга того же семейства",
-    )
-}
-
-fn spline_init_hint(language: UiLanguage) -> &'static str {
-    tr(
-        language,
-        "Initial parameters (spline models)\n- Spline is non-parametric, but optimizer still tunes knot y-values\n- +Initialize sets starting knot_y values\n- Better initialization usually reduces iteration count",
-        "Начальные параметры (сплайны)\n- Сплайн непараметрический, но оптимизатор всё равно настраивает knot y\n- +Инициализация задаёт стартовые значения knot_y\n- Более удачная инициализация обычно снижает число итераций",
-    )
 }
 
 fn knot_count_hint(language: UiLanguage) -> &'static str {
