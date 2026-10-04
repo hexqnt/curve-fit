@@ -1,5 +1,6 @@
 //! Выбор модели и начальных параметров на правой панели.
 
+use super::components::{parameter_grid, parameter_input};
 use super::*;
 
 const COLLAPSED_MODEL_SELECTOR_WIDTH: f32 = 170.0;
@@ -69,7 +70,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.set_saturating_trend_tau_inputs(&DEFAULT_SATURATING_TREND_TAUS_YEARS);
                 tau_grid_changed = true;
             }
-            let _ = CurveFitApp::info_hover(
+            let _ = components::info_hover(
                 reset_tau_grid,
                 tr(
                     language,
@@ -79,23 +80,21 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             );
         });
         ui.label(tr(language, "Tau grid (years)", "Сетка tau (в годах)"));
-        egui::Grid::new("saturating_trend_tau_grid_inputs")
-            .num_columns(2)
-            .spacing(egui::vec2(8.0, 6.0))
-            .show(ui, |ui| {
-                for index in 0..app.saturating_trend_tau_count {
-                    ui.label(format!("tau{}", index + 1));
-                    let response = ui.add_enabled(
-                        can_edit_params,
-                        egui::TextEdit::singleline(&mut app.saturating_trend_tau_inputs[index])
-                            .desired_width(120.0),
-                    );
-                    if response.changed() {
-                        tau_grid_changed = true;
-                    }
-                    ui.end_row();
+        parameter_grid("saturating_trend_tau_grid_inputs").show(ui, |ui| {
+            for (index, value) in app
+                .saturating_trend_tau_inputs
+                .iter_mut()
+                .take(app.saturating_trend_tau_count)
+                .enumerate()
+            {
+                let response =
+                    parameter_input(ui, format!("tau{}", index + 1), value, can_edit_params);
+                if response.changed() {
+                    tau_grid_changed = true;
                 }
-            });
+                ui.end_row();
+            }
+        });
     }
 
     if params_need_sync {
@@ -111,7 +110,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             let init_label_response =
                 ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            let _ = CurveFitApp::info_hover(init_label_response, parametric_init_hint(language));
+            let _ = components::info_hover(init_label_response, parametric_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -153,7 +152,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                                 );
                                 let unavailable_response =
                                     ui.add_enabled(false, egui::Button::new(unavailable_label));
-                                let _ = CurveFitApp::info_hover(
+                                let _ = components::info_hover(
                                     unavailable_response,
                                     param_init_method_disabled_label(language, method),
                                 );
@@ -170,22 +169,16 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             app.apply_param_init_method(method);
         }
 
-        egui::Grid::new("parametric_initial_params_grid")
-            .num_columns(2)
-            .spacing(egui::vec2(8.0, 6.0))
-            .show(ui, |ui| {
-                for (index, parameter_name) in family.parameter_names().iter().enumerate() {
-                    let _label = ui.label(*parameter_name);
-                    let _input = ui.add_enabled(
-                        can_edit_params,
-                        egui::TextEdit::singleline(&mut app.parameter_inputs[index])
-                            .desired_width(120.0),
-                    );
-                    #[cfg(feature = "testing")]
-                    _input.labelled_by(_label.id);
-                    ui.end_row();
-                }
-            });
+        parameter_grid("parametric_initial_params_grid").show(ui, |ui| {
+            for (parameter_name, value) in family
+                .parameter_names()
+                .iter()
+                .zip(&mut app.parameter_inputs)
+            {
+                parameter_input(ui, *parameter_name, value, can_edit_params);
+                ui.end_row();
+            }
+        });
     } else {
         let Some(min_knots) = app.resolved_model().spline_min_knots() else {
             app.status = Some(StatusMessage::Error(
@@ -200,7 +193,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             let init_label_response =
                 ui.label(tr(language, "Initial parameters", "Начальные параметры"));
-            let _ = CurveFitApp::info_hover(init_label_response, spline_init_hint(language));
+            let _ = components::info_hover(init_label_response, spline_init_hint(language));
             ui.add_enabled_ui(can_edit_params, |ui| {
                 ui.menu_button(
                     tr(language, "+ Initialize", "+ Инициализация"),
@@ -293,7 +286,7 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.spline_knots
             ));
             let _ =
-                CurveFitApp::info_hover(spline_sampling_response, spline_sampling_hint(language));
+                components::info_hover(spline_sampling_response, spline_sampling_hint(language));
         });
         ui.label(tr(
             language,
@@ -305,21 +298,12 @@ pub(super) fn ui_family_and_params(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             .max_height(SPLINE_KNOT_INPUTS_MAX_HEIGHT)
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                egui::Grid::new("spline_initial_knot_y_grid")
-                    .num_columns(2)
-                    .spacing(egui::vec2(8.0, 6.0))
-                    .show(ui, |ui| {
-                        for (index, value) in
-                            app.spline_initial_knot_y_inputs.iter_mut().enumerate()
-                        {
-                            ui.label(format!("knot_y[{index}]"));
-                            ui.add_enabled(
-                                can_edit_params,
-                                egui::TextEdit::singleline(value).desired_width(120.0),
-                            );
-                            ui.end_row();
-                        }
-                    });
+                parameter_grid("spline_initial_knot_y_grid").show(ui, |ui| {
+                    for (index, value) in app.spline_initial_knot_y_inputs.iter_mut().enumerate() {
+                        parameter_input(ui, format!("knot_y[{index}]"), value, can_edit_params);
+                        ui.end_row();
+                    }
+                });
             });
     }
 }
@@ -372,7 +356,7 @@ fn ui_model_selector_menu(app: &mut CurveFitApp, ui: &mut egui::Ui, language: Ui
             ui.separator();
         }
         is_first_group = false;
-        ui.label(egui::RichText::new(model_group_label(language, group)).strong());
+        ui.strong(model_group_label(language, group));
         for model in ModelChoice::ALL {
             if model_group(model) != group {
                 continue;

@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use super::components::ToggleSwitch;
 use super::*;
 
 const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
@@ -9,8 +10,12 @@ const COLLAPSED_METRIC_SELECTOR_WIDTH: f32 = 150.0;
 pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let language = app.ui_language;
     ui.horizontal_wrapped(|ui| {
-        let metric_response = ui_optimization_metric_selector(app, ui, false);
-        let _ = CurveFitApp::info_hover(
+        let metric_response = ui_optimization_metric_selector(
+            app,
+            ui,
+            egui::ComboBox::from_label(tr(language, "Metric", "Метрика")),
+        );
+        let _ = components::info_hover(
             metric_response,
             tr(
                 language,
@@ -19,18 +24,16 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             ),
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
     ui.horizontal_wrapped(|ui| {
-        let quantization_response = CurveFitApp::toggle_switch_labeled(
-            ui,
-            &mut app.metric_quantization_enabled,
-            tr(
-                language,
-                "Quantize objective/metrics before residual",
-                "Квантизовать objective/метрики перед residual",
-            ),
+        let label = tr(
+            language,
+            "Quantize objective/metrics before residual",
+            "Квантизовать objective/метрики перед residual",
         );
-        let _ = CurveFitApp::info_hover(
+        let quantization_response =
+            ui.add(ToggleSwitch::new(&mut app.metric_quantization_enabled).label(label));
+        let _ = components::info_hover(
             quantization_response,
             tr(
                 language,
@@ -55,46 +58,35 @@ pub(super) fn ui_optimization_metric(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 }
 
 pub(super) fn ui_optimization_metric_selector_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
-    ui_optimization_metric_selector(app, ui, true);
+    ui_optimization_metric_selector(
+        app,
+        ui,
+        egui::ComboBox::from_id_salt("collapsed_header_optimization_metric_selector")
+            .width(COLLAPSED_METRIC_SELECTOR_WIDTH),
+    );
 }
 
 fn ui_optimization_metric_selector(
     app: &mut CurveFitApp,
     ui: &mut egui::Ui,
-    compact: bool,
+    selector: egui::ComboBox,
 ) -> egui::Response {
     let language = app.ui_language;
-    let selected_text = optimization_loss_metric_label(language, app.optimization_loss_metric);
-    if compact {
-        egui::ComboBox::from_id_salt("collapsed_header_optimization_metric_selector")
-            .selected_text(selected_text)
-            .width(COLLAPSED_METRIC_SELECTOR_WIDTH)
-            .show_ui(ui, |ui| {
-                ui_optimization_metric_selector_menu(app, ui, language);
-            })
-            .response
-    } else {
-        egui::ComboBox::from_label(tr(language, "Metric", "Метрика"))
-            .selected_text(selected_text)
-            .show_ui(ui, |ui| {
-                ui_optimization_metric_selector_menu(app, ui, language);
-            })
-            .response
-    }
-}
-
-fn ui_optimization_metric_selector_menu(
-    app: &mut CurveFitApp,
-    ui: &mut egui::Ui,
-    language: UiLanguage,
-) {
-    for metric in OptimizationLossMetric::ALL {
-        ui.selectable_value(
-            &mut app.optimization_loss_metric,
-            metric,
-            optimization_loss_metric_label(language, metric),
-        );
-    }
+    selector
+        .selected_text(optimization_loss_metric_label(
+            language,
+            app.optimization_loss_metric,
+        ))
+        .show_ui(ui, |ui| {
+            for metric in OptimizationLossMetric::ALL {
+                ui.selectable_value(
+                    &mut app.optimization_loss_metric,
+                    metric,
+                    optimization_loss_metric_label(language, metric),
+                );
+            }
+        })
+        .response
 }
 
 pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {
@@ -102,11 +94,7 @@ pub(super) fn ui_status(app: &CurveFitApp, ui: &mut egui::Ui) {
         let color = if status.is_error() {
             ui.visuals().error_fg_color
         } else {
-            if ui.visuals().dark_mode {
-                egui::Color32::from_rgb(112, 211, 202)
-            } else {
-                egui::Color32::from_rgb(24, 131, 141)
-            }
+            style::UiColors::for_visuals(ui.visuals()).success
         };
         ui.horizontal(|ui| {
             ui.colored_label(color, "●");

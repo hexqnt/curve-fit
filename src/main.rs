@@ -64,16 +64,16 @@ fn show_app_loader_error(
     app_loader_spinner: Option<&web_sys::Element>,
     app_loader_status: Option<&web_sys::Element>,
 ) {
-    if let Some(app_loader) = app_loader {
-        if let Err(error) = app_loader.set_attribute("class", "app-loader app-loader-error") {
-            eprintln!("Failed to update app loader state: {error:?}");
-        }
+    if let Some(app_loader) = app_loader
+        && let Err(error) = app_loader.set_attribute("class", "app-loader app-loader-error")
+    {
+        eprintln!("Failed to update app loader state: {error:?}");
     }
 
-    if let Some(app_loader_spinner) = app_loader_spinner {
-        if let Err(error) = app_loader_spinner.set_attribute("style", "display: none;") {
-            eprintln!("Failed to hide app loader spinner: {error:?}");
-        }
+    if let Some(app_loader_spinner) = app_loader_spinner
+        && let Err(error) = app_loader_spinner.set_attribute("style", "display: none;")
+    {
+        eprintln!("Failed to hide app loader spinner: {error:?}");
     }
 
     if let Some(app_loader_status) = app_loader_status {

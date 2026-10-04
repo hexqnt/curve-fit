@@ -54,14 +54,14 @@ use self::formula::{formula_svg_bytes, formula_svg_uri};
 use self::i18n::file_import_icon_image;
 use self::i18n::{
     actions_icon_image, center_origin_icon_image, clear_icon_image, clipboard_import_icon_image,
-    family_label, fit_icon_image, fit_to_content_icon_image, github_mark_image,
-    language_flag_image, layer_delete_icon_image, layer_duplicate_icon_image,
-    layer_hidden_icon_image, layer_new_icon_image, layer_visible_icon_image, model_choice_label,
-    open_formula_icon_image, optimization_loss_metric_label, origin_bottom_left_icon_image,
-    panels_icon_image, param_init_method_disabled_label, param_init_method_label,
-    param_init_method_name_en, redo_icon_image, replay_pause_icon_image, replay_play_icon_image,
-    reset_icon_image, spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label,
-    stop_icon_image, tool_icon_image, tr, undo_icon_image, view_icon_image,
+    family_label, fit_to_content_icon_image, github_mark_image, language_flag_image,
+    layer_delete_icon_image, layer_duplicate_icon_image, layer_hidden_icon_image,
+    layer_new_icon_image, layer_visible_icon_image, model_choice_label, open_formula_icon_image,
+    optimization_loss_metric_label, origin_bottom_left_icon_image, panels_icon_image,
+    param_init_method_disabled_label, param_init_method_label, param_init_method_name_en,
+    redo_icon_image, replay_pause_icon_image, replay_play_icon_image, reset_icon_image,
+    spline_extrapolation_label, spline_knot_strategy_label, spray_brush_label, tool_icon_image, tr,
+    undo_icon_image, view_icon_image,
 };
 use self::model_catalog::{
     ModelChoice, ModelGroup, ResolvedModel, model_group, model_group_label,
@@ -161,15 +161,13 @@ const POINTS_PARSE_DEBOUNCE_MS: u64 = 180;
 const POINTS_HISTORY_LIMIT: usize = 256;
 const POINTS_PARSE_ERROR_PREFIX: &str = "Points parse error: ";
 const CLIPBOARD_IMPORT_ERROR_PREFIX: &str = "Clipboard import error: ";
+#[cfg(not(target_arch = "wasm32"))]
 const FILE_IMPORT_ERROR_PREFIX: &str = "File import error: ";
 #[cfg(target_arch = "wasm32")]
 const CLIPBOARD_COPY_ERROR_PREFIX: &str = "Clipboard copy error: ";
 #[cfg(not(target_arch = "wasm32"))]
 const CLIPBOARD_IMPORT_PASTE_TIMEOUT_MS: u64 = 1_500;
 const POINTS_POSITIVE_AXIS_EPS: f64 = 1e-6;
-const UI_CORNER_RADIUS: u8 = 6;
-const PANEL_INNER_MARGIN_X: i8 = 10;
-const PANEL_INNER_MARGIN_Y: i8 = 8;
 const APP_VERSION_LABEL: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const APP_REPOSITORY_URL: &str = env!("CARGO_PKG_REPOSITORY");
 const REPLAY_FAST_REPAINT_INTERVAL_MS: u64 = 16;

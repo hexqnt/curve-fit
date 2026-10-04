@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use curve_fit::{OptimizerConfig, OptimizerMethod, testing};
-use curve_fit_test_support::{AppHarness, harness, state};
+use curve_fit_test_support::{
+    AppHarness, harness, harness_with_paused_fit, harness_with_size, state,
+};
 use eframe::egui::{self, Key, Modifiers, accesskit::Role};
 use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
@@ -11,6 +13,8 @@ mod initialization;
 mod layers;
 mod optimizer;
 mod points;
+#[cfg(target_os = "linux")]
+mod visual;
 mod windows;
 
 fn click(harness: &mut AppHarness, label: &str) {
@@ -80,16 +84,51 @@ fn fit_and_wait(harness: &mut AppHarness) {
         click(harness, "Auto-play");
         assert!(!state(harness).auto_play_on_fit);
     }
+    harness
+        .get_by_role_and_label(Role::Button, "Fit")
+        .scroll_to_me();
+    harness.run();
     harness.get_by_role_and_label(Role::Button, "Fit").click();
     harness.step();
+    wait_for_fit(harness);
+    let snapshot = state(harness);
+    assert!(snapshot.error.is_none(), "Fit failed: {:?}", snapshot.error);
+    assert!(
+        snapshot.fit_result.is_some() || snapshot.spline_result.is_some(),
+        "Fit produced no result"
+    );
+    harness.run();
+}
+
+fn wait_for_fit(harness: &mut AppHarness) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while state(harness).fit_in_progress {
         assert!(Instant::now() < deadline, "Fit did not complete in time");
         std::thread::sleep(Duration::from_millis(1));
         harness.step();
     }
-    let snapshot = state(harness);
-    assert!(snapshot.error.is_none(), "Fit failed: {:?}", snapshot.error);
-    assert!(snapshot.fit_result.is_some(), "Fit produced no result");
     harness.run();
+}
+
+fn start_paused_fit(harness: &mut AppHarness) {
+    if state(harness).auto_play_on_fit {
+        click(harness, "Auto-play");
+    }
+    harness
+        .get_by_role_and_label(Role::Button, "Fit")
+        .scroll_to_me();
+    harness.run();
+    harness.get_by_role_and_label(Role::Button, "Fit").click();
+    // Второй кадр обновляет доступность полей после обработки нажатия Fit.
+    harness.run_steps(2);
+    assert!(
+        state(harness).fit_in_progress,
+        "Fit did not start: {:?}",
+        state(harness).error
+    );
+    assert!(
+        harness
+            .query_by_role_and_label(Role::Button, "Stop")
+            .is_some()
+    );
 }

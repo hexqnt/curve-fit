@@ -82,6 +82,7 @@ impl ParsedSplineInitialKnotY {
         self.values.as_slice()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn into_vec(self) -> Vec<f64> {
         self.values
     }

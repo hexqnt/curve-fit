@@ -1,5 +1,6 @@
 //! Верхняя панель с управлением видом, replay и языком интерфейса.
 
+use super::components::ToggleSwitch;
 use super::*;
 
 pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
@@ -58,21 +59,22 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     panels_icon_image(icon_tint),
                     tr(language, "Panels", "Панели"),
                     |ui| {
-                        CurveFitApp::toggle_switch_labeled(
-                            ui,
-                            &mut app.panel.show_left,
-                            tr(language, "Left panel", "Левая панель"),
-                        );
-                        CurveFitApp::toggle_switch_labeled(
-                            ui,
-                            &mut app.panel.show_right,
-                            tr(language, "Right panel", "Правая панель"),
-                        );
-                        CurveFitApp::toggle_switch_labeled(
-                            ui,
-                            &mut app.panel.show_diagnostics,
-                            tr(language, "Diagnostics", "Диагностика"),
-                        );
+                        for (on, label) in [
+                            (
+                                &mut app.panel.show_left,
+                                tr(language, "Left panel", "Левая панель"),
+                            ),
+                            (
+                                &mut app.panel.show_right,
+                                tr(language, "Right panel", "Правая панель"),
+                            ),
+                            (
+                                &mut app.panel.show_diagnostics,
+                                tr(language, "Diagnostics", "Диагностика"),
+                            ),
+                        ] {
+                            ui.add(ToggleSwitch::new(on).label(label));
+                        }
                     },
                 );
 
@@ -82,7 +84,7 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     tr(language, "Formula", "Формула"),
                 )
                 .selected(app.panel.show_formula_window);
-                let formula_response = CurveFitApp::info_hover(
+                let formula_response = components::info_hover(
                     ui.add(formula_button),
                     tr(
                         language,
@@ -101,7 +103,7 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     app.replay_selected_iteration().unwrap_or(min_iteration);
                 let replay_slider_enabled = !app.fit_in_progress && !app.replay.frames.is_empty();
                 let replay_hint = replay_controls_hint(language);
-                let response = CurveFitApp::info_hover(
+                let response = components::info_hover(
                     ui.add_enabled(
                         replay_slider_enabled,
                         egui::Slider::new(&mut selected_iteration, min_iteration..=max_iteration)
@@ -113,12 +115,10 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     app.pause_replay();
                     app.select_nearest_replay_iteration(selected_iteration);
                 }
-                let autoplay_response = CurveFitApp::toggle_switch_labeled(
-                    ui,
-                    &mut app.replay.autoplay_on_fit,
-                    tr(language, "Auto-play", "Автопромотка"),
-                );
-                let _ = CurveFitApp::info_hover(autoplay_response, replay_hint);
+                let autoplay_label = tr(language, "Auto-play", "Автопромотка");
+                let autoplay_response = ui
+                    .add(ToggleSwitch::new(&mut app.replay.autoplay_on_fit).label(autoplay_label));
+                let _ = components::info_hover(autoplay_response, replay_hint);
                 let (play_icon, play_label) = if app.replay.autoplay {
                     (
                         replay_pause_icon_image(icon_tint),
@@ -131,7 +131,7 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     )
                 };
                 let can_toggle_play = !app.fit_in_progress && app.replay.frames.len() > 1;
-                let play_response = CurveFitApp::info_hover(
+                let play_response = components::info_hover(
                     ui.add_enabled(
                         can_toggle_play,
                         egui::Button::image_and_text(play_icon, play_label),
@@ -147,7 +147,7 @@ pub(super) fn ui_header(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                         .step_by(0.01)
                         .text(tr(language, "Replay step, sec", "Шаг промотки, сек")),
                 );
-                let _ = CurveFitApp::info_hover(replay_step_response, replay_hint);
+                let _ = components::info_hover(replay_step_response, replay_hint);
             });
         });
 }

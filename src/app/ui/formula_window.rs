@@ -44,7 +44,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                 "Окно справки по формуле\n- Каждый раздел рендерится через LaTeX и имеет текстовый fallback\n- Можно копировать только модель или всю справку целиком",
             );
             ui.horizontal_wrapped(|ui| {
-                let copy_model_response = CurveFitApp::info_hover(
+                let copy_model_response = components::info_hover(
                     ui.button(tr(language, "Copy model formula", "Скопировать формулу модели")),
                     formula_window_hint,
                 );
@@ -61,7 +61,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                     app.copy_text_to_clipboard(ui.ctx(), formula_info.reference_plain_text.clone());
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(style::CONTENT_GAP);
             egui::ScrollArea::vertical()
                 .id_salt("formula_window_sections_scroll")
                 .auto_shrink([false, false])
@@ -69,15 +69,15 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                     let dark_mode = ui.visuals().dark_mode;
                     for (index, section) in formula_info.sections.iter().enumerate() {
                         if index > 0 {
-                            ui.add_space(6.0);
+                            ui.add_space(style::SEPARATOR_GAP);
                             ui.separator();
-                            ui.add_space(6.0);
+                            ui.add_space(style::SEPARATOR_GAP);
                         }
                         egui::CollapsingHeader::new(section.title.as_str())
                             .id_salt(("formula_window_section", index))
                             .default_open(true)
                             .show(ui, |ui| {
-                                ui.add_space(2.0);
+                                ui.add_space(style::SECTION_GAP);
                                 ui.push_id(index, |ui| {
                                     let svg_result =
                                         app.cached_formula_svg(&section.render_latex, dark_mode);
@@ -96,7 +96,7 @@ pub(super) fn ui_formula_window(app: &mut CurveFitApp, ctx: &egui::Context) {
                                             }
                                         });
                                 });
-                                ui.add_space(4.0);
+                                ui.add_space(style::CONTENT_GAP);
                                 ui.label(egui::RichText::new(section.description.as_str()).small());
                             });
                     }

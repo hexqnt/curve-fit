@@ -21,27 +21,15 @@ pub(super) fn ui_iteration_diagnostics(app: &mut CurveFitApp, ui: &mut egui::Ui)
     if app.panel.diagnostics_tab != previous_tab {
         app.panel.diagnostics_shared_axis_width = 0.0;
     }
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
 
-    let (loss_color, residual_color, zero_color) = if ui.visuals().dark_mode {
-        (
-            egui::Color32::from_rgb(245, 126, 95),
-            egui::Color32::from_rgb(106, 198, 230),
-            egui::Color32::from_rgb(131, 147, 160),
-        )
-    } else {
-        (
-            egui::Color32::from_rgb(181, 93, 67),
-            egui::Color32::from_rgb(40, 131, 165),
-            egui::Color32::from_rgb(139, 151, 160),
-        )
-    };
+    let colors = style::UiColors::for_visuals(ui.visuals());
 
     match app.panel.diagnostics_tab {
-        DiagnosticsTab::Loss => ui_loss_diagnostics(app, ui, language, loss_color),
+        DiagnosticsTab::Loss => ui_loss_diagnostics(app, ui, language, colors.loss),
         DiagnosticsTab::Gradient => ui_gradient_diagnostics(app, ui, language),
         DiagnosticsTab::Residuals => {
-            ui_residuals_diagnostics(app, ui, language, residual_color, zero_color)
+            ui_residuals_diagnostics(app, ui, language, colors.residual, colors.zero_line)
         }
     }
 }

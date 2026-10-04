@@ -1,16 +1,7 @@
 //! Панель выбора оптимизатора, preset-ов и настроек запуска подгонки.
 
+use super::components::{FitAction, FitActionButton, ToggleSwitch, value_grid, value_row};
 use super::*;
-
-const COMPACT_FIT_BUTTON_WIDTH: f32 = 118.0;
-const COMPACT_FIT_BUTTON_HEIGHT: f32 = 30.0;
-const FULL_FIT_BUTTON_HEIGHT: f32 = 34.0;
-
-fn summary_row(ui: &mut egui::Ui, label: &str, value: impl std::fmt::Display) {
-    ui.label(label);
-    ui.monospace(value.to_string());
-    ui.end_row();
-}
 
 fn ui_log_slider(
     ui: &mut egui::Ui,
@@ -73,7 +64,7 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             OptimizerUiMode::Basic,
             tr(language, "Basic", "Базовый"),
         );
-        let _ = CurveFitApp::info_hover(
+        let _ = components::info_hover(
             basic_response,
             optimizer_mode_hint(language, OptimizerUiMode::Basic),
         );
@@ -82,7 +73,7 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
             OptimizerUiMode::Advanced,
             tr(language, "Advanced", "Продвинутый"),
         );
-        let _ = CurveFitApp::info_hover(
+        let _ = components::info_hover(
             advanced_response,
             optimizer_mode_hint(language, OptimizerUiMode::Advanced),
         );
@@ -118,68 +109,77 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 app.apply_selected_optimizer_preset(selected_preset);
             }
         }
-        ui.add_space(2.0);
-        egui::Grid::new("optimizer_basic_summary")
-            .num_columns(2)
-            .spacing(egui::vec2(8.0, 4.0))
-            .show(ui, |ui| match app.optimizer_method {
-                OptimizerMethod::Lbfgs => {
-                    summary_row(ui, "history_size", app.lbfgs_inputs.history_size);
-                    summary_row(ui, "max_iters", app.lbfgs_inputs.max_iters);
-                    summary_row(ui, "tol_grad", format!("{:.2e}", app.lbfgs_inputs.tol_grad));
-                    summary_row(ui, "tol_cost", format!("{:.2e}", app.lbfgs_inputs.tol_cost));
-                }
-                OptimizerMethod::NelderMead => {
-                    summary_row(ui, "max_iters", app.nelder_mead_inputs.max_iters);
-                    summary_row(
-                        ui,
-                        "simplex_scale",
-                        format!("{:.3}", app.nelder_mead_inputs.simplex_scale),
-                    );
-                    summary_row(
-                        ui,
-                        "sd_tolerance",
-                        format!("{:.2e}", app.nelder_mead_inputs.sd_tolerance),
-                    );
-                }
-                OptimizerMethod::SteepestDescent => {
-                    summary_row(ui, "max_iters", app.steepest_descent_inputs.max_iters);
-                    summary_row(ui, "c1", format!("{:.2e}", app.steepest_descent_inputs.c1));
-                    summary_row(ui, "c2", format!("{:.3}", app.steepest_descent_inputs.c2));
-                    summary_row(
-                        ui,
-                        "width_tolerance",
-                        format!("{:.2e}", app.steepest_descent_inputs.width_tolerance),
-                    );
-                }
-                OptimizerMethod::NewtonCg => {
-                    summary_row(ui, "max_iters", app.newton_cg_inputs.max_iters);
-                    summary_row(ui, "tol", format!("{:.2e}", app.newton_cg_inputs.tol));
-                    summary_row(
-                        ui,
-                        "curvature_threshold",
-                        format!("{:.2e}", app.newton_cg_inputs.curvature_threshold),
-                    );
-                    summary_row(ui, "c1", format!("{:.2e}", app.newton_cg_inputs.c1));
-                    summary_row(ui, "c2", format!("{:.3}", app.newton_cg_inputs.c2));
-                }
-                OptimizerMethod::Sgd => {
-                    summary_row(ui, "max_iters", app.sgd_inputs.max_iters);
-                    summary_row(
-                        ui,
-                        "learning_rate",
-                        format!("{:.2e}", app.sgd_inputs.learning_rate),
-                    );
-                }
-                OptimizerMethod::Adam => {
-                    summary_row(ui, "max_iters", app.adam_inputs.max_iters);
-                    summary_row(
-                        ui,
-                        "learning_rate",
-                        format!("{:.2e}", app.adam_inputs.learning_rate),
-                    );
-                }
-            });
+        ui.add_space(style::SECTION_GAP);
+        value_grid("optimizer_basic_summary").show(ui, |ui| match app.optimizer_method {
+            OptimizerMethod::Lbfgs => {
+                value_row(
+                    ui,
+                    "history_size",
+                    app.lbfgs_inputs.history_size.to_string(),
+                );
+                value_row(ui, "max_iters", app.lbfgs_inputs.max_iters.to_string());
+                value_row(ui, "tol_grad", format!("{:.2e}", app.lbfgs_inputs.tol_grad));
+                value_row(ui, "tol_cost", format!("{:.2e}", app.lbfgs_inputs.tol_cost));
+            }
+            OptimizerMethod::NelderMead => {
+                value_row(
+                    ui,
+                    "max_iters",
+                    app.nelder_mead_inputs.max_iters.to_string(),
+                );
+                value_row(
+                    ui,
+                    "simplex_scale",
+                    format!("{:.3}", app.nelder_mead_inputs.simplex_scale),
+                );
+                value_row(
+                    ui,
+                    "sd_tolerance",
+                    format!("{:.2e}", app.nelder_mead_inputs.sd_tolerance),
+                );
+            }
+            OptimizerMethod::SteepestDescent => {
+                value_row(
+                    ui,
+                    "max_iters",
+                    app.steepest_descent_inputs.max_iters.to_string(),
+                );
+                value_row(ui, "c1", format!("{:.2e}", app.steepest_descent_inputs.c1));
+                value_row(ui, "c2", format!("{:.3}", app.steepest_descent_inputs.c2));
+                value_row(
+                    ui,
+                    "width_tolerance",
+                    format!("{:.2e}", app.steepest_descent_inputs.width_tolerance),
+                );
+            }
+            OptimizerMethod::NewtonCg => {
+                value_row(ui, "max_iters", app.newton_cg_inputs.max_iters.to_string());
+                value_row(ui, "tol", format!("{:.2e}", app.newton_cg_inputs.tol));
+                value_row(
+                    ui,
+                    "curvature_threshold",
+                    format!("{:.2e}", app.newton_cg_inputs.curvature_threshold),
+                );
+                value_row(ui, "c1", format!("{:.2e}", app.newton_cg_inputs.c1));
+                value_row(ui, "c2", format!("{:.3}", app.newton_cg_inputs.c2));
+            }
+            OptimizerMethod::Sgd => {
+                value_row(ui, "max_iters", app.sgd_inputs.max_iters.to_string());
+                value_row(
+                    ui,
+                    "learning_rate",
+                    format!("{:.2e}", app.sgd_inputs.learning_rate),
+                );
+            }
+            OptimizerMethod::Adam => {
+                value_row(ui, "max_iters", app.adam_inputs.max_iters.to_string());
+                value_row(
+                    ui,
+                    "learning_rate",
+                    format!("{:.2e}", app.adam_inputs.learning_rate),
+                );
+            }
+        });
     } else {
         match app.optimizer_method {
             OptimizerMethod::Lbfgs => {
@@ -319,7 +319,7 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     }
 
     ui.separator();
-    ui_fit_action_button(app, ui, false, true);
+    ui_fit_action_button(app, ui, FitControlsLayout::Expanded);
     if app.fit_in_progress
         && let Some(iteration) = app.fit_preview_iteration
     {
@@ -331,58 +331,44 @@ pub(super) fn ui_optimizer(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 }
 
 pub(super) fn ui_optimizer_action_button_compact(app: &mut CurveFitApp, ui: &mut egui::Ui) {
-    ui_fit_action_button(app, ui, true, false);
+    ui_fit_action_button(app, ui, FitControlsLayout::Collapsed);
 }
 
-fn ui_fit_action_button(
-    app: &mut CurveFitApp,
-    ui: &mut egui::Ui,
-    compact: bool,
-    show_auto_refit_toggle: bool,
-) {
-    let (fill, stroke, text_color) = CurveFitApp::action_button_style(ui, app.fit_in_progress);
-    let (icon, text) = if app.fit_in_progress {
-        (
-            stop_icon_image(text_color),
-            tr(app.ui_language, "Stop", "Стоп"),
-        )
-    } else {
-        (
-            fit_icon_image(text_color),
-            tr(app.ui_language, "Fit", "Фитинг"),
-        )
-    };
+#[derive(Clone, Copy)]
+enum FitControlsLayout {
+    Expanded,
+    Collapsed,
+}
 
+fn ui_fit_action_button(app: &mut CurveFitApp, ui: &mut egui::Ui, layout: FitControlsLayout) {
+    let language = app.ui_language;
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if show_auto_refit_toggle {
-                let auto_refit_response = CurveFitApp::toggle_switch_labeled(
-                    ui,
-                    &mut app.auto_refit_enabled,
-                    tr(app.ui_language, "Auto-refit", "Авто-рефит"),
-                );
-                let _ =
-                    CurveFitApp::info_hover(auto_refit_response, auto_refit_hint(app.ui_language));
+            if matches!(layout, FitControlsLayout::Expanded) {
+                let label = tr(language, "Auto-refit", "Авто-рефит");
+                let auto_refit_response =
+                    ui.add(ToggleSwitch::new(&mut app.auto_refit_enabled).label(label));
+                let _ = components::info_hover(auto_refit_response, auto_refit_hint(language));
             }
 
-            let min_size = if compact {
-                egui::vec2(COMPACT_FIT_BUTTON_WIDTH, COMPACT_FIT_BUTTON_HEIGHT)
-            } else {
-                egui::vec2(ui.available_width(), FULL_FIT_BUTTON_HEIGHT)
+            let min_size = match layout {
+                FitControlsLayout::Expanded => {
+                    egui::vec2(ui.available_width(), style::FULL_FIT_BUTTON_HEIGHT)
+                }
+                FitControlsLayout::Collapsed => style::COMPACT_FIT_BUTTON_SIZE,
             };
-            let action_button = egui::Button::image_and_text(
-                icon,
-                egui::RichText::new(text).strong().color(text_color),
-            )
-            .min_size(min_size)
-            .fill(fill)
-            .stroke(stroke)
-            .corner_radius(egui::CornerRadius::same(UI_CORNER_RADIUS + 1));
-            if ui.add(action_button).clicked() {
-                if app.fit_in_progress {
-                    app.request_stop_fit();
-                } else {
-                    app.run_fit();
+            let action = if app.fit_in_progress {
+                FitAction::Stop
+            } else {
+                FitAction::Fit
+            };
+            if ui
+                .add(FitActionButton::new(language, action).min_size(min_size))
+                .clicked()
+            {
+                match action {
+                    FitAction::Fit => app.run_fit(),
+                    FitAction::Stop => app.request_stop_fit(),
                 }
             }
         });

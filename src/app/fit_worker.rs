@@ -606,7 +606,15 @@ impl CurveFitApp {
         self.discard_fit_worker_updates = false;
         self.fit_in_progress = true;
 
+        #[cfg(feature = "testing")]
+        let resume_rx = self.first_fit_resume_rx.take();
         std::thread::spawn(move || {
+            #[cfg(feature = "testing")]
+            if let Some(resume_rx) = resume_rx {
+                // Тест отпускает первый расчёт, закрывая канал; при панике пауза тоже снимается.
+                let _ = resume_rx.recv();
+            }
+
             let progress_points = display_points.as_ref().unwrap_or(&optimization_points);
             let mut iteration_trace = Vec::new();
             let mut runner = match IncrementalFitRunner::new_with_optimizer_config_and_loss_metric_and_metric_quantization(
@@ -722,7 +730,15 @@ impl CurveFitApp {
         self.discard_fit_worker_updates = false;
         self.fit_in_progress = true;
 
+        #[cfg(feature = "testing")]
+        let resume_rx = self.first_fit_resume_rx.take();
         std::thread::spawn(move || {
+            #[cfg(feature = "testing")]
+            if let Some(resume_rx) = resume_rx {
+                // Тест отпускает первый расчёт, закрывая канал; при панике пауза тоже снимается.
+                let _ = resume_rx.recv();
+            }
+
             let mut iteration_trace = Vec::new();
             let mut runner =
                 match IncrementalSplineFitRunner::new_with_initial_knot_y_and_optimizer_config_and_loss_metric(
@@ -914,46 +930,44 @@ impl CurveFitApp {
         }
 
         let fit_seed_initial_params = initial_params.clone();
-        let (
-            optimization_points,
-            display_points,
-            active_fit_points,
-            optimization_initial_params,
-            normalization,
-        ) = if self.normalize_parametric_data && family.supports_parametric_normalization() {
-            let normalization = match ParametricNormalization::try_from_points(&points) {
-                Ok(normalization) => normalization,
-                Err(error) => {
-                    self.status = Some(StatusMessage::Error(error));
-                    return;
-                }
-            };
-            let normalized_points = match normalization.normalize_points(&points) {
-                Ok(normalized_points) => normalized_points,
-                Err(error) => {
-                    self.status = Some(StatusMessage::Error(error));
-                    return;
-                }
-            };
-            let normalized_initial_params = match normalization.normalize_params(&initial_params) {
-                Ok(normalized_params) => normalized_params,
-                Err(error) => {
-                    self.status = Some(StatusMessage::Error(error));
-                    return;
-                }
+        let (optimization_points, active_fit_points, optimization_initial_params, normalization) =
+            if self.normalize_parametric_data && family.supports_parametric_normalization() {
+                let normalization = match ParametricNormalization::try_from_points(&points) {
+                    Ok(normalization) => normalization,
+                    Err(error) => {
+                        self.status = Some(StatusMessage::Error(error));
+                        return;
+                    }
+                };
+                let normalized_points = match normalization.normalize_points(&points) {
+                    Ok(normalized_points) => normalized_points,
+                    Err(error) => {
+                        self.status = Some(StatusMessage::Error(error));
+                        return;
+                    }
+                };
+                let normalized_initial_params =
+                    match normalization.normalize_params(&initial_params) {
+                        Ok(normalized_params) => normalized_params,
+                        Err(error) => {
+                            self.status = Some(StatusMessage::Error(error));
+                            return;
+                        }
+                    };
+
+                (
+                    normalized_points,
+                    points,
+                    normalized_initial_params,
+                    Some(normalization),
+                )
+            } else {
+                let active_fit_points = points.clone();
+                (points, active_fit_points, initial_params, None)
             };
 
-            (
-                normalized_points,
-                Some(points.clone()),
-                points,
-                normalized_initial_params,
-                Some(normalization),
-            )
-        } else {
-            let active_fit_points = points.clone();
-            (points, None, active_fit_points, initial_params, None)
-        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let display_points = normalization.as_ref().map(|_| active_fit_points.clone());
 
         self.reset_fit_runtime_for_new_run();
         self.active_fit_points = Some(active_fit_points);

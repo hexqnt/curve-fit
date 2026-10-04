@@ -235,25 +235,6 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
         None
     };
     let fitted_curve_points = spline_curve_slice.or(sampled_curve.as_deref());
-    let fitted_line_name = if spline_curve_slice.is_some() {
-        if let Some(iteration) = app.fit_preview_iteration {
-            format!(
-                "{} ({})",
-                model_choice_label(language, app.selected_model),
-                format_args!("{} {iteration}", tr(language, "iter", "итер."))
-            )
-        } else {
-            model_choice_label(language, app.selected_model).to_string()
-        }
-    } else if let Some(iteration) = app.fit_preview_iteration {
-        format!(
-            "{} ({})",
-            tr(language, "Fitted", "Фитинг"),
-            format_args!("{} {iteration}", tr(language, "iter", "итер."))
-        )
-    } else {
-        tr(language, "Fitted", "Фитинг").to_string()
-    };
     let content_bounds = fit_bounds_for_content(points_slice, fitted_curve_points);
     let fit_bounds = if app.fit_to_content_requested {
         content_bounds
@@ -295,11 +276,7 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
         None
     };
     let locked_tool_bounds = app.active_tool_bounds;
-    let fitted_color = if ui.visuals().dark_mode {
-        egui::Color32::from_rgb(96, 204, 238)
-    } else {
-        egui::Color32::from_rgb(24, 126, 165)
-    };
+    let fitted_color = style::UiColors::for_visuals(ui.visuals()).fitted_curve;
 
     let plot_response = Plot::new("fit_plot")
         .height(height)
@@ -334,15 +311,21 @@ pub(super) fn ui_plot(app: &mut CurveFitApp, ui: &mut egui::Ui, height: f32) {
                     );
                 }
             }
-            if let Some(fitted) = spline_curve_slice {
+            if let Some(fitted) = fitted_curve_points {
+                let fitted_line_label = if spline_curve_slice.is_some() {
+                    model_choice_label(language, app.selected_model)
+                } else {
+                    tr(language, "Fitted", "Фитинг")
+                };
+                let fitted_line_name = match app.fit_preview_iteration {
+                    Some(iteration) => format!(
+                        "{fitted_line_label} ({} {iteration})",
+                        tr(language, "iter", "итер.")
+                    ),
+                    None => fitted_line_label.to_owned(),
+                };
                 plot_ui.line(
-                    Line::new(fitted_line_name.clone(), fitted)
-                        .width(2.2_f32)
-                        .color(fitted_color),
-                );
-            } else if let Some(fitted) = sampled_curve.as_deref() {
-                plot_ui.line(
-                    Line::new(fitted_line_name.clone(), fitted)
+                    Line::new(fitted_line_name, fitted)
                         .width(2.2_f32)
                         .color(fitted_color),
                 );

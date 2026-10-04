@@ -1,7 +1,9 @@
 //! Общие UI-хелперы и разбиение интерфейса по специализированным панелям.
 
+use super::style::{COLLAPSING_HEADER_TEXT_OFFSET_X, COLLAPSING_ICON_SCALE};
 use super::*;
 
+mod components;
 mod diagnostics_panel;
 mod family_params;
 mod formula_window;
@@ -12,16 +14,8 @@ mod points_editor_panel;
 mod result_panel;
 mod status_panel;
 
-const PANEL_CARD_CORNER_RADIUS: u8 = 7;
-const PANEL_CARD_OUTER_MARGIN_Y: i8 = 4;
-const PANEL_CARD_INNER_MARGIN_X: i8 = 10;
-const PANEL_CARD_INNER_MARGIN_Y: i8 = 8;
-const SIDE_PANEL_ITEM_SPACING_X: f32 = 10.0;
-const SIDE_PANEL_ITEM_SPACING_Y: f32 = 8.0;
 const SPLINE_KNOT_INPUTS_MAX_HEIGHT: f32 = 180.0;
 const RESULT_PARAMS_MAX_HEIGHT: f32 = 190.0;
-const COLLAPSING_ICON_SCALE: f32 = 1.5;
-const COLLAPSING_HEADER_TEXT_OFFSET_X: f32 = 4.0;
 const SETTINGS_PANEL_SCROLL_ID: &str = "settings_panel_scroll";
 const DIAGNOSTICS_SERIES_ID_LOSS: &str = "diagnostics_series_loss";
 const DIAGNOSTICS_SERIES_ID_MSE: &str = "diagnostics_series_mse";
@@ -37,8 +31,7 @@ const DIAGNOSTICS_SELECTED_ITERATION_MARKER_ID_PARAMS: &str =
 
 impl CurveFitApp {
     pub(super) fn setup_side_panel_content(ui: &mut egui::Ui) {
-        ui.spacing_mut().item_spacing =
-            egui::vec2(SIDE_PANEL_ITEM_SPACING_X, SIDE_PANEL_ITEM_SPACING_Y);
+        ui.spacing_mut().item_spacing = style::ITEM_SPACING;
         ui.set_width(ui.available_width());
     }
 
@@ -55,24 +48,9 @@ impl CurveFitApp {
             });
     }
 
-    pub(super) fn panel_card_frame(ui: &egui::Ui) -> egui::Frame {
-        egui::Frame::group(ui.style())
-            .inner_margin(egui::Margin::symmetric(
-                PANEL_CARD_INNER_MARGIN_X,
-                PANEL_CARD_INNER_MARGIN_Y,
-            ))
-            .outer_margin(egui::Margin::symmetric(0, PANEL_CARD_OUTER_MARGIN_Y))
-            .corner_radius(egui::CornerRadius::same(PANEL_CARD_CORNER_RADIUS))
-            .fill(ui.visuals().faint_bg_color)
-            .stroke(egui::Stroke::new(
-                1.0_f32,
-                ui.visuals().widgets.noninteractive.bg_stroke.color,
-            ))
-    }
-
     pub(super) fn panel_card_collapsible(
         ui: &mut egui::Ui,
-        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        id_salt: impl egui::AsIdSalt,
         title: impl Into<egui::WidgetText>,
         add_body: impl FnOnce(&mut egui::Ui),
     ) {
@@ -91,7 +69,7 @@ impl CurveFitApp {
     pub(super) fn panel_card_collapsible_with_collapsed_trailing<State>(
         state: &mut State,
         ui: &mut egui::Ui,
-        id_salt: impl std::hash::Hash + std::fmt::Debug,
+        id_salt: impl egui::AsIdSalt,
         title: impl Into<egui::WidgetText>,
         add_body: impl FnOnce(&mut State, &mut egui::Ui),
         add_collapsed_trailing: impl FnOnce(&mut State, &mut egui::Ui),
@@ -118,7 +96,7 @@ impl CurveFitApp {
                     ui.spacing_mut().item_spacing = previous_item_spacing;
 
                     let mut title_response =
-                        ui.add(egui::Label::new(title.clone()).sense(egui::Sense::click()));
+                        ui.add(egui::Label::new(title).sense(egui::Sense::click()));
                     if title_response.clicked() {
                         collapsing_state.toggle(ui);
                         title_response.mark_changed();
@@ -148,122 +126,6 @@ impl CurveFitApp {
 
     pub(super) fn ui_optimization_metric_selector_compact(&mut self, ui: &mut egui::Ui) {
         status_panel::ui_optimization_metric_selector_compact(self, ui);
-    }
-
-    pub(super) fn action_button_style(
-        ui: &egui::Ui,
-        is_stop: bool,
-    ) -> (egui::Color32, egui::Stroke, egui::Color32) {
-        if is_stop {
-            if ui.visuals().dark_mode {
-                (
-                    egui::Color32::from_rgb(120, 58, 49),
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(199, 99, 82)),
-                    egui::Color32::from_rgb(255, 238, 232),
-                )
-            } else {
-                (
-                    egui::Color32::from_rgb(235, 208, 198),
-                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(194, 106, 85)),
-                    egui::Color32::from_rgb(94, 37, 23),
-                )
-            }
-        } else if ui.visuals().dark_mode {
-            (
-                egui::Color32::from_rgb(20, 94, 128),
-                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(98, 199, 232)),
-                egui::Color32::from_rgb(227, 247, 255),
-            )
-        } else {
-            (
-                egui::Color32::from_rgb(182, 224, 241),
-                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(68, 146, 178)),
-                egui::Color32::from_rgb(13, 67, 86),
-            )
-        }
-    }
-
-    fn toggle_switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
-        let desired_size = ui.spacing().interact_size.y * egui::vec2(1.50, 0.8);
-        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-
-        if response.clicked() {
-            *on = !*on;
-            response.mark_changed();
-        }
-
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, "")
-        });
-
-        if ui.is_rect_visible(rect) {
-            let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
-            let visuals = ui.style().interact_selectable(&response, *on);
-            let rect = rect.expand(visuals.expansion);
-            let radius = 0.5 * rect.height();
-
-            ui.painter().rect(
-                rect,
-                radius,
-                visuals.bg_fill,
-                visuals.bg_stroke,
-                egui::StrokeKind::Inside,
-            );
-
-            let circle_x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), how_on);
-            let center = egui::pos2(circle_x, rect.center().y);
-            ui.painter()
-                .circle(center, 0.75 * radius, visuals.bg_fill, visuals.fg_stroke);
-        }
-
-        response
-    }
-
-    fn toggle_switch_labeled(
-        ui: &mut egui::Ui,
-        on: &mut bool,
-        label: impl Into<egui::WidgetText>,
-    ) -> egui::Response {
-        let label = label.into();
-        ui.horizontal(|ui| {
-            let switch_response = Self::toggle_switch(ui, on);
-            #[cfg(feature = "testing")]
-            switch_response
-                .ctx
-                .accesskit_node_builder(switch_response.id, |node| {
-                    node.set_label(label.text());
-                });
-            let _label_response = ui.label(label);
-            #[cfg(feature = "testing")]
-            let switch_response = switch_response.labelled_by(_label_response.id);
-            switch_response
-        })
-        .inner
-    }
-
-    fn info_hover(response: egui::Response, text: impl AsRef<str>) -> egui::Response {
-        let lines = text
-            .as_ref()
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .collect::<Vec<_>>();
-        response.on_hover_ui(|ui| {
-            ui.set_max_width(380.0);
-            ui.spacing_mut().item_spacing.y = 3.0;
-            match lines.as_slice() {
-                [] => {}
-                [single] => {
-                    ui.label(*single);
-                }
-                [title, details @ ..] => {
-                    ui.label(egui::RichText::new(*title).strong());
-                    for line in details {
-                        ui.label(egui::RichText::new(*line).small());
-                    }
-                }
-            }
-        })
     }
 
     pub(super) fn next_unit_random(&mut self) -> f64 {

@@ -138,6 +138,8 @@ impl Default for CurveFitApp {
             status: Some(StatusMessage::Ready),
             #[cfg(not(target_arch = "wasm32"))]
             fit_worker_rx: None,
+            #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+            first_fit_resume_rx: None,
             #[cfg(not(target_arch = "wasm32"))]
             fit_cancel_flag: None,
             #[cfg(not(target_arch = "wasm32"))]

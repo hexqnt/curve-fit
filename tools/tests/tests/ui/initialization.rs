@@ -85,3 +85,44 @@ fn fitted_initialization_is_disabled_without_a_fit() {
             .is_disabled()
     );
 }
+
+#[test]
+fn parameter_inputs_keep_focus_and_values_across_model_controls() {
+    let mut harness = harness();
+    replace_text(&mut harness, Role::TextInput, "a", "1.25");
+    assert_eq!(state(&harness).parameter_inputs[0], "1.25");
+    choose(&mut harness, "Model type", "Saturating Trend Basis");
+    replace_text(&mut harness, Role::TextInput, "tau1", "0.125");
+    assert_eq!(
+        harness
+            .get_by_role_and_label(Role::TextInput, "tau1")
+            .value()
+            .as_deref(),
+        Some("0.125")
+    );
+    click(&mut harness, "Reset tau grid");
+    assert_eq!(
+        harness
+            .get_by_role_and_label(Role::TextInput, "tau1")
+            .value()
+            .as_deref(),
+        Some("0.25")
+    );
+    choose(&mut harness, "Model type", "Linear Spline");
+    replace_text(&mut harness, Role::TextInput, "knot_y[0]", "2.5");
+    assert_eq!(
+        harness
+            .get_by_role_and_label(Role::TextInput, "knot_y[0]")
+            .value()
+            .as_deref(),
+        Some("2.5")
+    );
+    initialize(&mut harness, "Default");
+    assert_eq!(
+        harness
+            .get_by_role_and_label(Role::TextInput, "knot_y[0]")
+            .value()
+            .as_deref(),
+        Some("0")
+    );
+}

@@ -24,6 +24,7 @@ jobs:
         with:
           toolchain: nightly
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -46,6 +47,7 @@ jobs:
             libxinerama-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
+            mesa-vulkan-drivers \
             libxcb-shape0-dev \
             libxcb-xfixes0-dev
 
@@ -54,6 +56,13 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check native without testing
+        run: cargo check -p curve-fit --no-default-features
+
+      - name: Check wasm without testing
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo clippy -p curve-fit --no-default-features --target wasm32-unknown-unknown -- -D warnings
 
       - name: Test
         run: cargo test --all-features

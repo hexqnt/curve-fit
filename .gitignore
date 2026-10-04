@@ -1,2 +1,5 @@
 /target
 /dist
+/tools/tests/tests/ui/snapshots/*.new.png
+/tools/tests/tests/ui/snapshots/*.diff.png
+/tools/tests/tests/ui/snapshots/*.old.png

@@ -2,17 +2,8 @@
 
 use std::fmt::Write as _;
 
+use super::components::{value_grid, value_row};
 use super::*;
-
-fn section_title(ui: &mut egui::Ui, title: &str) {
-    ui.label(egui::RichText::new(title).strong());
-}
-
-fn grid_row(ui: &mut egui::Ui, label: &str, value: impl std::fmt::Display) {
-    ui.label(label);
-    ui.monospace(value.to_string());
-    ui.end_row();
-}
 
 fn format_f64_list(values: &[f64], precision: usize) -> String {
     let mut formatted = String::new();
@@ -31,21 +22,18 @@ fn ui_quality_metrics_grid(
     grid_id: &str,
     metrics: ExtendedMetrics,
 ) {
-    section_title(ui, tr(language, "Quality metrics", "Метрики качества"));
-    egui::Grid::new(grid_id)
-        .num_columns(2)
-        .spacing(egui::vec2(8.0, 4.0))
-        .show(ui, |ui| {
-            grid_row(ui, "MSE", format!("{:.8}", metrics.mse));
-            grid_row(ui, "RMSE", format!("{:.8}", metrics.rmse));
-            grid_row(ui, "MAE", format!("{:.8}", metrics.mae));
-            grid_row(ui, "R²", format!("{:.8}", metrics.r2));
-            grid_row(
-                ui,
-                tr(language, "Max |error|", "Макс |ошибка|"),
-                format!("{:.8}", metrics.max_abs_error),
-            );
-        });
+    ui.strong(tr(language, "Quality metrics", "Метрики качества"));
+    value_grid(grid_id).show(ui, |ui| {
+        value_row(ui, "MSE", format!("{:.8}", metrics.mse));
+        value_row(ui, "RMSE", format!("{:.8}", metrics.rmse));
+        value_row(ui, "MAE", format!("{:.8}", metrics.mae));
+        value_row(ui, "R²", format!("{:.8}", metrics.r2));
+        value_row(
+            ui,
+            tr(language, "Max |error|", "Макс |ошибка|"),
+            format!("{:.8}", metrics.max_abs_error),
+        );
+    });
 }
 
 fn ui_parametric_fit_preview(ui: &mut egui::Ui, language: UiLanguage, params: &CurveParams) {
@@ -89,7 +77,7 @@ fn resolved_result_metrics(app: &CurveFitApp) -> ExtendedMetrics {
 
 fn ui_result_export_actions(app: &mut CurveFitApp, ui: &mut egui::Ui, language: UiLanguage) {
     ui.horizontal_wrapped(|ui| {
-        let copy_response = CurveFitApp::info_hover(
+        let copy_response = components::info_hover(
             ui.button(tr(language, "Copy JSON", "Скопировать JSON")),
             result_json_copy_tooltip(language),
         );
@@ -99,7 +87,7 @@ fn ui_result_export_actions(app: &mut CurveFitApp, ui: &mut egui::Ui, language: 
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let save_response = CurveFitApp::info_hover(
+            let save_response = components::info_hover(
                 ui.button(tr(language, "Save JSON", "Сохранить JSON")),
                 result_json_save_tooltip(language),
             );
@@ -108,7 +96,7 @@ fn ui_result_export_actions(app: &mut CurveFitApp, ui: &mut egui::Ui, language: 
             }
         }
     });
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
 }
 
 fn ui_parametric_result(
@@ -122,27 +110,24 @@ fn ui_parametric_result(
         tr(language, "Family", "Семейство"),
         family_label(language, result.family)
     ));
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
     ui_quality_metrics_grid(ui, language, "result_quality_grid_parametric", metrics);
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
 
-    section_title(ui, tr(language, "Convergence", "Сходимость"));
-    egui::Grid::new("result_convergence_grid_parametric")
-        .num_columns(2)
-        .spacing(egui::vec2(8.0, 4.0))
-        .show(ui, |ui| {
-            grid_row(
-                ui,
-                tr(language, "Iterations", "Итерации"),
-                result.iterations,
-            );
-        });
-    ui.add_space(2.0);
+    ui.strong(tr(language, "Convergence", "Сходимость"));
+    value_grid("result_convergence_grid_parametric").show(ui, |ui| {
+        value_row(
+            ui,
+            tr(language, "Iterations", "Итерации"),
+            result.iterations.to_string(),
+        );
+    });
+    ui.add_space(style::SECTION_GAP);
 
     if let Some(taus) = result.params.saturating_trend_taus() {
         ui.label(tr(language, "Tau grid", "Сетка tau"));
         ui.monospace(format_f64_list(taus, 8));
-        ui.add_space(2.0);
+        ui.add_space(style::SECTION_GAP);
     }
 
     ui.label(tr(language, "Parameters", "Параметры"));
@@ -151,16 +136,13 @@ fn ui_parametric_result(
         .max_height(RESULT_PARAMS_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Grid::new("result_parametric_params_grid")
-                .num_columns(2)
-                .spacing(egui::vec2(8.0, 4.0))
-                .show(ui, |ui| {
-                    result.params.with_names_and_values(|names, values| {
-                        for (name, value) in names.iter().zip(values.iter()) {
-                            grid_row(ui, name, format!("{value:.8}"));
-                        }
-                    });
+            value_grid("result_parametric_params_grid").show(ui, |ui| {
+                result.params.with_names_and_values(|names, values| {
+                    for (name, value) in names.iter().zip(values.iter()) {
+                        value_row(ui, name, format!("{value:.8}"));
+                    }
                 });
+            });
         });
 }
 
@@ -176,27 +158,24 @@ fn ui_spline_result(
         tr(language, "Family", "Семейство"),
         model_choice_label(language, selected_model)
     ));
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
     ui_quality_metrics_grid(ui, language, "result_quality_grid_spline", metrics);
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
 
-    section_title(ui, tr(language, "Convergence", "Сходимость"));
-    egui::Grid::new("result_convergence_grid_spline")
-        .num_columns(2)
-        .spacing(egui::vec2(8.0, 4.0))
-        .show(ui, |ui| {
-            grid_row(
-                ui,
-                tr(language, "Iterations", "Итерации"),
-                result.iterations,
-            );
-            grid_row(
-                ui,
-                tr(language, "Parameters", "Параметры"),
-                result.knots.len(),
-            );
-        });
-    ui.add_space(2.0);
+    ui.strong(tr(language, "Convergence", "Сходимость"));
+    value_grid("result_convergence_grid_spline").show(ui, |ui| {
+        value_row(
+            ui,
+            tr(language, "Iterations", "Итерации"),
+            result.iterations.to_string(),
+        );
+        value_row(
+            ui,
+            tr(language, "Parameters", "Параметры"),
+            result.knots.len().to_string(),
+        );
+    });
+    ui.add_space(style::SECTION_GAP);
 
     ui.label(tr(language, "Parameters", "Параметры"));
     egui::ScrollArea::vertical()
@@ -204,9 +183,8 @@ fn ui_spline_result(
         .max_height(RESULT_PARAMS_MAX_HEIGHT)
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::Grid::new("result_spline_params_grid")
+            value_grid("result_spline_params_grid")
                 .num_columns(3)
-                .spacing(egui::vec2(8.0, 4.0))
                 .show(ui, |ui| {
                     ui.strong("knot");
                     ui.strong("x");

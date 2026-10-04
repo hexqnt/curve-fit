@@ -10,3 +10,6 @@ curve-fit = { workspace = true, features = ["testing"] }
 curve-fit-test-support.workspace = true
 egui_kittest.workspace = true
 eframe.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+egui_kittest = { workspace = true, features = ["snapshot", "wgpu"] }

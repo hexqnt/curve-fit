@@ -1,6 +1,52 @@
 use super::*;
 
 #[test]
+fn points_editor_paste_preserves_unicode_history_and_clears_redo_on_new_edit() {
+    let mut harness = harness();
+    let original = "0 1\n1 2\n# заметка 🦀\n";
+    let edited = "0 3\n1 5\n# другая заметка λ\n";
+    let replacement = "0 4\n1 8\n# ещё 🦀\n";
+    points(&mut harness, original);
+    let history_len = state(&harness).selected_layer.undo.len();
+    harness.run_steps(3);
+    assert_eq!(state(&harness).selected_layer.undo.len(), history_len);
+    assert_eq!(state(&harness).selected_layer.points_text, original);
+
+    for pasted in [edited, replacement] {
+        harness
+            .get_by_role_and_label(Role::MultilineTextInput, "Input points")
+            .click();
+        harness.run();
+        assert!(
+            harness
+                .get_by_role_and_label(Role::MultilineTextInput, "Input points")
+                .is_focused()
+        );
+        harness.key_press_modifiers(Modifiers::COMMAND, Key::A);
+        harness.run();
+        harness
+            .input_mut()
+            .events
+            .push(egui::Event::Paste(pasted.into()));
+        harness.run();
+        let snapshot = state(&harness);
+        assert_eq!(snapshot.selected_layer.points_text, pasted);
+        assert_eq!(
+            snapshot.selected_layer.undo.last().map(String::as_str),
+            Some(original)
+        );
+        assert!(snapshot.selected_layer.redo.is_empty());
+        click(&mut harness, "Undo");
+        assert_eq!(state(&harness).selected_layer.points_text, original);
+        click(&mut harness, "Redo");
+        assert_eq!(state(&harness).selected_layer.points_text, pasted);
+        click(&mut harness, "Undo");
+        assert_eq!(state(&harness).selected_layer.points_text, original);
+        assert!(!state(&harness).selected_layer.redo.is_empty());
+    }
+}
+
+#[test]
 fn move_points_to_positive_xy_pushes_undo_and_clears_redo() {
     let mut harness = harness();
     points(&mut harness, "-1 0\n1 2\n");

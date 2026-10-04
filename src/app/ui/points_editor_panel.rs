@@ -1,10 +1,12 @@
 //! Панель инструментов и текстовый редактор исходных точек.
 
+use std::borrow::Cow;
+
+use super::components::{
+    ToggleSwitch, toolbar_hover_tooltip, toolbar_icon_button, with_toolbar_hover_style,
+};
 use super::*;
 
-const TOOLBAR_BUTTON_WIDTH: f32 = 32.0;
-const TOOLBAR_BUTTON_HEIGHT: f32 = 28.0;
-const TOOLBAR_BUTTON_SPACING_X: f32 = 6.0;
 const LAYER_ROW_HEIGHT: f32 = 32.0;
 const LAYER_VISIBILITY_COLUMN_WIDTH: f32 = 34.0;
 const LAYER_COLOR_COLUMN_WIDTH: f32 = 72.0;
@@ -26,7 +28,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     ];
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
+            ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
             for tool in tools {
                 let selected = app.plot_tool == tool;
                 let button = toolbar_icon_button(tool_icon_image(tool, icon_tint))
@@ -41,7 +43,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         });
     });
 
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
     match app.plot_tool {
         PlotTool::None | PlotTool::SinglePoint | PlotTool::Dotted => {}
         PlotTool::Spray => {
@@ -62,7 +64,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     SprayBrush::Uniform,
                     spray_brush_label(language, SprayBrush::Uniform),
                 );
-                let _ = CurveFitApp::info_hover(
+                let _ = components::info_hover(
                     uniform_response,
                     spray_brush_mode_hint(language, SprayBrush::Uniform),
                 );
@@ -71,7 +73,7 @@ pub(super) fn ui_tools(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                     SprayBrush::Gaussian,
                     spray_brush_label(language, SprayBrush::Gaussian),
                 );
-                let _ = CurveFitApp::info_hover(
+                let _ = components::info_hover(
                     gaussian_response,
                     spray_brush_mode_hint(language, SprayBrush::Gaussian),
                 );
@@ -94,7 +96,7 @@ pub(super) fn ui_point_layers(app: &mut CurveFitApp, ui: &mut egui::Ui) {
 
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
+            ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
 
             let new_response = ui.add_enabled(
                 can_edit_layers,
@@ -145,7 +147,7 @@ pub(super) fn ui_point_layers(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         });
     });
 
-    ui.add_space(2.0);
+    ui.add_space(style::SECTION_GAP);
     let total_rows = app.point_layers.layers.len();
     egui_extras::TableBuilder::new(ui)
         .id_salt("point_layers_list")
@@ -446,7 +448,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     let can_import_from_file = can_edit_points && !app.points_file_import_in_progress();
     with_toolbar_hover_style(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = TOOLBAR_BUTTON_SPACING_X;
+            ui.spacing_mut().item_spacing.x = style::TOOLBAR_BUTTON_SPACING;
             let undo_response = ui.add_enabled(
                 can_edit_points && !app.selected_points_editor().undo_stack.is_empty(),
                 toolbar_icon_button(undo_icon_image(icon_tint)),
@@ -556,7 +558,6 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let text_width = ui.available_width();
-            let before_edit = app.selected_points_editor().text.clone();
             let mut layouter = move |ui: &egui::Ui,
                                      text: &dyn egui::TextBuffer,
                                      wrap_width: f32|
@@ -565,11 +566,7 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 job.wrap.max_width = wrap_width;
                 let text_color = ui.visuals().text_color();
                 let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                let error_bg = if ui.visuals().dark_mode {
-                    egui::Color32::from_rgb(70, 26, 26)
-                } else {
-                    egui::Color32::from_rgb(255, 230, 230)
-                };
+                let error_bg = style::UiColors::for_visuals(ui.visuals()).input_error_bg;
                 for (index, line) in text.as_str().split_inclusive('\n').enumerate() {
                     let mut format = egui::TextFormat {
                         font_id: font_id.clone(),
@@ -594,21 +591,30 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
                 }
                 ui.fonts_mut(|fonts| fonts.layout_job(job))
             };
-            let response = ui.add(
-                egui::TextEdit::multiline(&mut app.selected_points_editor_mut().text)
+            let points_editor = app.selected_points_editor_mut();
+            // До первого изменения заимствуем текст, чтобы не копировать его на каждом кадре.
+            let mut text = Cow::Borrowed(points_editor.text.as_str());
+            let response = ui.add_enabled(
+                can_edit_points,
+                egui::TextEdit::multiline(&mut text)
                     .desired_width(text_width)
                     .desired_rows(desired_rows)
                     .font(egui::TextStyle::Monospace)
                     .hint_text(hint)
-                    .layouter(&mut layouter)
-                    .interactive(can_edit_points),
+                    .layouter(&mut layouter),
             );
+            let before_edit = if response.changed() {
+                let updated_text = text.into_owned();
+                Some(std::mem::replace(&mut points_editor.text, updated_text))
+            } else {
+                None
+            };
             #[cfg(feature = "testing")]
             ui.ctx().accesskit_node_builder(response.id, |node| {
                 node.set_label(tr(language, "Input points", "Ввод точек"));
             });
-            let response = CurveFitApp::info_hover(response, points_input_hint(language));
-            if response.changed() {
+            let _ = components::info_hover(response, points_input_hint(language));
+            if let Some(before_edit) = before_edit {
                 app.push_points_undo_snapshot(before_edit);
                 app.selected_points_editor_mut().redo_stack.clear();
                 app.invalidate_points_cache();
@@ -627,16 +633,14 @@ pub(super) fn ui_points_editor(app: &mut CurveFitApp, ui: &mut egui::Ui) {
     ui.separator();
     ui.add_enabled_ui(can_edit_points, |ui| {
         ui.horizontal_wrapped(|ui| {
-            let normalization_response = CurveFitApp::toggle_switch_labeled(
-                ui,
-                &mut app.normalize_parametric_data,
-                tr(
-                    language,
-                    "Normalize x/y before fit",
-                    "Нормализовать x/y перед фитингом",
-                ),
+            let label = tr(
+                language,
+                "Normalize x/y before fit",
+                "Нормализовать x/y перед фитингом",
             );
-            let _ = CurveFitApp::info_hover(normalization_response, normalization_hint(language));
+            let normalization_response =
+                ui.add(ToggleSwitch::new(&mut app.normalize_parametric_data).label(label));
+            let _ = components::info_hover(normalization_response, normalization_hint(language));
         });
     });
 
@@ -708,28 +712,6 @@ fn normalization_hint(language: UiLanguage) -> &'static str {
         "Parametric normalization\n- Fit runs on normalized x/y for better numerical conditioning\n- Displayed parameters and metrics remain in original units\n- Useful when x and y scales differ significantly",
         "Нормализация параметрических данных\n- Фитинг выполняется на нормализованных x/y для лучшей численной устойчивости\n- Параметры и метрики в интерфейсе остаются в исходных единицах\n- Полезно при сильно разных масштабах x и y",
     )
-}
-
-fn toolbar_icon_button(icon: egui::Image<'static>) -> egui::Button<'static> {
-    egui::Button::image(icon).min_size(egui::vec2(TOOLBAR_BUTTON_WIDTH, TOOLBAR_BUTTON_HEIGHT))
-}
-
-fn toolbar_hover_tooltip(response: egui::Response, text: &'static str) -> egui::Response {
-    #[cfg(feature = "testing")]
-    response.ctx.accesskit_node_builder(response.id, |node| {
-        node.set_label(text.lines().next().unwrap_or(text));
-    });
-    response.on_hover_ui(|ui| {
-        ui.set_max_width(360.0);
-        ui.spacing_mut().item_spacing.y = 3.0;
-        let mut lines = text.lines().map(str::trim).filter(|line| !line.is_empty());
-        if let Some(title) = lines.next() {
-            ui.label(egui::RichText::new(title).strong());
-        }
-        for line in lines {
-            ui.label(egui::RichText::new(line).small());
-        }
-    })
 }
 
 fn undo_tooltip(language: UiLanguage) -> &'static str {
@@ -827,22 +809,4 @@ fn file_import_tooltip(language: UiLanguage) -> &'static str {
         "Import from file\n- Replaces current input points\n- Supports .csv and .xlsx files\n- Uses robust two-numeric-values-per-row parsing",
         "Импорт из файла\n- Полностью заменяет текущие входные точки\n- Поддерживает файлы .csv и .xlsx\n- Использует робастный парсинг с двумя числовыми значениями в строке",
     )
-}
-
-fn with_toolbar_hover_style(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.scope(|ui| {
-        let dark_mode = ui.visuals().dark_mode;
-        let widgets = &mut ui.style_mut().visuals.widgets;
-        widgets.hovered.expansion = 1.5;
-        if dark_mode {
-            widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(44, 64, 79);
-            widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(96, 148, 177));
-        } else {
-            widgets.hovered.weak_bg_fill = egui::Color32::from_rgb(196, 220, 232);
-            widgets.hovered.bg_stroke =
-                egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(105, 160, 186));
-        }
-        add_contents(ui);
-    });
 }

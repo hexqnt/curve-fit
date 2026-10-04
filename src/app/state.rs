@@ -299,6 +299,8 @@ pub struct CurveFitApp {
     pub(super) status: Option<StatusMessage>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fit_worker_rx: Option<Receiver<FitWorkerMessage>>,
+    #[cfg(all(feature = "testing", not(target_arch = "wasm32")))]
+    pub(super) first_fit_resume_rx: Option<Receiver<()>>,
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fit_cancel_flag: Option<Arc<AtomicBool>>,
     #[cfg(not(target_arch = "wasm32"))]
